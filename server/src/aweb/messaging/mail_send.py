@@ -123,7 +123,6 @@ from aweb.messaging.kinds import (
     MessageTransport,
 )
 from aweb.messaging.recipients import (
-    RecipientIdentityBinding,
     resolve_address_recipient,
 )
 from aweb.messaging.runtime import MessagingRuntime
@@ -528,7 +527,7 @@ def _prepare_remote_mail_envelope(
     """Bind the outbound envelope to the preserved sender signature and target.
 
     Receiver-Wide Replay And Contact Compatibility
-    (docs/identity-messaging-contract.md:338-348) separates the protected artifact
+    (docs/identity-messaging-contract.md:330-340) separates the protected artifact
     from transport routing and persistence. This preparation performs no send.
     """
     is_encrypted = payload.content_mode == ContentMode.ENCRYPTED
@@ -1456,8 +1455,6 @@ async def resolve_mail_target(
     payload: SendMessageRequest,
     runtime: MessagingRuntime,
     source: str,
-    *,
-    recipient_binding: RecipientIdentityBinding | None = None,
 ) -> MailTarget:
     """Resolve whom a send names, before any of it is stored.
 
@@ -1483,7 +1480,6 @@ async def resolve_mail_target(
         payload=payload,
         runtime=runtime,
         source=source,
-        recipient_binding=recipient_binding,
     )
 
 
@@ -1659,7 +1655,6 @@ async def _resolve_new_mail_target(
     payload: SendMessageRequest,
     runtime: MessagingRuntime,
     source: str,
-    recipient_binding: RecipientIdentityBinding | None,
 ) -> MailTarget:
     """Resolve the explicit recipient selectors and require their agreement."""
     registry_client = runtime.registry_client
@@ -1741,7 +1736,6 @@ async def _resolve_new_mail_target(
             address=address,
             source=source,
             kind=MessageKind.MAIL,
-            binding=recipient_binding,
             signed_payload=payload.signed_payload,
             signature=payload.signature,
         )

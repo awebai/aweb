@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from collections.abc import Mapping
 
 from aweb.application_state import RegistryClientUnavailable
 from aweb.messaging.refusals import (
-    ContactIdentityBindingRequired,
     DeliveryRefusal,
     RecipientAddressNotFound,
     registry_dependency_refusal,
@@ -41,16 +40,6 @@ from aweb.messaging.recipient_bindings import (
     RecipientBindingUse,
     signed_recipient_matches,
 )
-
-
-@dataclass(frozen=True, kw_only=True)
-class RecipientIdentityBinding:
-    """The identity a saved contact expects, never a routing authority."""
-
-    did: str
-
-    def matches(self, recipient: Mapping) -> bool:
-        return self.did in {recipient.get("did_aw"), recipient.get("did_key")}
 
 
 async def _local_recipient_at_address(db, *, domain: str, name: str) -> Mapping | None:
@@ -88,16 +77,9 @@ async def resolve_address_recipient(
     kind: MessageKind,
     signed_payload: str | None = None,
     signature: str | None = None,
-    binding: RecipientIdentityBinding | None = None,
 ) -> Recipient:
-    """Resolve once, keeping any saved identity constraint through the send.
-
-    Global And Local Identities (docs/identity-messaging-contract.md:116-144) requires an
-    exact bound identity.
-    A saved constraint stays attached to the one admitted identity; a second
-    address resolution cannot silently replace it before signing or delivery.
-    """
-    recipient = await _resolve_address_identity(
+    """Resolve an address once to the one identity that receives the send."""
+    return await _resolve_address_identity(
         db,
         auth,
         runtime,
@@ -107,9 +89,6 @@ async def resolve_address_recipient(
         signed_payload=signed_payload,
         signature=signature,
     )
-    if binding is not None and not binding.matches(recipient):
-        raise ContactIdentityBindingRequired()
-    return recipient
 
 
 async def _resolve_address_identity(
@@ -125,8 +104,8 @@ async def _resolve_address_identity(
 ) -> Recipient:
     """Return the exact admitted identity and route for the sender's address.
 
-    Implements Global And Local Identities (docs/identity-messaging-contract.md:116-144) and
-    Strict Cross-Registry Sender Authority (docs/identity-messaging-contract.md:206-222).
+    Implements Global And Local Identities (docs/identity-messaging-contract.md:116-136) and
+    Strict Cross-Registry Sender Authority (docs/identity-messaging-contract.md:198-214).
 
     Local visibility, signed identity binding and strict authority discovery are
     shared by both message kinds. The returned participant is identity-scoped;

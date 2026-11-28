@@ -2,7 +2,7 @@
 
 Transport admission remains with the native/federation caller. This writer
 stores the attestation unchanged. See Direct Address Send Protocol
-(docs/identity-messaging-contract.md:156-168).
+(docs/identity-messaging-contract.md:148-160).
 """
 
 from __future__ import annotations

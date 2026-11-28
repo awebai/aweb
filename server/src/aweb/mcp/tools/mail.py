@@ -9,7 +9,6 @@ from aweb.messaging.kinds import ContentMode
 from aweb.messaging.kinds import MessagePriority
 from aweb.mcp.tools.errors import messaging_tool
 from aweb.messaging.sender_membership import SenderMembership, sender_memberships
-from aweb.messaging.recipients import RecipientIdentityBinding
 from aweb.messaging.mail_attribution import incoming_mail_sql
 
 from aweb.identity_auth_deps import participant_dids
@@ -217,7 +216,6 @@ async def _resolve_mail_target_for_tool(
     selector: SendMessageRequest,
     runtime,
     source: str,
-    recipient_binding: RecipientIdentityBinding | None = None,
 ) -> mail_send.MailTarget:
     """Translate tool selection into the shared mail target owner."""
     return await mail_send.resolve_mail_target(
@@ -226,7 +224,6 @@ async def _resolve_mail_target_for_tool(
         selector,
         runtime,
         source,
-        recipient_binding=recipient_binding,
     )
 
 
@@ -246,7 +243,6 @@ async def send_mail(
     plaintext: bool = False,
     federation_transport=None,
     public_origin: str | None = None,
-    recipient_binding: RecipientIdentityBinding | None = None,
 ) -> str:
     """Send an async message by alias, did:aw, or address."""
     auth = get_auth()
@@ -313,7 +309,6 @@ async def send_mail(
             selector=selector,
             runtime=runtime,
             source=mcp_sender_budget_key(auth),
-            recipient_binding=recipient_binding,
         )
         if target.continuation is not None:
             recipient_participant = target.continuation.recipient_participant

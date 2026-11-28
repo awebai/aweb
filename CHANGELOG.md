@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The server's send path drops the saved-contact identity constraint that only
+  `send_message_to_contact` supplied. `contact_identity_binding_required` still
+  refuses legacy address-only contacts, as before.
 - The MCP server drops its eleven compatibility names: `check_inbox`,
   `chat_send`, `chat_pending`, `chat_history`, `chat_read`, `contacts_list`,
   `contacts_add`, `contacts_remove`, `add_contact_by_email`,

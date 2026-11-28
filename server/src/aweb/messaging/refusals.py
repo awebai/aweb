@@ -4,7 +4,7 @@ from enum import StrEnum
 from http import HTTPStatus
 import logging
 
-from aweb.service_errors import IdentityBindingError, ServiceError, ValidationError
+from aweb.service_errors import IdentityBindingError, ServiceError
 from aweb.messaging.kinds import MessageKind
 from aweb.messaging.recipient_bindings import RecipientSelectorField
 
@@ -30,15 +30,6 @@ class DeliveryRefusalCode(StrEnum):
 
 
 CONTACT_REBIND_ACTION = "This address now belongs to a different identity. Check the contact and explicitly bind it again before sending."
-
-
-class ContactIdentityBindingRequired(ValidationError):
-    """A saved identity constraint cannot authorize the current address holder."""
-
-    code = DeliveryRefusalCode.CONTACT_IDENTITY_BINDING_REQUIRED
-
-    def __init__(self) -> None:
-        super().__init__(CONTACT_REBIND_ACTION)
 
 
 class DeliveryRefusal(ServiceError):
@@ -136,7 +127,7 @@ def signed_chat_payload_refusal(*, detail: str) -> DeliveryRefusal:
     """Keep signed chat field failures actionable at every send/retry boundary.
 
     Implements the sender-artifact checks in
-    Direct Address Send Protocol (docs/identity-messaging-contract.md:156-168).
+    Direct Address Send Protocol (docs/identity-messaging-contract.md:148-160).
     """
     return DeliveryRefusal(
         status_code=HTTPStatus.UNPROCESSABLE_ENTITY,

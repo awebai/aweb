@@ -23,7 +23,7 @@ def require_verified_message_signature(
 ) -> None:
     """Authenticate original bytes under the transport sender's key.
 
-    Implements Direct Address Send Protocol (docs/identity-messaging-contract.md:156-168).
+    Implements Direct Address Send Protocol (docs/identity-messaging-contract.md:148-160).
     """
     try:
         verify_did_key_signature(

@@ -30,7 +30,7 @@ def incoming_mail_snapshot_predicate(
 ) -> IncomingMailPredicate:
     """Use exact thread evidence preloaded at stream establishment.
 
-    Global And Local Identities (docs/identity-messaging-contract.md:131-144) keeps historical
+    Global And Local Identities (docs/identity-messaging-contract.md:123-136) keeps historical
     key evidence
     within its recorded thread. Snapshotting
     keeps event ticks from querying succession/participant tables again.

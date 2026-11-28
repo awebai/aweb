@@ -47,7 +47,7 @@ async def resolve_recipient_by_did(
     """Resolve a delivery identity, using the sender's team for ambiguous local keys.
 
     An unambiguous verified global identity retains its cross-team binding.
-    See Global And Local Identities (docs/identity-messaging-contract.md:124-144).
+    See Global And Local Identities (docs/identity-messaging-contract.md:118-136).
     """
     rows = await current_member_projections(db, dids=[did])
     if (

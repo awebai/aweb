@@ -593,7 +593,7 @@ async def test_bare_alias_never_changes_team_on_unknown_roster(
         if condition in ("available", "https"):
             # The live human lookup becomes a direct-DID send: participants
             # are literal identities, not actor pointers (canonical contract:
-            # Global And Local Identities (docs/identity-messaging-contract.md:124-144)).
+            # Global And Local Identities (docs/identity-messaging-contract.md:118-136)).
             assert stored["to_agent_id"] is None, dict(stored)
         else:
             assert stored["to_agent_id"] == expected.id, dict(stored)

@@ -282,7 +282,7 @@ async def _local_envelope_recipient(
 ) -> Recipient:
     """Residence for a validated address or an already-authorized participant.
 
-    Continuations (docs/identity-messaging-contract.md:313-318) makes exact-DID residence
+    Continuations (docs/identity-messaging-contract.md:305-310) makes exact-DID residence
     independent of team membership. Neither read grants a team actor.
     """
     if address_binding is not None:
@@ -320,7 +320,7 @@ async def _verified_delivery_replay(
     """Verify integrity and require age only without an exact plaintext receipt.
 
     Receiver-Wide Replay And Contact Compatibility
-    (docs/identity-messaging-contract.md:338-370); Antares69b3a50a. Current
+    (docs/identity-messaging-contract.md:330-362); Antares69b3a50a. Current
     authority is still checked by the caller and rechecked under Phase-B locks.
     Encrypted integrity verification retains its ordinary ingestion window.
     """

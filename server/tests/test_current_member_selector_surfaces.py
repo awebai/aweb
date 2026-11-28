@@ -1,8 +1,8 @@
 """Current membership through actual selectors, transports and controller rotation.
 
 Membership is not identity residence: Direct Address Send Protocol
-(docs/identity-messaging-contract.md:169-176) and
-Continuations (docs/identity-messaging-contract.md:313-318). A global
+(docs/identity-messaging-contract.md:161-168) and
+Continuations (docs/identity-messaging-contract.md:305-310). A global
 address remains reachable while the old team membership disappears. Missing
 selector fields are rejected rather than introducing a new API to this test.
 """

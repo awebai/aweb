@@ -297,7 +297,7 @@ async def _lock_current_recipient(
 ) -> _LockedRecipientResidence:
     """Lock exact-DID residence without selecting a membership as its authority.
 
-    Continuations (docs/identity-messaging-contract.md:313-318) makes independently verified
+    Continuations (docs/identity-messaging-contract.md:305-310) makes independently verified
     address residence independent of current membership and binding markers.
     Row IDs locate storage and notification attribution only. They grant no
     same-team admission; that remains the current-member policy owner's rule.
@@ -373,7 +373,7 @@ def _resident_participant(
 ) -> dict:
     """Keep verified target identity and explicit references separate from rows.
 
-    Continuations (docs/identity-messaging-contract.md:301-316) assigns key
+    Continuations (docs/identity-messaging-contract.md:293-308) assigns key
     authority to the resolved address. A unique known residence retains its
     storage/event attribution, never a membership or newest-row authority.
     """

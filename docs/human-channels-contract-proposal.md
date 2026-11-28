@@ -991,7 +991,7 @@ The guarantee is one authorized input owner and deduplicated committed logical
 replies, **not exactly-once model/tool execution**. Existing read state is not an
 action transaction (`docs/receiving-events.md:293`, baseline `c6235708808b`);
 message acceptance receipts cover messaging effects, not arbitrary runtime tools
-(`docs/identity-messaging-contract.md:169`, same baseline).
+(`docs/identity-messaging-contract.md:161`, same baseline).
 
 Before dispatch, persist one operation keyed by `(agent, context, canonical input
 ID)`, its immutable input digest, selected native/aweb owner and generation.

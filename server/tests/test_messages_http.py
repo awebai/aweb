@@ -7257,7 +7257,7 @@ async def test_send_message_accepts_signed_local_address_binding_without_registr
         bob_did_key,
     )
 
-    # Direct Address Send Protocol (docs/identity-messaging-contract.md:148-163): verified
+    # Direct Address Send Protocol (docs/identity-messaging-contract.md:140-155): verified
     # signed local binding needs no registry read.
     registry = AsyncMock()
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)

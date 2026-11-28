@@ -79,7 +79,7 @@ async def local_recipient_for_address_binding(
 ) -> Recipient | None:
     """Find residence for an independently admitted address identity.
 
-    Continuations (docs/identity-messaging-contract.md:313-318): "locality is residence of that
+    Continuations (docs/identity-messaging-contract.md:305-310): "locality is residence of that
     exact DID, independent of a membership's superseded key or invalidated marker."
     The registry supplies the canonical DID and current signature key. A local
     membership's old key/verification marker cannot decide whether that DID

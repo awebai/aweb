@@ -670,7 +670,7 @@ class RegistryClient:
     async def registry_audience(self, domain: str) -> str:
         """The domain-selected read origin; administrative writes keep the configured pin.
 
-        docs/identity-messaging-contract.md:249-256 separates these authorities.
+        docs/identity-messaging-contract.md:241-248 separates these authorities.
         """
         return canonical_server_origin(await self._registry_url_for_domain(domain))
 
@@ -1717,7 +1717,7 @@ class RegistryClient:
     async def _resolve_address_at_origin(
         self, *, domain: str, name: str, registry_url: str
     ) -> Address | None:
-        """Keep address data on its selected origin (docs/identity-messaging-contract.md:249-256)."""
+        """Keep address data on its selected origin (docs/identity-messaging-contract.md:241-248)."""
         try:
             data = await self._request_json(
                 "GET",

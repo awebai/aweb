@@ -115,14 +115,6 @@ The modes are:
 Rows without an explicit `inbound_mode` require migration and must fail with an
 explicit migration-required diagnostic rather than silently widening to open.
 
-Sending to a saved identity contact carries its stored DID constraint into the
-ordinary mail/chat address resolver. The resolver checks that constraint against
-its one selected identity before signing or delivery; the tool does not resolve
-an address once for a contact check and again without that identity binding.
-A mismatch requires explicit rebinding and cannot switch an existing chat to
-the address's replacement identity. Ordinary local visibility, address authority
-and pair-session reuse keep their existing owners.
-
 An authenticated global subject participates as its `did:aw`; its current
 `did:key` proves signatures and is not a second participant reference. Local
 subjects participate as their literal `did:key`. Thread visibility, unread/ack

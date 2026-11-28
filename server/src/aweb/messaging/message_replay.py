@@ -3,7 +3,7 @@
 This proves a prior accepted artifact, never current sender/recipient authority.
 Callers retain signature, binding, admission and encrypted freshness checks.
 See Receiver-Wide Replay And Contact Compatibility
-(docs/identity-messaging-contract.md:338-374; Antares69b3a50a).
+(docs/identity-messaging-contract.md:330-366; Antares69b3a50a).
 """
 
 from __future__ import annotations

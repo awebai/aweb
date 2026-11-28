@@ -74,7 +74,7 @@ func realCommandStack(t *testing.T, ctx context.Context, authority commandStackA
 }
 
 // realCommandWorld owns setup through the same writers installed clients use.
-// R11c: docs/identity.md:97 and docs/identity-messaging-contract.md:434.
+// R11c: docs/identity.md:97 and docs/identity-messaging-contract.md:426.
 type realCommandWorld struct {
 	Context      context.Context
 	Binary       string

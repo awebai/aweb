@@ -16,7 +16,7 @@ async def test_empty_signing_key_and_empty_marker_cannot_attribute_global_metada
     privacy_app,
 ):
     # identity.md:569-585 and Global And Local Identities
-    # (docs/identity-messaging-contract.md:124-129):
+    # (docs/identity-messaging-contract.md:118-121):
     # marker equality needs an actual current key, not two empty strings.
     env = privacy_app
     actor = env.actors["bob"]

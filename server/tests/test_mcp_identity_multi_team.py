@@ -83,8 +83,8 @@ async def _call_tool(
 async def test_global_identity_reads_use_same_auth_for_http_and_mcp(
     privacy_app, membership_count
 ):
-    # Source model: Global And Local Identities (docs/identity-messaging-contract.md:124-144)
-    # and Continuations (docs/identity-messaging-contract.md:282-296). A global
+    # Source model: Global And Local Identities (docs/identity-messaging-contract.md:118-136)
+    # and Continuations (docs/identity-messaging-contract.md:274-288). A global
     # participant is one DID; two memberships do not require a team choice
     # for its inbox. A presented team certificate still selects that team.
     env = privacy_app

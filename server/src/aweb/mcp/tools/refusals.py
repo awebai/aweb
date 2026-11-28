@@ -19,7 +19,6 @@ from awid.federation_errors import FederationAuthorityError
 from aweb.messaging.refusals import (
     DeliveryRefusalCode,
     RecipientIdentityBindingError,
-    ContactIdentityBindingRequired,
     MailConversationExists,
     RecipientAddressNotFound,
 )
@@ -116,8 +115,6 @@ def send_refusal(
         )
     if isinstance(exc, MailConversationExists):
         return json.dumps({"error": exc.recovery_action, "reason": exc.code.value})
-    if isinstance(exc, ContactIdentityBindingRequired):
-        return json.dumps({"error": exc.detail, "reason": exc.code.value})
     if (
         address
         and isinstance(exc, FederationAuthorityError)

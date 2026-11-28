@@ -5,7 +5,6 @@ from __future__ import annotations
 from aweb.messaging.kinds import ContentMode
 
 from aweb.mcp.tools.errors import messaging_tool
-from aweb.messaging.recipients import RecipientIdentityBinding
 from aweb.messaging.chat_policy import HumanChatRefused
 from aweb.identity_auth_deps import participant_dids
 
@@ -361,7 +360,6 @@ async def _resolve_chat_target_for_tool(
     selector: CreateSessionRequest | str,
     runtime,
     source: str,
-    recipient_binding: RecipientIdentityBinding | None = None,
 ):
     """Resolve a tool's named recipient or its stored session through one owner."""
     if isinstance(selector, CreateSessionRequest):
@@ -372,11 +370,8 @@ async def _resolve_chat_target_for_tool(
             runtime,
             source,
             session_selection=ChatSessionSelection.REUSE_PAIR,
-            recipient_binding=recipient_binding,
         )
-    return await resolve_chat_targets(
-        db, sender, selector, runtime, source, recipient_binding=recipient_binding
-    )
+    return await resolve_chat_targets(db, sender, selector, runtime, source)
 
 
 @messaging_tool
@@ -401,7 +396,6 @@ async def send_chat(
     plaintext: bool = False,
     federation_transport=None,
     public_origin: str | None = None,
-    recipient_binding: RecipientIdentityBinding | None = None,
 ) -> str:
     auth = get_auth()
     sender = mcp_messaging_auth(auth)
@@ -482,7 +476,6 @@ async def send_chat(
                 selector=selector if selector is not None else session_id,
                 runtime=runtime,
                 source=source,
-                recipient_binding=recipient_binding,
             )
         except (HTTPException, FederationAuthorityError, ServiceError) as exc:
             return _send_refusal(exc, address=address_ref)

@@ -119,7 +119,6 @@ from aweb.messaging.recipient_lookup import (
 from aweb.messaging.recipient_bindings import signed_recipient_matches
 from aweb.messaging.kinds import MessageKind
 from aweb.messaging.recipients import (
-    RecipientIdentityBinding,
     resolve_address_recipient,
 )
 from aweb.messaging.runtime import MessagingRuntime
@@ -744,7 +743,7 @@ async def _stored_exact_chat_send(
     """Acknowledge one accepted artifact after ordinary request validation.
 
     Receiver-Wide Replay And Contact Compatibility
-    (docs/identity-messaging-contract.md:366-374) exempts exact plaintext retries
+    (docs/identity-messaging-contract.md:358-366) exempts exact plaintext retries
     from age only. The shared owner decides sameness; this adapter retains chat
     request binding, current sender key and encrypted expiry checks.
     """
@@ -1122,7 +1121,6 @@ async def _resolve_named_recipients(
     to_addresses: list[str],
     signed_payload: str | None = None,
     signature: str | None = None,
-    recipient_binding: RecipientIdentityBinding | None = None,
 ) -> list[Mapping[str, Any]]:
     actor_dids = participant_dids(auth)
     resolved: dict[str, Mapping[str, Any]] = {}
@@ -1192,7 +1190,6 @@ async def _resolve_named_recipients(
             address=address,
             source=source,
             kind=MessageKind.CHAT,
-            binding=recipient_binding,
             signed_payload=signed_payload,
             signature=signature,
         )
@@ -1396,7 +1393,6 @@ async def resolve_chat_targets(
     source: str,
     *,
     session_selection: ChatSessionSelection = ChatSessionSelection.REQUEST_DEFAULT,
-    recipient_binding: RecipientIdentityBinding | None = None,
 ) -> ChatTarget:
     """Resolve whom a send reaches, before any of it is stored.
 
@@ -1442,7 +1438,6 @@ async def resolve_chat_targets(
         to_addresses=selector.to_addresses,
         signed_payload=selector.signed_payload,
         signature=selector.signature,
-        recipient_binding=recipient_binding,
     )
     new_local_plaintext_send = (
         session_selection is ChatSessionSelection.REQUEST_DEFAULT

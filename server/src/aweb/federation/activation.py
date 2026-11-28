@@ -238,7 +238,7 @@ class FederationAuthorityActivation:
     ) -> ResolvedContactIdentity:
         canonical = canonical_protocol_address(address)
         # Strict Cross-Registry Sender Authority
-        # (docs/identity-messaging-contract.md:223-243): reuse only a live,
+        # (docs/identity-messaging-contract.md:215-235): reuse only a live,
         # checkpoint-matching PostgreSQL cohort, before charging external work.
         published = await self.work.get_result("discovery:" + canonical)
         if published is not None and published.status == AuthorityResultState.VERIFIED:

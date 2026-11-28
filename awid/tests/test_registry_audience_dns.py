@@ -89,7 +89,7 @@ async def registry_audience_dns(monkeypatch):
         channel.close()
 
 
-# docs/identity-messaging-contract.md:249-256: read discovery remains domain-selected;
+# docs/identity-messaging-contract.md:241-248: read discovery remains domain-selected;
 # administrative writes use their configured pin instead.
 @pytest.mark.asyncio
 @pytest.mark.parametrize(

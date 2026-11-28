@@ -286,7 +286,7 @@ async def explicit_mail_target_matches_participant(
         # A retained key is read attribution, not a stable send selector.
         # Explicit stable/address/agent bindings below retain the released
         # continuation behavior (Direct Address Send Protocol
-        # (docs/identity-messaging-contract.md:156-176)).
+        # (docs/identity-messaging-contract.md:148-168)).
         did_matches = participant_did == supplied_did
         # Signed clients often include the recipient's current did:key as an
         # extra binding while the conversation participant stores the stable

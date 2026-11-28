@@ -161,7 +161,7 @@ def require_fresh_federation_envelope(
     """Require freshness for a send that has no exact established plaintext proof.
 
     Receiver-Wide Replay And Contact Compatibility
-    (docs/identity-messaging-contract.md:338-370) exempts a repeat of an accepted
+    (docs/identity-messaging-contract.md:330-362) exempts a repeat of an accepted
     plaintext artifact, never a new attestation (Antares69b3a50a).
     """
     enforce_message_timestamp_skew(
@@ -185,7 +185,7 @@ def verify_federation_envelope_integrity(
     consumers require freshness unless their persisted projection/receipt is
     an exact match. Encrypted messages always retain the ordinary age window.
     Receiver-Wide Replay And Contact Compatibility
-    (docs/identity-messaging-contract.md:338-370); Antares69b3a50a.
+    (docs/identity-messaging-contract.md:330-362); Antares69b3a50a.
     """
     model = (
         envelope

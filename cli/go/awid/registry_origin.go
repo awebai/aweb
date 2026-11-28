@@ -46,7 +46,7 @@ func (e *RegistryURLRefusal) Error() string {
 	return message + " Use an origin such as https://registry.example."
 }
 
-// CanonicalRegistryServerOrigin implements identity-messaging-contract.md:218-222
+// CanonicalRegistryServerOrigin implements identity-messaging-contract.md:210-214
 // and the /api aliases in vectors/atomic-address-claim-v1.json. Requests, stored
 // routing and administrative pin validation share this registry-specific owner.
 // Canonicalization never admits a private network destination by itself.

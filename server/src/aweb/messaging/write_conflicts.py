@@ -9,7 +9,7 @@ def is_unique_write_conflict(error: BaseException) -> bool:
 
     Exact-retry race recovery rereads only after a committed winner's
     unique-key collision. See Receiver-Wide Replay And Contact Compatibility
-    (docs/identity-messaging-contract.md:351-374).
+    (docs/identity-messaging-contract.md:343-366).
     """
     cause = error.__cause__ if isinstance(error, QueryError) else error
     return isinstance(cause, asyncpg.exceptions.UniqueViolationError)

@@ -582,7 +582,7 @@ def main() -> None:
         # A missing current-route flag now just repeats valid strict authority.
         # Mutate the actual dispatch boundary instead: substituting the configured
         # registry origin for the admitted recipient origin violates
-        # docs/identity-messaging-contract.md:150-161,175-177.
+        # docs/identity-messaging-contract.md:142-153,175-177.
         replace_exact(
             chat_send,
             '            "delivery_origin": _target_delivery_origin(recipient),\n',
