@@ -13,12 +13,11 @@ from __future__ import annotations
 
 import pytest
 
-from trust_web_cases import CORPUS, DISAGREEMENTS, compare, load_corpus, run_case
+from trust_web_cases import CASES, DISAGREEMENTS, compare, run_case
 from trust_web_cases import stack_factory as stack_factory
 
 __all__ = ["stack_factory"]
 
-CASES = {case.id: case for case in load_corpus(CORPUS)}
 CASE_IDS = sorted(DISAGREEMENTS)
 
 

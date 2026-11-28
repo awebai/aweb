@@ -905,7 +905,7 @@ Both are required.
 
 ## Experimental model cases
 
-### `trust-web-cases-v2.json` — experimental
+### `trust-web-cases-v2.json` and `trust-web-cases-model-v2.json` — experimental
 
 Cases of the experimental trust-web model in `spec/trust-model` (a Lean 4
 model of selected trust rules). The model's author owns its decisions, the
@@ -914,6 +914,15 @@ every implemented case against a real AWID registry and a real aweb server, and
 compares the code's decision and the evidence it commits with the case. The
 file proves nothing about a rule unless a case pins that rule and the runner
 reads it from committed evidence.
+
+`trust-web-cases-v2.json` holds hand-written `seed` cases. `trust-web-cases-model-v2.json`
+is the model's own emission (`lake exe trust-web-cases`): every case `emitted`,
+its ids prefixed `model-`, and its neighbours its own cases. The model's build
+fails unless the committed file equals a fresh run of the emitter
+(`spec/trust-model/TrustWeb/CasesCheck.lean`); the runner pins it by its bytes,
+and holds it to contain a twin of every implemented seed (equal in `who`,
+`act`, `args`, `setup`, `expect`, `neighbour` and `observe`). Each document is
+loaded on its own, and no id is in both.
 
 **Formats `aweb.trust-web-cases/1` and `/2`.** `/2` is `/1` plus one optional case
 field, `propagation`, described below; a `/1` document keeps its meaning and has
@@ -945,9 +954,14 @@ exactly these fields:
   symbols that the runner binds to fresh real keys and domains per case. A
   team is `"admin"` or `{"named": n}`, as the model's `Team` is.
 - `expect`: `{"result": "allowed"}`, or `{"result": "refused", "premise":
-  "<act>.<premise>"}` naming the one premise of that act that fails. Until the
-  model names every premise, only definition names are used (`MayIssue`,
-  `Valid`, `Authorised`, `InTeam`, ...).
+  "<act>.<premise>"}` naming the first premise of that act that fails, every
+  premise before it holding, in the model's check order (`Issuer`, `Asker`,
+  `Registered`, `OrgExists`, `Fresh`, `Valid`, `MayIssue`, `Authorised`,
+  `NotAdminTeam`, `OneTeamIfLocal`, `InTeam`, `FreshSession`, `Stands`, ...).
+  A refusal is emitted only if no constructor sharing its route allows the
+  same request: AWID's one revocation route serves `revokeSelf`, `revokeChild`
+  and `revokeByOrg`, and its one registration route serves `registerByRoot`
+  and `registerByParent`, and a request names no constructor.
 - `neighbour`: present exactly on refusals. It is the id of an allowed case of
   the same act that differs from the refusal in what makes that premise hold:
   the actor, or one setup fact. Every other premise and wire prerequisite stays
@@ -991,7 +1005,23 @@ so sees team revocations only as its cached revocation list does; it counts as
 not live only on the refusals that state the grant has ended. Where a
 constructor builds its party from its arguments (`createOrg`, `revokeSelf`,
 `registerByParent`, `mintGrant`, `revokeGrant`, ...), a case naming any other
-party is refused.
+party is refused, and so is a registration naming the other kind of issuer,
+except in a refusal naming exactly that premise (`<act>.Asker`, `<act>.Issuer`).
+Such a refusal is sent in the only form the wire has:
+- a registration is signed by the party asking, and names as parent the issuer
+  the certificate claims; a member with no certificate is named by its did:aw,
+  and the root's request presents no chain for it;
+- a grant's subject is whoever's team certificate signs the request, so
+  another party asks by presenting the subject's certificate under its own
+  key;
+- a revocation is signed by the party asking.
+
+A revocation of a subject that holds no certificate names its did:aw in the
+case's one organisation, and no head. A grant revocation for a session that
+was never answered with a grant names a grant id the server never issued.
+Each registration signs its own certificate, issued at least a second after
+the subject's previous one, because AWID takes a byte-identical certificate
+again as a retry of the same registration.
 
 **Disagreements.** A case the code decides differently is filed as a task and
 listed with it in `DISAGREEMENTS`. The gate claims agreement only for the
@@ -1073,6 +1103,7 @@ reference duplication are mutation-tested failures.
 | `rotation-announcements-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
 | `stable-id-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
 | `trust-web-cases-v2.json` | Python aweb `trust_web_cases.py`, run by `test_trust_web_cases.py` against a real AWID and aweb server |
+| `trust-web-cases-model-v2.json` | Python aweb `trust_web_cases.py`, run by `test_trust_web_cases.py` against a real AWID and aweb server |
 | `secrets-runner-protocol-v1.json` | secrets `test_runner_protocol_vectors.py` and production-server `test_runner_server_protocol.py` |
 | `secrets-runner-http-v1.json` | secrets `test_runner_protocol_vectors.py` |
 | `team-auth-envelope-v2.json` | Python aweb `test_team_auth_envelope.py`; naapp-lib `test_team_auth_vectors.py`; Go shared `conformance_test.go`, including its root-equality check for the managed embedded copy; TypeScript channel-core `request_auth_v2.test.ts`; Go AWID `request_envelope_as_message_test.go` and TypeScript channel-core `request_envelope_as_message.test.ts`, which present each signed request as a message |

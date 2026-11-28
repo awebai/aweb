@@ -1,7 +1,8 @@
 """The trust-web model's cases, and the runner that executes them for real.
 
-The cases are ``docs/vectors/trust-web-cases-v1.json`` (format
-``aweb.trust-web-cases/1``, specified in docs/vectors/README.md). A case is
+The cases are the seeds in ``docs/vectors/trust-web-cases-v2.json`` and the
+model's emission in ``docs/vectors/trust-web-cases-model-v2.json`` (format
+``aweb.trust-web-cases/2``, specified in docs/vectors/README.md). A case is
 written in the vocabulary of the experimental Lean model in
 ``spec/trust-model``: a setup of model acts, one act by one party, the
 expected decision (allowed, or refused because one named premise fails) and
@@ -34,7 +35,7 @@ import os
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -65,6 +66,12 @@ CORPUS_PATH = (
     Path(__file__).resolve().parents[2] / "docs/vectors/trust-web-cases-v2.json"
 )
 CORPUS = json.loads(CORPUS_PATH.read_text())
+# The model's own emission (lake exe trust-web-cases), beside the hand-written
+# seeds; its neighbours are its own cases.
+MODEL_CORPUS_PATH = (
+    Path(__file__).resolve().parents[2] / "docs/vectors/trust-web-cases-model-v2.json"
+)
+MODEL_CORPUS = json.loads(MODEL_CORPUS_PATH.read_text())
 FORMAT_V1 = "aweb.trust-web-cases/1"
 # /2 is /1 plus one optional case field, "propagation".
 FORMAT_V2 = "aweb.trust-web-cases/2"
@@ -219,20 +226,22 @@ FIXED_PARTY: dict[str, Callable[[dict], dict | None]] = {
 # premise of Step, only premises that are a definition of the model are
 # nameable (agreed with the model's author, aweb-adyz).
 PREMISES = {
-    "registerByRoot": {"Authorised", "Fresh"},
-    "registerByParent": {"Fresh", "Valid", "MayIssue"},
-    "revokeChild": {"Valid"},
-    "revokeByOrg": {"Authorised"},
+    "registerByRoot": {"Issuer", "OrgExists", "Fresh", "Authorised"},
+    "registerByParent": {"Issuer", "Asker", "Fresh", "Valid", "MayIssue"},
+    "revokeSelf": {"Registered", "Asker"},
+    "revokeChild": {"Registered", "Issuer", "Asker", "Valid"},
+    "revokeByOrg": {"Registered", "Authorised"},
     "readmitByRoot": {"Authorised"},
     "readmitByParent": {"Valid"},
     "release": {"Authorised"},
-    "admit": {"Authorised", "OneTeamIfLocal"},
+    "admit": {"NotAdminTeam", "Authorised", "OneTeamIfLocal"},
     "admitAdmin": {"Valid", "Authorised"},
     "remove": {"Authorised", "KeepsAnAdmin"},
     "leave": {"KeepsAnAdmin"},
     "invite": {"Authorised"},
     "redeem": {"OneTeamIfLocal"},
-    "mintGrant": {"InTeam"},
+    "mintGrant": {"Asker", "InTeam", "FreshSession"},
+    "revokeGrant": {"Asker", "Stands"},
     "sendOwn": {"CanAct"},
 }
 
@@ -319,19 +328,38 @@ def _party(value: Any, where: str) -> None:
     PARTY_FORMS[form](inner, f"{where} party {form}")
 
 
-def _step(value: Any, where: str) -> Step:
+# The premises whose failure is the very shape the format otherwise refuses: a
+# certificate with the other kind of issuer, or a party other than the one the
+# constructor builds. Only a refusal naming exactly that premise may have it.
+ISSUER_PREMISES = {"registerByRoot.Issuer", "registerByParent.Issuer"}
+ASKER_PREMISES = {
+    "registerByParent.Asker",
+    "registerByParent.Issuer",
+    "revokeSelf.Asker",
+    "mintGrant.Asker",
+    "revokeGrant.Asker",
+}
+
+
+def _step(value: Any, where: str, refusing: str | None = None) -> Step:
+    """One act; ``refusing`` is the premise a refused case names for it."""
     _fields(value, {"who", "act", "args"}, where)
     who, act, args = value["who"], value["act"], value["args"]
     _party(who, where)
     if act not in ACT_ARGS:
         _refuse(where, f"act {act!r} is not a model act")
     _record(ACT_ARGS[act])(args, f"{where} args of {act}")
-    if act == "registerByRoot" and args["cert"]["issuer"] != "root":
+    issuer_free = refusing in ISSUER_PREMISES
+    if act == "registerByRoot" and args["cert"]["issuer"] != "root" and not issuer_free:
         _refuse(where, "registerByRoot registers a certificate issued by the root")
-    if act == "registerByParent" and args["cert"]["issuer"] == "root":
+    if (
+        act == "registerByParent"
+        and args["cert"]["issuer"] == "root"
+        and not issuer_free
+    ):
         _refuse(where, "registerByParent registers a certificate issued by a member")
     fixed = FIXED_PARTY.get(act)
-    if fixed is not None and who != fixed(args):
+    if fixed is not None and who != fixed(args) and refusing not in ASKER_PREMISES:
         _refuse(
             where, f"party {who!r} is not the party {act} is asked by, {fixed(args)!r}"
         )
@@ -375,7 +403,8 @@ def _case(value: Any, format: str) -> Case:
             where,
             f"an implemented case's rule must be any or built, not {value['rule']!r}",
         )
-    step = _step({k: value[k] for k in ("who", "act", "args")}, where)
+    refusing = expect.get("premise") if refused else None
+    step = _step({k: value[k] for k in ("who", "act", "args")}, where, refusing)
     if type(value["setup"]) is not list:
         _refuse(where, "setup must be a list of acts")
     setup = tuple(
@@ -486,10 +515,36 @@ def load_corpus(corpus: Any) -> list[Case]:
 # aweb-adyz.2: the server sees a team-certificate revocation only after its
 # cached revocation list refreshes (60 s fresh, 60 s stale:
 # docs/aweb-sot.md:448-466); the model assumes one current record (A4).
+#
+# aweb-adyz.1: AWID's team-certificate registration has no one-team check for
+# a local member key (docs/identity.md:64-77).
+# aweb-adyz.4: AWID has no admin team, so a plain admission adds an admin.
+# aweb-adyz.5: AWID answers a namespace that does not exist as 503
+# evidence_unavailable, not as a refusal.
 DISAGREEMENTS: dict[str, str] = {
     "mint-grant-after-removal-refused": "aweb-adyz.2",
     "remove-member-ends-its-grant": "aweb-adyz.2",
+    "model-admit-local-member-to-second-team-refused": "aweb-adyz.1",
+    "model-admit-to-admin-team-refused": "aweb-adyz.4",
+    "model-register-person-in-missing-org-refused": "aweb-adyz.5",
 }
+
+
+def _cases_of(*corpora: dict) -> dict[str, Case]:
+    """Every case of the given documents by id, each loaded on its own; an id
+    in two documents is refused."""
+    found: dict[str, Case] = {}
+    for corpus in corpora:
+        for case in load_corpus(corpus):
+            if case.id in found:
+                raise CaseFormatError(f"case id {case.id!r} is in two documents")
+            found[case.id] = case
+    return found
+
+
+# The seeds and the model's emission: the cases the gate and the
+# disagreement run draw from.
+CASES = _cases_of(CORPUS, MODEL_CORPUS)
 
 
 # ---------------------------------------------------------------------------
@@ -579,10 +634,6 @@ class Run:
     revocation_reads: dict[str, int] = field(default_factory=dict)
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
 def _b64url(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
@@ -644,6 +695,7 @@ class World:
     propagate: bool = False
     last_revocation_reads: int = 0
     session_keys: dict[str, SigningKey] = field(default_factory=dict)
+    issued: dict[str, datetime] = field(default_factory=dict)
     grants: dict[str, _Grant] = field(default_factory=dict)
 
     # -- symbols ----------------------------------------------------------
@@ -653,6 +705,17 @@ class World:
 
     def did_key(self, symbol: str) -> str:
         return did_key_from_signing_key(bytes(self.key(symbol)))
+
+    def issue_time(self, subject: str) -> str:
+        """A certificate time for ``subject`` later than any it was issued:
+        AWID takes a byte-identical certificate again as a retry of the same
+        registration, so each act signs its own, to the second."""
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        last = self.issued.get(subject)
+        if last is not None and now <= last:
+            now = last + timedelta(seconds=1)
+        self.issued[subject] = now
+        return now.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     def session_key(self, session: str) -> SigningKey:
         return self.session_keys.setdefault(session, SigningKey.generate())
@@ -733,12 +796,17 @@ class World:
             self.memberships[(team_id, member)] = found
         return found
 
-    def team_headers(self, member: str, team_id: str, body: bytes) -> dict:
+    def team_headers(
+        self, member: str, team_id: str, body: bytes, signer: str | None = None
+    ) -> dict:
+        """A request presenting ``member``'s certificate, signed by ``signer``
+        (the member itself unless another party asks in its name)."""
         certificate = self.memberships[(team_id, member)].certificate
+        signer = member if signer is None else signer
         return {
             **_signed_team_headers(
-                bytes(self.key(member)),
-                self.did_key(member),
+                bytes(self.key(signer)),
+                self.did_key(signer),
                 team_id,
                 _encode_certificate(certificate),
                 body,
@@ -788,11 +856,16 @@ class World:
         did_aw = await self.did_aw(subject, cert["org"])
         domain = self.domain(cert["org"])
         issuer = cert["issuer"]
-        parent = (
-            {"kind": "namespace", "id": domain}
-            if issuer == "root"
-            else {"kind": "identity", "id": self.identities[issuer["member"]].did_aw}
-        )
+        if issuer == "root":
+            parent = {"kind": "namespace", "id": domain}
+        else:
+            # A member that holds no certificate is still named by its did:aw.
+            member = issuer["member"]
+            known = self.identities.get(member)
+            parent_id = (
+                known.did_aw if known else await self.did_aw(member, cert["org"])
+            )
+            parent = {"kind": "identity", "id": parent_id}
         signer = self.party_key(step.who)
         fields = {
             "v": 1,
@@ -802,7 +875,7 @@ class World:
             "parent": parent,
             "kind": {"person": "human", "agent": "agent"}[cert["kind"]],
             "issuer_key": did_key_from_signing_key(bytes(signer)),
-            "issued_at": _now(),
+            "issued_at": self.issue_time(subject),
         }
         signed = {
             "certificate": fields,
@@ -830,37 +903,39 @@ class World:
         await self._register(step, [])
 
     async def _act_registerByParent(self, step: Step) -> None:
-        parent = step.args["cert"]["issuer"]["member"]
-        await self._register(step, self.identities[parent].chain)
+        issuer = step.args["cert"]["issuer"]
+        # A root-issued certificate asked by a member presents no ancestry.
+        parent = None if issuer == "root" else self.identities.get(issuer["member"])
+        await self._register(step, parent.chain if parent else [])
 
     async def _revoke(self, step: Step) -> None:
         symbol = step.args["subject"]
-        subject = self.identities[symbol]
-        # AWID revokes only the head the request names: the subject's current
-        # certificate, read from the registry's own status.
-        status = await self._status(symbol)
-        entry = self._entry(status, subject.did_aw)
-        if entry is None:
-            raise Unavailable(f"no current certificate to revoke for {symbol}")
+        subject = self.identities.get(symbol)
+        if subject is None:
+            # No certificate stands for it, so no head is named: the request
+            # revokes its did:aw in the namespace it was given.
+            did_aw, org = self.did_aws[symbol]
+            expected_head = None
+        else:
+            did_aw, org = subject.did_aw, subject.org
+            # AWID revokes only the head the request names: the subject's
+            # current certificate, read from the registry's own status.
+            entry = self._entry(await self._status(symbol), did_aw)
+            if entry is None:
+                raise Unavailable(f"no current certificate to revoke for {symbol}")
+            expected_head = entry["current_certificate_id"]
         await self.stack.client.revoke_id_certificate(
-            self.domain(subject.org),
-            subject.did_aw,
+            self.domain(org),
+            did_aw,
             signer=_signer(self.party_key(step.who)),
-            expected_head=entry["current_certificate_id"],
+            expected_head=expected_head,
         )
 
+    # One identity-revocation route serves the three constructors: a request
+    # names the subject and is signed by whoever asks.
     _act_revokeSelf = _revoke
+    _act_revokeChild = _revoke
     _act_revokeByOrg = _revoke
-
-    async def _act_revokeChild(self, step: Step) -> None:
-        issuer = self.identities[step.args["subject"]].issuer
-        if step.who != {"id": issuer}:
-            # revokeChild is asked by the subject's issuer; another party's
-            # revocation is a refusal whose premise the model has not named.
-            raise NotRunnable(
-                f"revokeChild of {step.args['subject']} is asked by {issuer!r}, not {step.who!r}"
-            )
-        await self._revoke(step)
 
     async def _act_admit(self, step: Step) -> None:
         m = step.args["membership"]
@@ -969,10 +1044,14 @@ class World:
                 "ttl_seconds": GRANT_TTL_SECONDS,
             }
         ).encode()
+        if (team_id, g["subject"]) not in self.memberships:
+            raise NotRunnable(f"{g['subject']} holds no certificate of {team_id}")
+        # A grant's subject is whoever's certificate signs the mint; another
+        # party can ask only by presenting the subject's certificate.
         minted = await self._server(
             "POST",
             "/v1/identity-grants",
-            self.team_headers(g["subject"], team_id, body),
+            self.team_headers(g["subject"], team_id, body, signer=step.who["id"]),
             body,
         )
         self.grants[g["session"]] = _Grant(
@@ -983,17 +1062,22 @@ class World:
         g = step.args["grant"]
         grant = self.grants.get(g["session"])
         if grant is None:
-            raise NotRunnable(f"session {g['session']} was never answered with a grant")
+            # No grant stands for the session, so the request names a grant
+            # id the server never issued.
+            team_id = self.team_id(g["org"], g["team"])
+            grant = _Grant(grant_id=str(uuid4()), team_id=team_id, binding=g)
+        if (grant.team_id, g["subject"]) not in self.memberships:
+            raise NotRunnable(f"{g['subject']} holds no certificate of {grant.team_id}")
         if grant.binding != g:
             raise NotRunnable(
                 f"revokeGrant names {g!r}, but session {g['session']} holds {grant.binding!r}"
             )
-        # The party is the grant's subject (the format checks it), which signs
-        # with its own team certificate.
+        # The grant's subject's certificate, signed by whoever asks: the
+        # subject itself unless the case names another party.
         await self._server(
             "POST",
             f"/v1/identity-grants/{grant.grant_id}/revoke",
-            self.team_headers(step.who["id"], grant.team_id, b""),
+            self.team_headers(g["subject"], grant.team_id, b"", signer=step.who["id"]),
             b"",
         )
 
@@ -1248,6 +1332,13 @@ async def run_case(stack: Stack, case: Case) -> Run:
         # registered before the record is first observed.
         cert = case.step.args["cert"]
         await world.did_aw(cert["subject"], cert["org"])
+    if (
+        case.step.act in REVOCATIONS
+        and case.step.args["subject"] not in world.identities
+    ):
+        # A revocation of a subject that holds no certificate still names a
+        # did:aw: the subject's, registered in the case's one organisation.
+        await world.did_aw(case.step.args["subject"], _only_org(case))
     before = {o.label(): await world.observe(o) for o in case.observe}
     refusal = await world.perform(case.step)
     after: dict[str, Any] = {}
@@ -1258,6 +1349,21 @@ async def run_case(stack: Stack, case: Case) -> Run:
         if observation.predicate in SERVER_OBSERVATIONS:
             reads[observation.label()] = world.last_revocation_reads
     return Run(refusal=refusal, before=before, after=after, revocation_reads=reads)
+
+
+REVOCATIONS = ("revokeSelf", "revokeChild", "revokeByOrg")
+
+
+def _only_org(case: Case) -> str:
+    """The one organisation ``case`` creates; a subject with no certificate has
+    no organisation of its own, and the model's premise names none."""
+    orgs = [step.args["org"] for step in case.setup if step.act == "createOrg"]
+    if len(orgs) != 1:
+        raise NotRunnable(
+            f"{case.step.args['subject']} holds no certificate and the case "
+            f"creates {len(orgs)} organisations, so no namespace names it"
+        )
+    return orgs[0]
 
 
 # The observations read through the aweb server, and so through its cached
@@ -1316,6 +1422,46 @@ TEAM_CONTROLLER_ONLY = PremiseRefusals(
     )
 )
 
+SUBJECT_HAS_A_HEAD = PremiseRefusals(
+    (
+        WireRefusal(
+            409,
+            code="head_conflict",
+            source="awid/src/awid_service/id_registration.py:88-106",
+        ),
+    )
+)
+
+NO_SUCH_ID = PremiseRefusals(
+    (
+        WireRefusal(
+            404,
+            code="unknown_id",
+            source="awid/src/awid_service/id_revocation.py:70-71",
+        ),
+    )
+)
+
+NOT_A_REVOKER = PremiseRefusals(
+    (
+        WireRefusal(
+            403,
+            code="revocation_forbidden",
+            source="awid/src/awid_service/id_revocation.py:141-156",
+        ),
+    )
+)
+
+NOT_THE_CERTIFICATES_KEY = PremiseRefusals(
+    (
+        WireRefusal(
+            401,
+            code="member_key_mismatch",
+            source="awid/src/awid/team_certificate.py:292-293, 356-367",
+        ),
+    )
+)
+
 # Reviewed: each entry cites where its route refuses for that premise.
 REFUSALS: dict[str, PremiseRefusals] = {
     "registerByRoot.Authorised": PremiseRefusals(
@@ -1370,6 +1516,73 @@ REFUSALS: dict[str, PremiseRefusals] = {
                 401,
                 code="certificate_revoked",
                 source="server/src/aweb/team_auth.py:40-47",
+            ),
+        )
+    ),
+    # A root-issued request names its namespace as parent; a certificate whose
+    # parent is a member presents that member's chain, and the root's request
+    # has none to present.
+    "registerByRoot.Issuer": PremiseRefusals(
+        (
+            WireRefusal(
+                422,
+                code="missing_parent",
+                source="awid/src/awid_service/id_chains.py:30-32",
+            ),
+        )
+    ),
+    # A registration names the head it replaces; a first registration names
+    # none, and the subject's standing head refuses it.
+    "registerByRoot.Fresh": SUBJECT_HAS_A_HEAD,
+    "registerByParent.Fresh": SUBJECT_HAS_A_HEAD,
+    # A member signing a namespace-parented certificate does not hold the
+    # namespace's root key.
+    "registerByParent.Issuer": PremiseRefusals(
+        (
+            WireRefusal(
+                422,
+                code="issuer_key_not_current",
+                source="awid/src/awid_service/id_registration.py:196-199",
+            ),
+        )
+    ),
+    # A party signing a certificate whose parent is another member does not
+    # hold that parent's key.
+    "registerByParent.Asker": PremiseRefusals(
+        (
+            WireRefusal(
+                422,
+                code="issuer_key_not_current",
+                source="awid/src/awid_service/id_registration.py:225-226",
+            ),
+        )
+    ),
+    "revokeSelf.Registered": NO_SUCH_ID,
+    "revokeChild.Registered": NO_SUCH_ID,
+    "revokeByOrg.Registered": NO_SUCH_ID,
+    # The signer is none of the subject, its current parent and the root.
+    "revokeSelf.Asker": NOT_A_REVOKER,
+    "revokeChild.Issuer": NOT_A_REVOKER,
+    "revokeChild.Asker": NOT_A_REVOKER,
+    "revokeByOrg.Authorised": NOT_A_REVOKER,
+    # The subject's certificate presented under another party's key.
+    "mintGrant.Asker": NOT_THE_CERTIFICATES_KEY,
+    "revokeGrant.Asker": NOT_THE_CERTIFICATES_KEY,
+    "mintGrant.FreshSession": PremiseRefusals(
+        (
+            WireRefusal(
+                409,
+                detail="an active grant already exists for this grant_did_key",
+                source="server/src/aweb/routes/identity_grants.py:136-152",
+            ),
+        )
+    ),
+    "revokeGrant.Stands": PremiseRefusals(
+        (
+            WireRefusal(
+                404,
+                detail="grant not found",
+                source="server/src/aweb/routes/identity_grants.py:300-312",
             ),
         )
     ),

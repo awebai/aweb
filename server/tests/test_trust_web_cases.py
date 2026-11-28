@@ -1,7 +1,7 @@
 """The trust-web model's cases, run against the real AWID registry and aweb server.
 
-The cases are the corpus trust_web_cases.py loads (format
-``aweb.trust-web-cases/1``, docs/vectors/README.md). Every implemented case
+The cases are the seeds and the model's emission trust_web_cases.py loads
+(format ``aweb.trust-web-cases/2``, docs/vectors/README.md). Every implemented case
 runs here: setup is replayed as model acts through signed public routes, the
 act is sent, and the decision and the committed evidence read back are
 compared with the case. A case the code decides differently stays a failing
@@ -12,19 +12,22 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import hashlib
 import json
 
 import pytest
 
 from trust_web_cases import (
+    CASES,
     CORPUS,
     DISAGREEMENTS,
+    MODEL_CORPUS,
+    MODEL_CORPUS_PATH,
     CaseFormatError,
     NotRunnable,
     Step,
     World,
     _Grant,
-    _Identity,
     compare,
     load_corpus,
     run_case,
@@ -103,6 +106,50 @@ def test_a_dropped_first_batch_case_is_detected():
     corpus = _valid()
     corpus["cases"] = [c for c in corpus["cases"] if c["id"] != "revoke-grant"]
     assert FIRST_BATCH - _present_cases(corpus) == {"revoke-grant"}
+
+
+# The model's emission, pinned by its committed bytes: the model's build checks
+# the file equals a fresh run of its emitter, so a changed file is a new
+# emission to review here, never a silent edit.
+MODEL_EMISSION_SHA256 = (
+    "8fbb070cf9ad083c26ad93266e81ef2368345b182ed52cab965a033552f3233d"
+)
+
+
+def test_the_model_file_is_the_reviewed_emission():
+    assert hashlib.sha256(MODEL_CORPUS_PATH.read_bytes()).hexdigest() == (
+        MODEL_EMISSION_SHA256
+    )
+    cases = load_corpus(copy.deepcopy(MODEL_CORPUS))
+    assert len(cases) == 38
+    assert all(case.source == "emitted" and case.runnable for case in cases)
+    assert all(case.id.startswith("model-") for case in cases)
+    assert MODEL_CORPUS["model"]["emitter"] == "lake exe trust-web-cases"
+
+
+TWIN_FIELDS = ("who", "act", "args", "setup", "expect", "neighbour", "observe")
+
+
+def _as_emitted(case: dict) -> str:
+    """The fields a seed and its emitted twin share, with the neighbour named
+    as the emitter names it."""
+    kept = {key: case[key] for key in TWIN_FIELDS if key in case}
+    if "neighbour" in kept:
+        kept["neighbour"] = kept["neighbour"].removeprefix("model-")
+    return json.dumps(kept, sort_keys=True)
+
+
+def test_every_implemented_seed_has_its_twin_in_the_model_file():
+    emitted = {_as_emitted(case) for case in MODEL_CORPUS["cases"]}
+    seeds = [case for case in CORPUS["cases"] if case["status"] == "implemented"]
+    untwinned = [case["id"] for case in seeds if _as_emitted(case) not in emitted]
+    assert untwinned == []
+
+
+def test_the_two_files_name_no_case_twice():
+    seeds = {case["id"] for case in CORPUS["cases"]}
+    emitted = {case["id"] for case in MODEL_CORPUS["cases"]}
+    assert seeds & emitted == set()
 
 
 def _mutations():
@@ -206,6 +253,14 @@ def _mutations():
     def unknown_propagation(c):
         _case(c, "remove-member-ends-its-grant")["propagation"] = "later"
 
+    def refusal_of_another_premise_by_another_party(c):
+        _case(c, "mint-grant-after-removal-refused")["who"] = {"id": "mallory"}
+
+    def refusal_of_another_premise_with_member_issuer(c):
+        _case(c, "register-person-by-other-org-root-refused")["args"]["cert"][
+            "issuer"
+        ] = {"member": "bob"}
+
     def neighbour_not_a_symbol(c):
         _case(c, "register-person-by-agent-parent-refused")["neighbour"] = 7
 
@@ -239,6 +294,14 @@ def _mutations():
         "child-registered-by-another": (child_registered_by_another, "party"),
         "root-act-with-member-issuer": (root_act_with_member_issuer, "root"),
         "observation-of-wrong-type": (observation_of_wrong_type, "boolean"),
+        "refusal-of-another-premise-by-another-party": (
+            refusal_of_another_premise_by_another_party,
+            "party",
+        ),
+        "refusal-of-another-premise-with-member-issuer": (
+            refusal_of_another_premise_with_member_issuer,
+            "root",
+        ),
         "neighbour-not-a-symbol": (neighbour_not_a_symbol, "symbol"),
         "unknown-propagation": (unknown_propagation, "propagation"),
     }
@@ -256,18 +319,6 @@ def test_the_format_refuses_each_single_fault(name):
 
 # A world with no stack: any request it tried to send would fail on the
 # missing stack, so NotRunnable shows the act was refused before sending.
-
-
-@pytest.mark.asyncio
-async def test_a_child_revocation_by_a_party_other_than_its_issuer_is_not_sent():
-    world = World(stack=None)
-    world.identities["bot1"] = _Identity(
-        org="o1", did_aw="did:aw:unsent", chain=[], issuer="alice"
-    )
-    with pytest.raises(NotRunnable, match="asked by 'alice'"):
-        await world.perform(
-            Step(who={"id": "bob"}, act="revokeChild", args={"subject": "bot1"})
-        )
 
 
 @pytest.mark.asyncio
@@ -292,7 +343,6 @@ async def test_a_grant_revocation_naming_another_grant_is_not_sent():
 # The cases, against the real registry and server
 # ---------------------------------------------------------------------------
 
-CASES = {case.id: case for case in load_corpus(CORPUS)}
 RUNNABLE = sorted(case_id for case_id, case in CASES.items() if case.runnable)
 GATED = sorted(set(RUNNABLE) - set(DISAGREEMENTS))
 DESIGN = sorted(case_id for case_id, case in CASES.items() if not case.runnable)
