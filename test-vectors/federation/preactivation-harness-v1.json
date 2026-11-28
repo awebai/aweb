@@ -277,7 +277,7 @@
       "owner": "aweb-aazd.4",
       "evidence": [
         "server/tests/test_federation_phase_a_verdict.py::test_checkpoint_vector_cases",
-        "server/tests/test_federation_authority_core.py::test_cohort_vectors_execute_against_postgresql"
+        "server/tests/test_federation_authority_state.py::test_checkpoint_survives_fresh_repositories_and_refuses_a_delayed_n_plus_one"
       ],
       "mutation_disposition": "not_applicable_positive_control"
     },
@@ -308,7 +308,8 @@
       "mode": "direct_core",
       "owner": "aweb-aazd.4",
       "evidence": [
-        "server/tests/test_federation_phase_a_verdict.py::test_checkpoint_vector_cases"
+        "server/tests/test_federation_phase_a_verdict.py::test_checkpoint_vector_cases",
+        "server/tests/test_federation_authority_state.py::test_checkpoint_survives_fresh_repositories_and_refuses_a_delayed_n_plus_one"
       ],
       "mutation_disposition": "executed_core_mutation"
     },
@@ -318,7 +319,8 @@
       "mode": "direct_core",
       "owner": "aweb-aazd.4",
       "evidence": [
-        "server/tests/test_federation_phase_a_verdict.py::test_checkpoint_vector_cases"
+        "server/tests/test_federation_phase_a_verdict.py::test_checkpoint_vector_cases",
+        "server/tests/test_federation_authority_state.py::test_checkpoint_survives_fresh_repositories_and_refuses_a_delayed_n_plus_one"
       ],
       "mutation_disposition": "not_applicable_positive_control"
     },

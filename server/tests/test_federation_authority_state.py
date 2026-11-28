@@ -137,6 +137,71 @@ async def test_checkpoint_advance_invalidates_peer_address_and_replaces_whole_tu
 
 
 @pytest.mark.asyncio
+async def test_checkpoint_survives_fresh_repositories_and_refuses_a_delayed_n_plus_one(
+    aweb_cloud_db,
+) -> None:
+    """Each step reads the stored checkpoint through a new repository."""
+    db = aweb_cloud_db.aweb_db
+    await AuthorityRepository(db).commit_phase_a(checkpoint1(), cohort())
+
+    genesis = await AuthorityRepository(db).get_checkpoint(DID)
+    assert (genesis.seq, genesis.entry_hash, genesis.state_hash, genesis.revision) == (
+        1,
+        HASH1,
+        STATE1,
+        1,
+    )
+    n_plus_one_cohort = replace(
+        cohort(),
+        bound_current_did_key=KEY2,
+        checkpoint_seq=2,
+        checkpoint_entry_hash=HASH2,
+        checkpoint_revision=2,
+        publishing_fence=2,
+    )
+    await AuthorityRepository(db).commit_phase_a(checkpoint2(), n_plus_one_cohort)
+
+    # N+2 is built on the winning N+1 as storage holds it.
+    winner = await AuthorityRepository(db).get_checkpoint(DID)
+    assert (winner.seq, winner.entry_hash, winner.revision) == (2, HASH2, 2)
+    n_plus_two = CheckpointCandidate(
+        did_aw=DID,
+        seq=3,
+        entry_hash="c" * 64,
+        state_hash="e" * 64,
+        current_did_key=KEY2,
+        contains_snapshot=True,
+        expected_revision=winner.revision,
+        expected_entry_hash=winner.entry_hash,
+    )
+    advanced = await AuthorityRepository(db).commit_phase_a(
+        n_plus_two,
+        replace(
+            n_plus_one_cohort,
+            checkpoint_seq=3,
+            checkpoint_entry_hash="c" * 64,
+            checkpoint_revision=3,
+            publishing_fence=3,
+        ),
+    )
+    assert advanced.checkpoint_revision == 3
+    stored = await AuthorityRepository(db).get_checkpoint(DID)
+
+    with pytest.raises(FederationAuthorityError) as delayed:
+        await AuthorityRepository(db).commit_phase_a(checkpoint2(), n_plus_one_cohort)
+    assert delayed.value.reason == "sender_did_log_rollback"
+    after = await AuthorityRepository(db).get_checkpoint(DID)
+    assert after == stored
+    assert (
+        after.seq,
+        after.entry_hash,
+        after.state_hash,
+        after.current_did_key,
+        after.revision,
+    ) == (3, "c" * 64, "e" * 64, KEY2, 3)
+
+
+@pytest.mark.asyncio
 async def test_checkpoint_rejects_rollback_split_view_and_missing_containment(
     aweb_cloud_db,
 ) -> None:
