@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-27
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-release-flakes (flake aweb-aear).
+* **Creation**: lesson [a flake fix must keep the design contract](/aweb-expert/lessons/a-flake-fix-must-keep-the-design-contract.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
