@@ -1262,13 +1262,9 @@ func (s *custodyService) storedMailReplyRecipient(ctx context.Context, req *awid
 	if stored.From.DID == s.identity.DID || (s.identity.StableID != "" && stored.From.StableID == s.identity.StableID) {
 		return refuse("reply_source_is_resident")
 	}
-	decryptIdentity, err := s.decryptIdentityForE2EEEnvelope(stored)
+	plain, err := s.openE2EEEnvelope(stored)
 	if err != nil {
 		return awid.E2EERecipientKey{}, err
-	}
-	plain, err := awid.DecryptE2EEMessage(stored, decryptIdentity)
-	if err != nil {
-		return refuse("decrypt_failed")
 	}
 	if plain.Kind != "mail" || plain.MessageID != req.ReplyToMessageID || plain.ConversationID != req.ConversationID {
 		return refuse("stored_message_mismatch")
@@ -1407,15 +1403,17 @@ func e2eeEnvelopesEqual(a, b *awid.E2EEMessageEnvelope) bool {
 	return left == right
 }
 
-func (s *custodyService) decryptIdentityForE2EEEnvelope(envelope *awid.E2EEMessageEnvelope) (awid.E2EEDecryptIdentity, error) {
+// openE2EEEnvelope opens a stored envelope with the resident's active or
+// archived key, refusing with the custody host's stable codes.
+func (s *custodyService) openE2EEEnvelope(envelope *awid.E2EEMessageEnvelope) (*awid.E2EEInnerPayload, error) {
 	if envelope == nil {
-		return awid.E2EEDecryptIdentity{}, fmt.Errorf("bad_request")
+		return nil, fmt.Errorf("bad_request")
 	}
 	identity := awid.E2EEDecryptIdentity{Address: s.identity.Address, DID: s.identity.DID, StableID: s.identity.StableID}
 	if s.e2eeAssertion != nil && s.e2eePrivateKey != nil {
 		identity.EncryptionKeyID, identity.PrivateKey = strings.TrimSpace(s.e2eeAssertion.EncryptionKeyID), s.e2eePrivateKey
 	}
-	resolved, err := awid.ResolveE2EEDecryptIdentity(envelope, identity, func(keyID string) (*ecdh.PrivateKey, error) {
+	plain, err := awid.OpenE2EEMessage(envelope, identity, func(keyID string) (*ecdh.PrivateKey, error) {
 		statePath, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: s.residentHome}, "encryption.yaml")
 		if err != nil {
 			return nil, err
@@ -1425,13 +1423,13 @@ func (s *custodyService) decryptIdentityForE2EEEnvelope(envelope *awid.E2EEMessa
 	var decryption *awid.DecryptionError
 	switch {
 	case err == nil:
-		return resolved, nil
+		return plain, nil
 	case errors.Is(err, awid.ErrE2EENotARecipient):
-		return awid.E2EEDecryptIdentity{}, fmt.Errorf("not_a_recipient")
+		return nil, fmt.Errorf("not_a_recipient")
 	case errors.As(err, &decryption) && decryption.Code == "encryption_key_missing":
-		return awid.E2EEDecryptIdentity{}, fmt.Errorf("archived_key_unavailable")
+		return nil, fmt.Errorf("archived_key_unavailable")
 	default:
-		return awid.E2EEDecryptIdentity{}, fmt.Errorf("decrypt_failed")
+		return nil, fmt.Errorf("decrypt_failed")
 	}
 }
 
@@ -1478,13 +1476,9 @@ func (s *custodyService) unwrapE2EEMessage(ctx context.Context, req *awid.E2EEUn
 	if !e2eeEnvelopesEqual(storedEnvelope, req.Envelope) {
 		return nil, fmt.Errorf("stored_message_mismatch")
 	}
-	decryptIdentity, err := s.decryptIdentityForE2EEEnvelope(storedEnvelope)
+	plain, err := s.openE2EEEnvelope(storedEnvelope)
 	if err != nil {
 		return nil, err
-	}
-	plain, err := awid.DecryptE2EEMessage(storedEnvelope, decryptIdentity)
-	if err != nil {
-		return nil, fmt.Errorf("decrypt_failed")
 	}
 	out := &awid.E2EEUnwrapResponse{Kind: plain.Kind, MessageID: plain.MessageID, ConversationID: plain.ConversationID, CreatedAt: plain.CreatedAt, From: plain.From, Recipients: plain.Recipients, Subject: plain.Subject, Body: plain.Body, Attachments: plain.Attachments}
 	s.cacheCustodyReplayResult(key, out)

@@ -192,11 +192,7 @@ func (c *Client) DecryptE2EEEnvelopeWithContext(ctx context.Context, envelope *E
 			return &E2EEInnerPayload{InnerVersion: E2EEMessageVersion, Kind: out.Kind, MessageID: out.MessageID, ConversationID: out.ConversationID, CreatedAt: out.CreatedAt, From: out.From, Recipients: out.Recipients, Subject: out.Subject, Body: out.Body, Attachments: out.Attachments}, nil
 		}
 	}
-	identity, err := ResolveE2EEDecryptIdentity(envelope, c.e2eeDecryptIdentity(), c.e2eeArchivedKey)
-	if err != nil {
-		return nil, err
-	}
-	return DecryptE2EEMessage(envelope, identity)
+	return OpenE2EEMessage(envelope, c.e2eeDecryptIdentity(), c.e2eeArchivedKey)
 }
 
 // custodyRowLocalCodes are the custody refusals that concern one message's
@@ -223,15 +219,25 @@ func custodyDecryptionError(err error) error {
 // addressed to the reading identity.
 var ErrE2EENotARecipient = errors.New("not a recipient")
 
-// ResolveE2EEDecryptIdentity verifies envelope's evidence and returns identity
-// with the private key that opens it (docs/e2e-messaging-contract.md "Key
-// Wraps"): the active key when a wrap addressed to identity names it,
-// otherwise the archived key named by the first such wrap that archived can
-// load. Keys are found by the key id a wrap names, never by trial.
-func ResolveE2EEDecryptIdentity(envelope *E2EEMessageEnvelope, identity E2EEDecryptIdentity, archived E2EEArchivedKeyLoader) (E2EEDecryptIdentity, error) {
+// OpenE2EEMessage verifies envelope's evidence once, then opens it with the
+// private key a wrap addressed to identity names (docs/e2e-messaging-contract.md
+// "Key Wraps"): the active key when such a wrap names it, otherwise the
+// archived key named by the first such wrap that archived can load. Keys are
+// found by the key id a wrap names, never by trial.
+func OpenE2EEMessage(envelope *E2EEMessageEnvelope, identity E2EEDecryptIdentity, archived E2EEArchivedKeyLoader) (*E2EEInnerPayload, error) {
 	if err := verifyE2EEMessageEnvelope(envelope); err != nil {
-		return E2EEDecryptIdentity{}, &DecryptionError{Code: "decrypt_failed", err: err}
+		return nil, &DecryptionError{Code: "decrypt_failed", err: err}
 	}
+	identity, err := e2eeDecryptKeyFor(envelope, identity, archived)
+	if err != nil {
+		return nil, err
+	}
+	return openVerifiedE2EEMessage(envelope, identity)
+}
+
+// e2eeDecryptKeyFor returns identity with the private key that opens a
+// verified envelope, as OpenE2EEMessage describes.
+func e2eeDecryptKeyFor(envelope *E2EEMessageEnvelope, identity E2EEDecryptIdentity, archived E2EEArchivedKeyLoader) (E2EEDecryptIdentity, error) {
 	if identity.PrivateKey == nil && archived == nil {
 		return E2EEDecryptIdentity{}, &DecryptionError{Code: "encryption_key_missing", err: errors.New("encrypted message requires local encryption private key; restore .aw/encryption-keys or run `aw id encryption-key setup` for future messages")}
 	}
@@ -537,7 +543,15 @@ func (e *DecryptionError) Unwrap() error { return e.err }
 var errMissingEncryptionPrivateKey = errors.New("missing local encryption private key")
 
 func DecryptE2EEMessage(envelope *E2EEMessageEnvelope, identity E2EEDecryptIdentity) (*E2EEInnerPayload, error) {
-	plain, err := decryptE2EEMessage(envelope, identity)
+	if err := verifyE2EEMessageEnvelope(envelope); err != nil {
+		return nil, &DecryptionError{Code: "decrypt_failed", err: err}
+	}
+	return openVerifiedE2EEMessage(envelope, identity)
+}
+
+// openVerifiedE2EEMessage opens an envelope whose evidence was verified.
+func openVerifiedE2EEMessage(envelope *E2EEMessageEnvelope, identity E2EEDecryptIdentity) (*E2EEInnerPayload, error) {
+	plain, err := decryptVerifiedE2EEMessage(envelope, identity)
 	if err != nil {
 		code := "decrypt_failed"
 		if errors.Is(err, errMissingEncryptionPrivateKey) {
@@ -548,7 +562,11 @@ func DecryptE2EEMessage(envelope *E2EEMessageEnvelope, identity E2EEDecryptIdent
 	return plain, nil
 }
 
-func verifyE2EEMessageEnvelope(envelope *E2EEMessageEnvelope) error {
+// verifyE2EEMessageEnvelope checks an envelope's version, signature and
+// hashes. A read verifies each envelope once.
+var verifyE2EEMessageEnvelope = checkE2EEMessageEnvelope
+
+func checkE2EEMessageEnvelope(envelope *E2EEMessageEnvelope) error {
 	if envelope == nil {
 		return fmt.Errorf("missing e2ee envelope")
 	}
@@ -576,10 +594,7 @@ func verifyE2EEMessageEnvelope(envelope *E2EEMessageEnvelope) error {
 	return nil
 }
 
-func decryptE2EEMessage(envelope *E2EEMessageEnvelope, identity E2EEDecryptIdentity) (*E2EEInnerPayload, error) {
-	if err := verifyE2EEMessageEnvelope(envelope); err != nil {
-		return nil, err
-	}
+func decryptVerifiedE2EEMessage(envelope *E2EEMessageEnvelope, identity E2EEDecryptIdentity) (*E2EEInnerPayload, error) {
 	if identity.PrivateKey == nil {
 		return nil, errMissingEncryptionPrivateKey
 	}

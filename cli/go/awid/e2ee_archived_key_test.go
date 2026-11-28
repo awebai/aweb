@@ -276,3 +276,22 @@ func TestListingPlaceholderKeepsNoContactAssertion(t *testing.T) {
 		t.Fatalf("placeholder JSON kept is_contact: %s", raw)
 	}
 }
+
+// A read verifies the envelope's signature and hashes once, then chooses the
+// key and opens that verified envelope.
+func TestClientReadVerifiesTheEnvelopeOnce(t *testing.T) {
+	recipient := newRotatedRecipient(t)
+	client := rotatedRecipientClient(t, recipient, "http://127.0.0.1:1")
+	verifications := 0
+	verify := verifyE2EEMessageEnvelope
+	verifyE2EEMessageEnvelope = func(envelope *E2EEMessageEnvelope) error {
+		verifications++
+		return verify(envelope)
+	}
+	t.Cleanup(func() { verifyE2EEMessageEnvelope = verify })
+
+	plain, err := client.DecryptE2EEEnvelope(sealedMailTo(t, recipient, recipient.active, "once"))
+	if err != nil || plain.Body != "once" || verifications != 1 {
+		t.Fatalf("active-key read: body=%v err=%v verifications=%d, want one", plain, err, verifications)
+	}
+}
