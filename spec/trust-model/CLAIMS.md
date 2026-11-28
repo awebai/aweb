@@ -18,7 +18,7 @@ One line for every sentence that says something about the model, apart from a th
 
 | Sentence | Kind | What makes it true |
 |---|---|---|
-| Experimental; proofs checked by Lean; comparison with running implementations pending | process | No checker or emitter exists (see "Not done") |
+| Experimental; proofs checked by Lean; comparison with running implementations pending | process | The generated cases have not yet been run against the code (see "Not done") |
 | A formal model, in Lean 4, of who may do what in aweb | process | The files in `TrustWeb/` |
 | Lean checks that each result follows from the definitions | process | `lake build`; see "How to check it yourself" |
 | The definitions were checked against aweb by reading the source; not yet run against the code | process | The source readings; "Not done" |
@@ -244,7 +244,7 @@ Each item pairs a sentence about the model with one about the real system.
 
 | Sentence | Kind | What makes it true |
 |---|---|---|
-| It does not run yet | process | No checker functions exist |
+| It is not yet run against the code; the model runs and generates its first batch | process | `run` and the generator exist (rows 91 to 93); the runner has not run the file |
 | Several definitions were corrected after the last source check | process | The list given there |
 
 ## TrustWeb/Model.lean
@@ -378,6 +378,25 @@ Each item pairs a sentence about the model with one about the real system.
 | README | Rows 73's and 74's starting worlds are any record; row 48 reaches one of row 73's kind | result, construction | Both theorems build their record without `Reachable`; `invitation_then_own_request_makes_an_admin` |
 | README | The DNS credential is in row 70's premises for the same reason as the root key | act, result | `replaceRoot` gives the root key (`StepVia.given_root`); a root key then re-keys the admin team as in row 74 |
 | README | Having a key given back is in row 70's rule premise for the same reason | act | `StepVia.release` gives the key to the asker (`StepVia.given_root`, `StepVia.given_team`) |
+
+## TrustWeb/Decide.lean, Run.lean, Emit.lean and the README's running section
+
+| Where | Sentence | Kind | What makes it true |
+|---|---|---|---|
+| README, module docs | `Decide.lean` decides every condition the acts check, each proved to agree with its definition | result | Each decision is a `Decidable` instance built by `decidable_of_iff` from a proved equivalence, or derived from instances that are |
+| README, `CertChain`, `chainB` | Chains of certificates, and the search over them | definition | Their bodies |
+| README, `Act`, `Act.checks`, `Act.effect`, `run`, `Check`, `firstFailing` | A request, its named checks in the constructor's order, its effect, and what `run` returns | definition | Their bodies; each act's checks list the premises of its `Step` constructor in order |
+| `AskedByIssuer`, `IssuerValid`, `ByMember`, `rootCut`, `AskDecidable`, `Act.Accepted` | Their meaning | definition | Their bodies |
+| README | `lake exe trust-web-cases` followed by the model commit prints the cases, written to the vectors file | process | The entry point at the end of `Emit.lean`, and the lakefile's executable entry |
+| README | The first batch: the acts, no held key, an allowed case per act and a refusal per premise the batch can make fail, each one change from its admitted neighbour | definition | `Emit.cases` |
+| README | `remove`'s last-admin premise can fail only when the team's key is held | act | The premise of `remove` |
+| README | Every request goes through `run`; the generator refuses on a refused setup request or an unintended outcome | definition | `Emit.Case.json` |
+| README | So every verdict and premise in the file is the model's by rows 92 and 93 | result | `step_iff_run`, `run_error_premise` |
+| README | What the cases observe | definition | `Emit.Obs`, `Emit.Obs.json` |
+| README, `CasesCheck.lean` | The build fails unless the committed file's format, emitter and cases are the generator's output | process | `#cases_file_current` in the `DocCheck` library, which the default build runs |
+| README | The cases are not proved to cover every premise; the code passing them shows agreement on these cases only | definition | No theorem is about coverage |
+| README | Running them against the code is the runner's | source | The runner in the aweb server's tests |
+| `Emit.keyName`, `Emit.orgName` and the other renderers | The runner's names and forms | source | The runner's seed cases |
 
 ## TrustWeb/DocNames.lean
 
