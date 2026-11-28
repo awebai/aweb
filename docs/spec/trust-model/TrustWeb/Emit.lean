@@ -416,8 +416,8 @@ def document (commit : String) : Except String Json := do
   return Json.mkObj [
     ("format", Json.str "aweb.trust-web-cases/2"),
     ("status", Json.str "experimental"),
-    ("description", Json.str "Cases emitted from the trust-web model (spec/trust-model) by lake exe trust-web-cases. Every verdict and every refusal's premise is computed by the model's executable step, which the model proves equal to its Step relation (step_iff_run, run_error_premise)."),
-    ("model", Json.mkObj [("path", Json.str "spec/trust-model"), ("commit", Json.str commit),
+    ("description", Json.str "Cases emitted from the trust-web model (docs/spec/trust-model) by lake exe trust-web-cases. Every verdict and every refusal's premise is computed by the model's executable step, which the model proves equal to its Step relation (step_iff_run, run_error_premise)."),
+    ("model", Json.mkObj [("path", Json.str "docs/spec/trust-model"), ("commit", Json.str commit),
       ("emitter", Json.str "lake exe trust-web-cases")]),
     ("cases", Json.arr cs.toArray)]
 

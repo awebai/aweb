@@ -870,7 +870,7 @@ and principal. No implementation consumes it until the shared
 
 ### `trust-web-cases-model-v2.json` — experimental, generated
 
-Cases emitted by the trust-web model in `spec/trust-model` (`lake exe trust-web-cases`), format `aweb.trust-web-cases/2`. The model's build fails unless this file is the generator's current output; regenerate it, never edit it. The trust-web case runner in the server's tests is its consumer.
+Cases emitted by the trust-web model in `docs/spec/trust-model` (`lake exe trust-web-cases`), format `aweb.trust-web-cases/2`. The model's build fails unless this file is the generator's current output; regenerate it, never edit it. The trust-web case runner in the server's tests is its consumer.
 
 ## Experimental and compatibility A2A fixtures
 
@@ -906,7 +906,7 @@ Both are required.
 
 ### `trust-web-cases-v1.json` — experimental
 
-Cases of the experimental trust-web model in `spec/trust-model` (a Lean 4
+Cases of the experimental trust-web model in `docs/spec/trust-model` (a Lean 4
 model of selected trust rules). The model's author owns its decisions, the
 cases it emits and their meaning. `server/tests/test_trust_web_cases.py` runs
 every implemented case against a real AWID registry and a real aweb server, and
