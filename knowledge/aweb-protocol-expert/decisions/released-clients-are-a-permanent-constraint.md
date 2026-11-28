@@ -3,7 +3,7 @@ type: Decision
 title: Released clients are a permanent constraint
 description: Once a client that sends a shape is published, the server accepts that shape until it is measured that nothing sends it; contract changes are additive by default, narrowing names every consumer and proves each deploys atomically, and removal is a separate change.
 tags: [decision, compatibility, release, clients, contracts]
-timestamp: 2026-11-04
+timestamp: 2026-11-27
 ---
 
 Decided on 2026-07-27 after a chat mark-read change made a new field required
@@ -76,3 +76,36 @@ Provenance for this section: harvested 2026-10-25 from seats
 `read-only-models-can-narrow-other-surfaces.md`) and
 `aweb-protocol-expert-app-team-api` (relay d2d20b38 citing naapps d5b68684;
 scope confirmed by the seat in 67414d9a).
+
+# Removed command names stay reserved (November 2026)
+
+The rule covers names as well as wire shapes. When a root command is removed
+from aw, released aw binaries still resolve its name as a built-in. If the new
+release freed that name, an app manifest could be accepted under it and then
+collide with the built-in for every user still running an older binary.
+
+- **App manifest validation and app or plugin dispatch keep a removed root
+  name reserved** while released binaries still carry it as a command. The
+  reservation is a list of names. The removed implementation is not kept.
+- **Argument parsing uses the running binary's live command tree.** It does not
+  use the reserved list. When the argv scan used the reserved list, a plugin
+  argument that happened to be a reserved word ended the scan for a trailing
+  `--identity-home`. The plugin then started without the selected identity.
+  Reserving a name for apps must not change how the running binary reads argv.
+- **How to apply:** for each removal, list the names a released binary would
+  still claim and add them to the reservation. Lifting a reservation is a
+  separate compatibility change under this decision's removal rule.
+
+Status on 2026-11-27: this is design and branch code, not yet on aweb main. The
+E1 removals branches split the two sets. `builtinRootCommandNames` is the live
+tree plus `help` and is used for the argv scan. `reservedRootCommandNames` is
+that set plus the removed `agent`, `blueprint` and `run`. It is used for root
+plugin dispatch, the manifest loaders and the `aweb.reserved-app-ids.v1`
+artifact. A test runs a real trusted plugin and passes each reserved word
+ahead of `--identity-home`, then checks that the plugin receives the selected
+identity. The ruling that keeps the names is source-reported (E1(c) ruling
+6ee87e3b). The harvester could not read it.
+
+Evidence: OKF proposal from aweb-protocol-expert/aweb-protocol-expert-coordination,
+2026-11-27; notes/removed-command-names-stay-reserved.md. Code checked at
+c73cf0fc94 on the E1 removals branch.
