@@ -9,9 +9,9 @@ from pathlib import Path
 import re
 import sys
 
-root = Path('resource-packs')
+root = Path('docs/examples/resource-packs')
 if not root.exists():
-    raise SystemExit('resource-packs/ not found')
+    raise SystemExit('docs/examples/resource-packs/ not found')
 
 for pack in sorted(p for p in root.iterdir() if p.is_dir()):
     manifest = pack / 'resource-pack.yaml'
