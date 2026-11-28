@@ -22,6 +22,8 @@ import (
 type commandStack struct {
 	RegistryURL string `json:"registry_url"`
 	ServerURL   string `json:"server_url"`
+	// The server's longest revocation delay: fresh plus stale cache windows.
+	RevocationWindowSeconds int `json:"revocation_window_seconds"`
 }
 
 type commandStackAuthority struct {
@@ -140,7 +142,11 @@ func newRealCommandWorldWithRecipientFault(t *testing.T, recipientHome string, l
 }
 
 func (world *realCommandWorld) runInIdentityHome(home string, args ...string) (string, error) {
-	command := exec.CommandContext(world.Context, world.Binary, append([]string{"--identity-home", home, "--json"}, args...)...)
+	return world.runInIdentityHomeContext(world.Context, home, args...)
+}
+
+func (world *realCommandWorld) runInIdentityHomeContext(ctx context.Context, home string, args ...string) (string, error) {
+	command := exec.CommandContext(ctx, world.Binary, append([]string{"--identity-home", home, "--json"}, args...)...)
 	command.Dir = filepath.Dir(home)
 	command.Env = append(idCreateCommandEnv(world.UserHome), "AWID_REGISTRY_URL="+world.Stack.RegistryURL, "AW_NO_UPDATE_CHECK=1")
 	// JSON is a stdout contract; stderr may carry ordinary recovery prose.

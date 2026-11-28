@@ -2720,6 +2720,11 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 17: Revoke bob's membership ==="
 
+# Bob's credential is accepted just before his removal, which also fills the
+# server's cached revocation list, so the window below starts from a warm cache.
+run_success "bob's send is accepted before revocation" run_aw_in "$BOB_DIR" mail send --plaintext \
+  --to alice --subject "before-revocation" --body "accepted before revocation"
+
 capture_success revoke_out "revoke_out" run_aw_in "$ALICE_DIR" id team remove-member \
   --team devteam \
   --namespace test.local \
@@ -2731,6 +2736,9 @@ REVOKE_STATUS="$(echo "$revoke_out" | jq_field status)"
 # revoked when it revoked something, no_active_certificate when the registry
 # stated there was nothing active to revoke.
 assert_eq "bob revoked" "revoked" "$REVOKE_STATUS"
+
+# The successful removal anchors the revocation window that Phase 20 checks.
+REVOCATION_ANCHOR_MS="$(python3 -c 'import time; print(time.monotonic_ns() // 1000000)')"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -2833,38 +2841,51 @@ assert_eq "alice still connected" "alice" "$alice_alias_check"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Phase 20: Bob's requests fail after cache flush
+# Phase 20: Bob's requests fail after revocation, with no cache flush
 # ---------------------------------------------------------------------------
+# Bob's sends are polled against the untouched service from the Phase 17
+# anchor. The window is the deployed server's own: one fresh window of its
+# cached revocation list plus the stale-while-revalidate window.
 echo "=== Phase 20: Bob's requests fail after revocation ==="
 
-echo "  Flushing cached team revocations from Redis..."
-revocation_flush_out="$(
-  cd "$SERVER_DIR" && compose exec -T redis sh -lc "
-    keys=\$(redis-cli --scan --pattern 'awid:registry_cache:v1:team_revocations:*')
-    if [ -n \"\$keys\" ]; then
-      printf '%s\n' \"\$keys\" | xargs redis-cli DEL
-    else
-      echo 0
-    fi
-  "
-)"
-echo "$revocation_flush_out"
-
-if bob_mail_out="$(run_aw_in "$BOB_DIR" mail send --plaintext \
-  --to alice --subject "Should fail" --body "should fail" 2>&1)"; then
-  bob_mail_exit=0
-else
-  bob_mail_exit=$?
-fi
-
-if echo "$bob_mail_out" | grep -qi "revoked\|unauthorized\|forbidden\|401\|403\|certificate"; then
-  echo "  PASS: bob's request rejected after revocation"
-  pass=$((pass + 1))
-else
-  echo "  FAIL: bob request should be rejected after revocation cache flush (exit=$bob_mail_exit output=${bob_mail_out:0:120})"
+REVOCATION_WINDOW="$(cd "$SERVER_DIR" && compose exec -T aweb python -c \
+  'from awid import registry; print(registry._TEAM_REVOCATIONS_CACHE_TTL_SECONDS * registry._STALE_MULTIPLIER)')"
+[[ "$REVOCATION_WINDOW" =~ ^[1-9][0-9]*$ ]] || {
+  echo "FATAL: the server reported no revocation window: $REVOCATION_WINDOW" >&2
+  exit 1
+}
+REVOCATION_PROBE="$E2E_ROOT/revocation-probe"
+mkdir -p "$REVOCATION_PROBE"
+revocation_budget_ms=$(((REVOCATION_WINDOW + 5) * 1000))
+if ! revocation_verdict="$(
+  HOME="$E2E_HOME" \
+  AW_CONFIG_PATH="$E2E_HOME/.config/aw/config.yaml" \
+  AWID_REGISTRY_URL="$AWID_URL" \
+  AWID_SKIP_DNS_VERIFY=1 \
+  python3 "$REPO_ROOT/scripts/lib/revocation_probe.py" --dir "$REVOCATION_PROBE" \
+    --anchor-ms "$REVOCATION_ANCHOR_MS" --window "$REVOCATION_WINDOW" --cwd "$BOB_DIR" -- \
+    "$CLI_DIR/aw" mail send --plaintext --to alice --body "must not arrive" --json --subject
+)"; then
+  echo "  FAIL: bob's sends ended ${revocation_verdict:-without a verdict}, not refused within ${revocation_budget_ms} ms of his removal ($(cat "$REVOCATION_PROBE/elapsed-ms" 2>/dev/null || echo unknown) ms)"
   fail=$((fail + 1))
   exit 1
 fi
+echo "  bob refused $(cat "$REVOCATION_PROBE/elapsed-ms") ms after removal (budget ${revocation_budget_ms} ms)"
+revocation_refusal="$(python3 -c '
+import json, sys
+error = json.load(open(sys.argv[1]))["error"]
+print(error.get("http_status"), error.get("reason"))
+' "$REVOCATION_PROBE/refusal.json" 2>&1)"
+assert_eq "bob's send is refused as a revoked certificate" "401 certificate_revoked" "$revocation_refusal"
+revocation_refused_subject="$(cat "$REVOCATION_PROBE/refused-subject")"
+capture_success alice_inbox_after_revocation "alice inbox after revocation" run_aw_in "$ALICE_DIR" mail inbox --show-all
+if [[ "$alice_inbox_after_revocation" == *"$revocation_refused_subject"* ]]; then
+  echo "  FAIL: bob's refused send $revocation_refused_subject was delivered"
+  fail=$((fail + 1))
+  exit 1
+fi
+echo "  PASS: bob's refused send was not delivered"
+pass=$((pass + 1))
 echo ""
 
 fi
