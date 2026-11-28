@@ -329,6 +329,7 @@ type Client struct {
 	stableID                string // did:aw:..., set on outgoing signed envelopes as from_stable_id
 	e2eeEncryptionKey       *EncryptionKeyAssertion
 	e2eePrivateKey          *ecdh.PrivateKey
+	e2eeArchivedKey         E2EEArchivedKeyLoader // optional; opens wraps addressed to an archived encryption key
 	requireRecipientBinding bool
 	resolver                IdentityResolver // optional; resolves recipient DID for to_did binding
 	pinStore                *PinStore        // optional; TOFU pin store for sender identity verification
@@ -782,6 +783,19 @@ func (c *Client) SetE2EEKey(assertion *EncryptionKeyAssertion, privateKey *ecdh.
 	}
 	c.e2eeEncryptionKey = assertion
 	c.e2eePrivateKey = privateKey
+}
+
+// E2EEArchivedKeyLoader returns this identity's archived encryption private key
+// for keyID, the key a received wrap names when it is not the active one.
+type E2EEArchivedKeyLoader func(keyID string) (*ecdh.PrivateKey, error)
+
+// SetE2EEArchivedKeyLoader installs the lookup used to read messages wrapped to
+// an encryption key this identity has since rotated away from.
+func (c *Client) SetE2EEArchivedKeyLoader(loader E2EEArchivedKeyLoader) {
+	if c == nil {
+		return
+	}
+	c.e2eeArchivedKey = loader
 }
 
 // ResolveIdentity resolves an alias, address or DID through the configured resolver.

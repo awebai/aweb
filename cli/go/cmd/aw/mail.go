@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ecdh"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -619,6 +620,12 @@ func configureClientE2EE(ctx context.Context, c *aweb.Client, sel *awconfig.Sele
 		}
 		return err
 	}
+	// Mail sealed before a rotation names a key in this identity's own
+	// archive; reads open it by the wrap's key id, never by trying keys.
+	workingDir, identityHome := sel.WorkingDir, sel.IdentityHome
+	c.Client.SetE2EEArchivedKeyLoader(func(keyID string) (*ecdh.PrivateKey, error) {
+		return loadEncryptionPrivateKeyForKeyID(statePath, workingDir, identityHome, keyID)
+	})
 	record := state.ActiveRecord()
 	if record == nil {
 		if !required {
@@ -628,6 +635,9 @@ func configureClientE2EE(ctx context.Context, c *aweb.Client, sel *awconfig.Sele
 	}
 	material, err := validateEncryptionRecordPrivateKeyAt(sel.WorkingDir, sel.IdentityHome, record)
 	if err != nil {
+		if !required {
+			return &e2eeDecryptionUnavailableError{statePath: statePath, reason: err.Error()}
+		}
 		return err
 	}
 	assertion, err := loadEncryptionAssertionAt(sel.WorkingDir, sel.IdentityHome, record.AssertionPath)

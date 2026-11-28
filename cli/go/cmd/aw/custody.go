@@ -1401,72 +1401,37 @@ func e2eeEnvelopesEqual(a, b *awid.E2EEMessageEnvelope) bool {
 	return left == right
 }
 
-func custodyIdentityFieldMatches(wrapValue, localValue string) bool {
-	wrapValue = strings.TrimSpace(wrapValue)
-	localValue = strings.TrimSpace(localValue)
-	return wrapValue == "" || (localValue != "" && wrapValue == localValue)
-}
-
-func (s *custodyService) requiredE2EERecipientKeyID(envelope *awid.E2EEMessageEnvelope) (string, error) {
-	if envelope == nil {
-		return "", fmt.Errorf("bad_request")
-	}
-	for i := range envelope.KeyWraps {
-		wrap := envelope.KeyWraps[i]
-		if !custodyIdentityFieldMatches(wrap.RecipientDID, s.identity.DID) {
-			continue
-		}
-		if !custodyIdentityFieldMatches(wrap.RecipientStableID, s.identity.StableID) {
-			continue
-		}
-		if !custodyIdentityFieldMatches(wrap.RecipientAddress, s.identity.Address) {
-			continue
-		}
-		keyID := strings.TrimSpace(wrap.RecipientEncryptionKeyID)
-		if keyID == "" {
-			return "", fmt.Errorf("recipient_key_unavailable")
-		}
-		return keyID, nil
-	}
-	return "", fmt.Errorf("not_a_recipient")
-}
-
 func (s *custodyService) decryptIdentityForE2EEEnvelope(envelope *awid.E2EEMessageEnvelope) (awid.E2EEDecryptIdentity, error) {
-	keyID, err := s.requiredE2EERecipientKeyID(envelope)
-	if err != nil {
-		return awid.E2EEDecryptIdentity{}, err
+	if envelope == nil {
+		return awid.E2EEDecryptIdentity{}, fmt.Errorf("bad_request")
 	}
+	identity := awid.E2EEDecryptIdentity{Address: s.identity.Address, DID: s.identity.DID, StableID: s.identity.StableID}
+	keyID, ok := awid.E2EEWrapKeyID(envelope, identity)
+	if !ok {
+		return awid.E2EEDecryptIdentity{}, fmt.Errorf("not_a_recipient")
+	}
+	if keyID == "" {
+		return awid.E2EEDecryptIdentity{}, fmt.Errorf("recipient_key_unavailable")
+	}
+	identity.EncryptionKeyID = keyID
 	activeKeyID := ""
 	if s.e2eeAssertion != nil {
 		activeKeyID = strings.TrimSpace(s.e2eeAssertion.EncryptionKeyID)
 	}
 	if keyID == activeKeyID && s.e2eePrivateKey != nil {
-		return awid.E2EEDecryptIdentity{Address: s.identity.Address, DID: s.identity.DID, StableID: s.identity.StableID, EncryptionKeyID: keyID, PrivateKey: s.e2eePrivateKey}, nil
+		identity.PrivateKey = s.e2eePrivateKey
+		return identity, nil
 	}
 	statePath, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: s.residentHome}, "encryption.yaml")
 	if err != nil {
 		return awid.E2EEDecryptIdentity{}, fmt.Errorf("archived_key_unavailable")
 	}
-	state, err := awconfig.LoadEncryptionKeyStateFrom(statePath)
+	privateKey, err := loadEncryptionPrivateKeyForKeyID(statePath, "", s.residentHome, keyID)
 	if err != nil {
 		return awid.E2EEDecryptIdentity{}, fmt.Errorf("archived_key_unavailable")
 	}
-	record := state.RecordForKeyID(keyID)
-	if record == nil {
-		return awid.E2EEDecryptIdentity{}, fmt.Errorf("archived_key_unavailable")
-	}
-	if _, err := validateEncryptionRecordPrivateKeyAt("", s.residentHome, record); err != nil {
-		return awid.E2EEDecryptIdentity{}, fmt.Errorf("archived_key_unavailable")
-	}
-	privatePath, err := resolveIdentityStoredPath("", s.residentHome, record.PrivateKeyPath)
-	if err != nil {
-		return awid.E2EEDecryptIdentity{}, fmt.Errorf("archived_key_unavailable")
-	}
-	privateKey, err := awid.LoadX25519PrivateKey(privatePath)
-	if err != nil {
-		return awid.E2EEDecryptIdentity{}, fmt.Errorf("archived_key_unavailable")
-	}
-	return awid.E2EEDecryptIdentity{Address: s.identity.Address, DID: s.identity.DID, StableID: s.identity.StableID, EncryptionKeyID: keyID, PrivateKey: privateKey}, nil
+	identity.PrivateKey = privateKey
+	return identity, nil
 }
 
 func (s *custodyService) unwrapE2EEMessage(ctx context.Context, req *awid.E2EEUnwrapRequest) (*awid.E2EEUnwrapResponse, error) {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ecdh"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
@@ -717,6 +718,28 @@ func validateEncryptionRecordPrivateKeyAt(workingDir, identityHome string, recor
 		return nil, usageError("local E2E encryption private key at %s does not match active public key metadata; restore the matching archived key or rotate", privatePath)
 	}
 	return &encryptionRecordKeyMaterial{KeyID: keyID, PublicKey: publicKey}, nil
+}
+
+// loadEncryptionPrivateKeyForKeyID loads the private key the encryption state
+// at statePath records for keyID, active or archived, after checking that the
+// key file matches its record.
+func loadEncryptionPrivateKeyForKeyID(statePath, workingDir, identityHome, keyID string) (*ecdh.PrivateKey, error) {
+	state, err := awconfig.LoadEncryptionKeyStateFrom(statePath)
+	if err != nil {
+		return nil, err
+	}
+	record := state.RecordForKeyID(keyID)
+	if record == nil {
+		return nil, fmt.Errorf("%s records no encryption key %s", statePath, keyID)
+	}
+	if _, err := validateEncryptionRecordPrivateKeyAt(workingDir, identityHome, record); err != nil {
+		return nil, err
+	}
+	privatePath, err := resolveIdentityStoredPath(workingDir, identityHome, record.PrivateKeyPath)
+	if err != nil {
+		return nil, err
+	}
+	return awid.LoadX25519PrivateKey(privatePath)
 }
 
 func validateEncryptionRecordAssertion(identity *awconfig.ResolvedIdentity, record *awconfig.EncryptionKeyRecord, assertion *awid.EncryptionKeyAssertion, material *encryptionRecordKeyMaterial) error {

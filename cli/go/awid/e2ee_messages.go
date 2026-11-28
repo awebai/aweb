@@ -172,6 +172,17 @@ func (c *Client) DecryptE2EEEnvelopeWithContext(ctx context.Context, envelope *E
 	if c == nil {
 		return nil, fmt.Errorf("missing client")
 	}
+	identity := c.e2eeDecryptIdentity()
+	// The wrap names the key it was sealed to. A message from before a
+	// rotation names a key this identity keeps in its local archive.
+	if keyID, ok := E2EEWrapKeyID(envelope, identity); ok && keyID != "" && keyID != identity.EncryptionKeyID && c.e2eeArchivedKey != nil {
+		archived, err := c.e2eeArchivedKey(keyID)
+		if err != nil {
+			return nil, &DecryptionError{Code: "encryption_key_missing", err: fmt.Errorf("encrypted message is wrapped to archived encryption key %s, which this identity cannot load: %w; restore it from the .aw/encryption-keys backup", keyID, err)}
+		}
+		identity.EncryptionKeyID, identity.PrivateKey = keyID, archived
+		return DecryptE2EEMessage(envelope, identity)
+	}
 	if c.e2eePrivateKey == nil {
 		if custody := c.e2eeCustody(); custody != nil {
 			audience, err := c.custodyAudience(ctx)
@@ -193,21 +204,20 @@ func (c *Client) DecryptE2EEEnvelopeWithContext(ctx context.Context, envelope *E
 		}
 		return nil, &DecryptionError{Code: "encryption_key_missing", err: errors.New("encrypted message requires local encryption private key; restore .aw/encryption-keys or run `aw id encryption-key setup` for future messages")}
 	}
-	stableID := c.stableID
-	encryptionKeyID := ""
+	return DecryptE2EEMessage(envelope, identity)
+}
+
+// e2eeDecryptIdentity is this client's local reading identity with its active
+// encryption key, when one is installed.
+func (c *Client) e2eeDecryptIdentity() E2EEDecryptIdentity {
+	identity := E2EEDecryptIdentity{Address: c.address, DID: c.did, StableID: c.stableID, PrivateKey: c.e2eePrivateKey}
 	if c.e2eeEncryptionKey != nil {
-		encryptionKeyID = strings.TrimSpace(c.e2eeEncryptionKey.EncryptionKeyID)
+		identity.EncryptionKeyID = strings.TrimSpace(c.e2eeEncryptionKey.EncryptionKeyID)
 		if c.e2eeEncryptionKey.IdentityStableID != nil && strings.TrimSpace(*c.e2eeEncryptionKey.IdentityStableID) != "" {
-			stableID = strings.TrimSpace(*c.e2eeEncryptionKey.IdentityStableID)
+			identity.StableID = strings.TrimSpace(*c.e2eeEncryptionKey.IdentityStableID)
 		}
 	}
-	return DecryptE2EEMessage(envelope, E2EEDecryptIdentity{
-		Address:         c.address,
-		DID:             c.did,
-		StableID:        stableID,
-		EncryptionKeyID: encryptionKeyID,
-		PrivateKey:      c.e2eePrivateKey,
-	})
+	return identity
 }
 
 func EncryptE2EEMail(params E2EEEncryptMailParams) (*E2EEMessageEnvelope, error) {
@@ -449,8 +459,9 @@ func e2eeSingleRecipientField(recipients []E2EERecipientRef, field string) strin
 }
 
 // DecryptionError is a message this identity could not decrypt. Code is
-// encryption_key_missing when no local encryption private key is available,
-// and decrypt_failed for any other failure to open or validate the envelope.
+// encryption_key_missing when the private key the message's wrap names is not
+// available, active or archived, and decrypt_failed for any other failure to
+// open or validate the envelope.
 type DecryptionError struct {
 	Code string
 	err  error
@@ -641,6 +652,24 @@ func buildE2EEKeyWrap(cek []byte, messageID, conversationID string, sender E2EEI
 		EncapsulatedKey:          base64.RawStdEncoding.EncodeToString(enc),
 		WrappedCEK:               base64.RawStdEncoding.EncodeToString(wrapped),
 	}, nil
+}
+
+// E2EEWrapKeyID returns the recipient encryption key id of the first key wrap
+// whose recipient identity fields match identity, ignoring identity's own key
+// id. ok is false when no wrap is addressed to identity.
+func E2EEWrapKeyID(envelope *E2EEMessageEnvelope, identity E2EEDecryptIdentity) (keyID string, ok bool) {
+	if envelope == nil {
+		return "", false
+	}
+	for i := range envelope.KeyWraps {
+		wrap := &envelope.KeyWraps[i]
+		if identityFieldMatches(wrap.RecipientDID, identity.DID) &&
+			identityFieldMatches(wrap.RecipientStableID, identity.StableID) &&
+			identityFieldMatches(wrap.RecipientAddress, identity.Address) {
+			return strings.TrimSpace(wrap.RecipientEncryptionKeyID), true
+		}
+	}
+	return "", false
 }
 
 func selectE2EEKeyWrap(envelope *E2EEMessageEnvelope, identity E2EEDecryptIdentity) (*E2EEKeyWrap, error) {
