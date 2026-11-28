@@ -519,17 +519,15 @@ namespace while keeping its identities requires a separately approved
 transfer protocol. A DNS change publishes the selected authority. The
 transfer must prove continuity of that authority and its facts.
 
-The future transfer must fence source writes and issuance, export an
-authenticated final cut, and verify it at the destination before changing
-DNS and verifier pins. Preserve stable DIDs, signed chain and key history,
-controller and team generations, certificate status, ancestor cutoffs and
-revocations, and address assignments and reachability. Carry surviving
-denies and document how existing proofs stop being accepted at the old
-authority boundary. Make any old discovery state read-only through the
-transition and exclude stale writers and issuers. The grant owner must
-account for its own delegation state or explicitly require new grants.
-Prove the same current unrevoked identity works after the move, a revoked
-one cannot revive, and a historical message retains its original evidence.
+The transfer must fence source writes and issuance, verify a final source
+cut, and verify the destination before switching DNS and verifier pins.
+Preserve stable DIDs, signed chain and key history, controller history,
+ancestor cutoffs and terminal revocations. Carry surviving denies and retire
+old authority at the source. A moved team starts with a fresh signing key
+and new certificates for an explicitly authorised current roster. Keep old
+team keys, certificates and revocations as historical records only. Exclude
+stale writers and issuers throughout the transition. The grant owner must
+account for its own delegation state or require new grants.
 
 ### First migration after E5
 
@@ -540,47 +538,114 @@ and routing bindings, service grants, client homes and mail state. For
 each domain or team, identify its controller, who remains on the old
 service, and who can authorise a move. An agent cohort cannot move an
 entire namespace or team on its own. Any remaining dependency must have
-an authorised destination or be resolved before cutover.
+an authorised destination or be resolved before cutover. The migration has
+its own acceptance and change window immediately after E5 readiness.
 
-1. **Identities and addresses.** Re-establish the moving namespace with
-   its authorised controller and import the authenticated final cut.
-   Keep each global agent's stable DID and current signing key, with
-   verifiable history and cutoffs. Preserve its address assignment and
-   change the delivery origin with the signed update required by the
-   address and routing authorities.
-   Prove the same DID owns the address after the update. A team-local
-   identity has no portable global DID or public address. Inventory its
-   existing team and key, and carry it only with verified continuity of
-   that team binding. A newly admitted local identity is an explicit
-   enrolment and must be recorded separately.
-2. **Teams and holders.** Re-register the moved teams' authorised keys and
-   certificates against the imported history, preserving valid roles and
-   membership scope. Any replacement certificate must be signed by the
-   authorised team controller and bound to the exact holder, with old
-   versions retired. Carry denials and key versions before issuing
-   statements. Rebind agent homes and workspaces and settle service grants
-   with their owners. Refuse a previously removed member and a misbound
-   grant in the rehearsal.
-3. **Mail and switch.** Fence admissions and sends at the old scope and
-   drain or reconcile accepted deliveries and outbox jobs. Import or
-   expose authenticated read-only history under the same recipient
-   entitlement. Preserve original signed artifacts, conversation IDs,
-   receipt and verification state, and ciphertext and key references.
-   Keep decryption custody with its holder. Reconcile all accepted message
-   IDs and outstanding retries before opening the new inbox. Settle an
-   accepted old send against its original receipt. An unsent delivery
-   needs a new destination-bound request once its route has changed.
-   Verify old mail remains readable with its original verification treatment.
-   A reply to a migrated participant uses the same conversation and
-   current verified route. A participant still on the frozen service remains
-   outside E5 federation. Report the unavailable reply path to the holder.
+#### Address and namespace decision
 
-Run the rehearsal against a real source and destination. Require matching
-identity, address, team and mail inventories at the activation boundary,
-a valid moved sender, an independently refused revoked member, and an
-exact mail retry with a single receipt and effect. Keep old writes fenced
-after activation. The first migration is the next milestone after E5
-readiness, with its own acceptance and change window.
+Juan selects one of these paths before issuing a cutover plan. The current
+registry records `juan.aweb.ai` as a child delegated by `aweb.ai`, with
+its own controller key. The parent DNS record and registry identify the
+same parent controller. The child currently has no exact `_awid` record.
+
+- **Transfer the child namespace and preserve its addresses.** The
+  parent and child authorities must authorise release and transfer of the
+  exact child to the new registry. Publish the exact child DNS and signer
+  binding under authorised control. Retire the old delegation and active
+  registry authority for that scope and prove both serving paths reject
+  stale pins as authority. The same addresses remain assigned to the
+  same DIDs and point to the new delivery origin. The parent and its
+  unrelated namespaces stay at the old registry.
+- **Move the cohort to new addresses under `awebai.org`.** The hosted
+  child stays at the old registry. The relevant source and destination
+  authorities authorise the cohort's exact identity transfer and new
+  address bindings. Identity certificates are domain-bound, so a move
+  across domains requires an explicit continuity-preserving re-anchor
+  with the new chain. A fresh registration or address reassignment
+  cannot establish it. Retire the old addresses. There is no automatic
+  forwarding across the frozen boundary. Any future forwarding would
+  need separately authorised, recipient-bound routing and compatible
+  delivery. Preserve the old addresses as historical evidence.
+
+Both paths preserve the DID where authorised continuity is proved. Paired
+holder and controller evidence establishes the new address binding. If an
+identity's authority or required ancestry cannot be transferred, leave it
+out of the cut and resolve its recovery or admission separately.
+
+#### Common migration gates
+
+1. **Fence and authenticate the source cut.** Stop ordinary authority
+   writes, admissions and sends for the moving scope at the source.
+   Reconcile accepted deliveries and outbox jobs. Export the scope in a
+   consistent source database read while fenced. The released registry
+   supplies no standing statements or signed feed for this cut. Verify
+   each identity log and available signed namespace, delegation, address
+   and controller artifacts under the released contract. Where a
+   released write left only a database projection, verify it against
+   the fenced read and obtain an explicit scope-bound confirmation from
+   the recorded controller. Require original signed evidence wherever
+   the contract requires it. Do not silently replace missing evidence.
+   A dedicated operator migration key signs a canonical manifest binding
+   the source, destination, scope, fenced heads, inventory and its digest.
+   Record that digest out of band. An independent verifier with access to
+   the fenced source recomputes the inventory, heads and hash and verifies
+   the signed evidence. A manifest signature alone establishes neither
+   completeness nor the validity of a row.
+2. **Prove live identity continuity.** Each moving global identity signs
+   a purpose-versioned migration statement with its current key,
+   binding the migration manifest, registries, stable DID, imported log
+   head and exact destination address and route, or its explicit
+   unaddressed status. At the destination require the imported head to
+   equal the independently read fenced source head, verify the log and
+   chain through that head, and verify the holder signature with the key
+   at that head. Require the applicable namespace and routing authorities
+   to sign the destination binding. A holder missing its current key
+   takes the recovery path before it can move. A team-local identity
+   has no portable global DID or address. Preserve its holder binding
+   only with verified continuity of the team and key, and record any
+   fresh local enrolment explicitly.
+3. **Re-issue team authority.** Every moved team uses a fresh team
+   key version or a new incarnation with a fresh key. The controller
+   confirms the explicit current roster, including exact holder, alias
+   and authorised role for each member, reconciled against the fenced
+   source. It signs fresh certificates for that roster. Old certificates,
+   public verification keys and their revocation history serve audit only.
+   The destination verifier can admit only the new team binding and
+   key. Import terminal identity revocations and relevant cutoff state
+   before issuance. Rebind agent homes and workspaces, and reissue or
+   reconcile grants under their owning service.
+4. **Retire the old authority before activation.** Under the migration
+   fence, the source team controller revokes or retires as moved every
+   old certificate of the moving holders at `api.awid.ai`. Record
+   those acts and independently confirm that the frozen service refuses
+   the old credentials, including after a warmed cache. Retire applicable
+   existing grants and other retained source credentials with their owners.
+   Keep the fence until the source effect gate observes retirement.
+   Namespace and identity transfer must also retire active old authority
+   for the moved scope. Historical reads can remain available.
+5. **Preserve mail and switch.** Import or expose authenticated
+   read-only history under the same recipient entitlement. Preserve
+   original signed artifacts, conversation IDs, receipt and verification
+   state, and ciphertext and key references. Keep decryption custody with
+   its holder. Reconcile all accepted message IDs before opening the
+   new inbox. Settle an accepted old send against its original receipt.
+   An unsent delivery needs a new destination-bound request when its
+   route changes. A reply to a migrated participant keeps its conversation
+   and uses the current verified route. A reply across the frozen boundary
+   reports the unavailable route. Keep old writes fenced after activation.
+
+Run the rehearsal against a real source and destination. An independent
+verifier enumerates **every** historically revoked certificate in each
+moved team and **every** rotated-away identity key for the moving
+identities from the fenced source inventory. Check that the destination's
+authority checks refuse each for its exact old credential binding, using
+the preserved artifacts and known keys. A missing possession proof or
+unavailable service is insufficient evidence of refusal. Check the
+source refuses each moved holder's old certificate before opening the
+destination. Require positive controls for current reissued members and
+matching identity, address, team and mail inventories. Check that
+historical mail remains readable with its original verification and
+an exact retry yields a single receipt and effect.
 
 ## 8. Model, conformance and scale
 
@@ -654,4 +719,4 @@ extrapolating from raw signature operations.
 | aweb runtime and grants | Complete request inventory, local gates and typed refusal, owner-held grant/application facts, effect and stream tests. |
 | Federation | Native interoperability between real standing issuers, exact trust bootstrap and recovery, and no request-time authority fetch. At E5, prove both directions refuse across the frozen boundary with no effect. A separately approved legacy path would require the exact frozen binary, compatible read surface and isolated delivery adapter, including tests for private-read restrictions, signature purpose, exact retry settlement and outages scoped to that path. |
 | Pilot, clients and registry deployment | Separate digest-pinned registry deploy at `https://api.awdid.org` in `servers`, named operations ownership, HA signer and feed recovery, and a first-deployment rehearsal for `awebai.org`. Verify client protocol selection, the per-process subscriber and readiness, and the exact DNS/controller bootstrap. Keep the frozen service and registry on their released contract. Hand off the first-cohort inventory and transfer rehearsal for the migration immediately after E5. |
-| Scale and integration gate | Reproducible history, traffic, change, partition and recovery fixtures with stated hardware and measured limits. Run the E5 boundary against the real new registry and the pinned released registry and server. Test both standing and frozen serving paths with the same client and verify issuance/feed loss, discovery failure and issuer isolation. Qualify the first migration separately with the identity, address, team and mail controls in §7. |
+| Scale and integration gate | Reproducible history, traffic, change, partition and recovery fixtures with stated hardware and measured limits. Run the E5 boundary against the real new registry and the pinned released registry and server. Test both standing and frozen serving paths with the same client and verify issuance/feed loss, discovery failure and issuer isolation. Qualify migration separately with §7's independent source-cut verification, full negative inventory check, source retirement and mail controls. |
