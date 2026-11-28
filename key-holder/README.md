@@ -104,6 +104,24 @@ deadline. Operators install the maintainer-reviewed renewal before that date;
 the running holder observes the new file without restarting. The first gate's fixed minimum is
 passkey UV. There is no runtime rule-lowering command.
 
+For a self-hosted issuer, schedule the private holder check with the same
+reviewed pin and cache used by the running holder:
+
+```sh
+aweb-key-holder --state /private/holder/state \
+  --mds-manifest /etc/approval/mds-pin-v1.json \
+  --mds-cache /var/lib/approval/mds-cache metadata-check
+```
+
+The command exits 0 for a clean check, 1 when it cannot check, 2 when the
+verified metadata is nearing expiry, and 3 when an effective FIDO withdrawal
+matches an active inventoried credential. The withdrawal signal takes
+precedence over expiry warnings and stays active while the match remains.
+Future-dated reports start matching on their effective date. The JSON
+reports metadata health and operator guidance without identifying any
+credential, person, model, or certificate. On exit 3, pause affected
+hardware-required effects and review the issuer's inventory privately.
+
 The enrollment and approval interfaces are:
 
 - `bootstrap --person <id> --identity-key <key>` prepares the first fresh

@@ -35,6 +35,9 @@ class Refused(ApprovalRefused):
 
 
 HOLDER_REFUSAL_MESSAGES = {
+    "metadata_check_unavailable": (
+        "Check the reviewed metadata pin, its private cache and the holder state."
+    ),
     "attestation_assessment_unavailable": (
         "The pending enrolment predates the attestation inventory. "
         "Let it expire or remove it and start the enrolment again."

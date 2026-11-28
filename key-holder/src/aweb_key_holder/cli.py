@@ -133,6 +133,9 @@ def main():
     backup = commands.add_parser("backup")
     backup.add_argument("--offline-public-key", required=True)
     commands.add_parser("migrate")
+    commands.add_parser(
+        "metadata-check", help="Check verified FIDO metadata against issuer inventory"
+    )
     audit = commands.add_parser("audit")
     audit.add_argument("--after", type=int, default=0)
     audit.add_argument("--limit", type=int, default=100)
@@ -161,6 +164,18 @@ def main():
             result = KeyStore.open(args.state).audit(after=args.after, limit=args.limit)
         elif args.command == "retire-person":
             result = KeyStore.open(args.state).retire_person(args.person)
+        elif args.command == "metadata-check":
+            from .metadata_monitor import check_metadata
+
+            if args.mds_cache is None:
+                parser.error("metadata-check requires --mds-cache")
+            report, status = check_metadata(
+                args.state,
+                cache_dir=args.mds_cache,
+                manifest_path=args.mds_manifest,
+            )
+            print(json.dumps(report, separators=(",", ":")))
+            raise SystemExit(status)
         elif args.command == "migrate":
             from approval_service.gate import load_policy
 
