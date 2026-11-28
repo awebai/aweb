@@ -428,3 +428,43 @@ async def test_a_chat_read_whose_encryption_key_cannot_load_says_so(
 
     assert code != 0, output
     assert "encryption.key" in output, output
+
+
+@pytest.mark.usefixtures("source_cli_binary")
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command", ["inbox", "show-all"])
+async def test_a_mail_read_whose_encryption_key_cannot_load_says_so(
+    route_pair, tmp_path, command
+):
+    pair = route_pair
+    me = pair.target.global_actor
+    teammate = await _actor(pair.target, "bob", global_identity=False)
+    root, env = _cli_home(tmp_path, me)
+    teammate_root, teammate_env = _cli_home(tmp_path, teammate)
+    binary = Path(os.environ["AW_TEST_CLI_BINARY"])
+    await _cli(
+        binary,
+        root,
+        env,
+        "mail",
+        "send",
+        "--plaintext",
+        "--to",
+        "bob",
+        "--subject",
+        "for bob",
+        "--body",
+        "waiting for bob",
+        "--json",
+    )
+    (teammate_root / ".aw" / "encryption.key").unlink()
+
+    args = (
+        ["mail", "inbox"]
+        + (["--show-all"] if command == "show-all" else [])
+        + ["--json"]
+    )
+    code, _, output = await _cli_result(binary, teammate_root, teammate_env, *args)
+
+    assert code != 0, output
+    assert "encryption.key" in output, output

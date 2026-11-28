@@ -635,9 +635,6 @@ func configureClientE2EE(ctx context.Context, c *aweb.Client, sel *awconfig.Sele
 	}
 	material, err := validateEncryptionRecordPrivateKeyAt(sel.WorkingDir, sel.IdentityHome, record)
 	if err != nil {
-		if !required {
-			return &e2eeDecryptionUnavailableError{statePath: statePath, reason: err.Error()}
-		}
 		return err
 	}
 	assertion, err := loadEncryptionAssertionAt(sel.WorkingDir, sel.IdentityHome, record.AssertionPath)
