@@ -19,9 +19,9 @@ from awid_service.testing import ServiceTransport
 import awid.registry as registry_module
 import httpx
 from aweb.app_registry import get_installation_on
+from aweb_naapp.runtime.app_credentials import app_request_credential
 from aweb_naapp.runtime.task_requests import (
     AUTHORIZATION_PREFIX,
-    app_request_credential,
     sign_stage_receipt,
 )
 

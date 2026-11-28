@@ -1,9 +1,8 @@
-# Installation management HTTP API (F6 draft)
+# Installation management HTTP API
 
-This is the implementation contract being built for F6. These routes are not
-all implemented or available on main yet. The registry schema, ordinary-use
-guards and origin-fetch cutover land together. The app-facing grant API is
-separate; see [app-registry.md](app-registry.md).
+This is the contract for the installation routes in
+`server/src/aweb/routes/apps.py`. The app-facing grant API is separate; see
+[app-registry.md](app-registry.md).
 
 All paths below are relative to the OSS server mount. Authentication is the
 existing verified team-auth or internal-auth context. `team_id` may identify the selected team in the query and must match that
@@ -270,11 +269,6 @@ it never adds new tools to an old snapshot. Uninstall/reinstall changes the ID,
 so old snapshots remain refused even at the same origin and digest. Explicit
 reapproval and a fresh grant are required for the replacement.
 
-The uninstall server/CLI change and Folio's tool, presentation and edit-session
-installation fence land in the same train and ship in the same release. The
-combined real-stack uninstall proof must pass before that train can land.
-
-
 Folio consumes `NaappRuntime.installation_grants()` and its shared SQL
 `installation_fence()` for member tools, read-only presentations and edit
 sessions. These surfaces fail closed when the installation is inactive or its
@@ -291,10 +285,7 @@ that refusal is committed and never retried against another installation.
 This rule assumes comparable clocks across the server and Folio databases;
 clock skew between those databases is a theoretical boundary of the rule.
 
-Deploy the server carrying the creation-time grant field first, then Folio with
-its required purpose-bound app-grant-read key, then re-pin every Folio
-installation to the new manifest digest. Until the re-pin, the old pin refuses
-G1 and Folio denies access. The manifest/key transition is shared with records;
-records uses the same runtime grant source and fence. There is no second cache
+The manifest/key transition is shared with records; records uses the same
+runtime grant source and fence. There is no second cache
 or deployment-manifest fallback. A cached inactive observation may also deny a
 fresh reinstall until the advertised grant-status freshness window expires.

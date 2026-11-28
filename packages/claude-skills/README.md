@@ -61,6 +61,6 @@ version directly. There is no second repository bump to remember.
 ## Versioning
 
 `@awebai/claude-skills` carries its own semver alongside aweb releases, the
-same way [`@awebai/pi`](../pi-extension/) and
+same way [`@awebai/pi`](../../pi-extension/) and
 [`@awebai/claude-channel`](../../channel/) do. Bump on skill-body changes; not
 locked to aweb-server versions.

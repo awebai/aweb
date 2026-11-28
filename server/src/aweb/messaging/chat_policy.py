@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Generator, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from aweb.identity_binding import verified_key_sql
@@ -53,6 +54,63 @@ def recipient_label(row: Mapping[str, Any]) -> str:
     )
 
 
+@dataclass(frozen=True)
+class NeedHumanKind:
+    """Read whether the recipient at ``index``, by ``did``, is a verified human."""
+
+    index: int
+    did: str
+
+
+@dataclass(frozen=True)
+class AgentChatAllowed:
+    pass
+
+
+@dataclass(frozen=True)
+class AgentChatRefused:
+    recipients: tuple[str, ...]
+    code: str = HumanChatRefused.reason
+
+
+AgentChatVerdict = AgentChatAllowed | AgentChatRefused
+
+
+def decide_agent_chat(
+    recipients: Sequence[Mapping[str, Any]],
+    *,
+    locked_policy_rows: Mapping[str, Sequence[Mapping[str, Any]]] | None,
+) -> Generator[NeedHumanKind, bool, AgentChatVerdict]:
+    """Refuse verified-human projections; unknown kind remains allowed.
+
+    One pass over the recipients, in order: yields ``NeedHumanKind`` for each
+    recipient whose kind must be read and is sent whether it is a verified
+    human, then returns the verdict naming every verified human.
+    """
+    humans = []
+    for index, row in enumerate(recipients):
+        did = str(
+            row.get("did_aw") or row.get("did") or row.get("did_key") or ""
+        ).strip()
+        if not did:
+            continue
+        if locked_policy_rows is not None and did in locked_policy_rows:
+            # These rows include raw DID claims. Only the verified projection
+            # of a stable DID or the literal key can establish human kind.
+            human = any(
+                is_verified_human(policy)
+                and did in (policy.get("did_aw"), policy.get("did_key"))
+                for policy in locked_policy_rows[did]
+            )
+        else:
+            human = yield NeedHumanKind(index, did)
+        if human:
+            humans.append(recipient_label(row))
+    if humans:
+        return AgentChatRefused(tuple(humans))
+    return AgentChatAllowed()
+
+
 async def require_agent_chat(
     db,
     recipients: Sequence[Mapping[str, Any]],
@@ -68,32 +126,20 @@ async def require_agent_chat(
     and the required cutover revalidation, never a fresh per-send ancestry claim.
     """
     manager = db.get_manager("aweb")
-    humans = []
-    for row in recipients:
-        did = str(
-            row.get("did_aw") or row.get("did") or row.get("did_key") or ""
-        ).strip()
-        if not did:
-            continue
-        if locked_policy_rows is not None and did in locked_policy_rows:
-            # These rows include raw DID claims. Only the verified projection
-            # of a stable DID or the literal key can establish human kind.
-            human = any(
-                is_verified_human(policy)
-                and did in (policy.get("did_aw"), policy.get("did_key"))
-                for policy in locked_policy_rows[did]
-            )
-        else:
+    decision = decide_agent_chat(recipients, locked_policy_rows=locked_policy_rows)
+    try:
+        step = next(decision)
+        while True:
             human = await manager.fetch_one(
                 f"""SELECT 1 FROM {{{{tables.agents}}}} WHERE deleted_at IS NULL
                      AND {human_predicate_sql()}
                      AND ((did_aw=$1 AND {verified_key_sql()})
                           OR did_key=$1)
                    LIMIT 1""",
-                did,
+                step.did,
             )
-        if human:
-            humans.append(recipient_label(row))
-            continue
-    if humans:
-        raise HumanChatRefused(humans)
+            step = decision.send(bool(human))
+    except StopIteration as finished:
+        verdict = finished.value
+    if isinstance(verdict, AgentChatRefused):
+        raise HumanChatRefused(list(verdict.recipients))

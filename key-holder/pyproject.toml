@@ -17,7 +17,7 @@ packages = ["src/aweb_key_holder"]
 
 [tool.uv.sources]
 awid-service = { path = "../awid", editable = true }
-aweb-approval-service = { git = "https://github.com/awebai/approval-service.git", rev = "b22bf7984933e34e63581d67f78f3539bc8b5164" }
+aweb-approval-service = { git = "https://github.com/awebai/approval-service.git", rev = "be53c0a0f69e04460a2165c62d0211372965d824" }
 
 [dependency-groups]
 dev = ["pytest>=9.0.0", "pytest-asyncio>=1.2.0"]
