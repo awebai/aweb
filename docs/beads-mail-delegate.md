@@ -6,9 +6,6 @@ cite sections of this record instead of making local decisions. If
 implementation shows a decision here is wrong, the fix goes through this
 record first, not into a quiet divergence.
 
-Authority: the beads-ecosystem plan §5.2.1/§5.2.1a
-(`bookshelf/strategy/2026-08-22-beadhub-revival-and-federation-plan.md`).
-
 Verified sources, pinned 2026-08-31:
 
 - `gastownhall/beads` @ `d530cddfa64b` — the delegate exec contract,

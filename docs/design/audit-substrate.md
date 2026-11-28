@@ -98,8 +98,8 @@ Authority comes before mechanism:
   authority that alone can register and revoke team certificates. One
   domain-separated artifact, `aweb.owner-act/1`, signed by the current AWID
   team key (§A3), carries it. For BYOT the owner signs it locally with `aw`.
-  **Open (aweb-acgh.16.18):** the `aw` owner-act commands; the Go signing
-  library (`cli/go/awid/owneract.go`) is on main. For a managed team the custodial deployment holds the controller key, so it
+  `aw hooks activate` and `aw hooks revoke` sign it (aw-v1.36.57), on the Go
+  signing library `cli/go/awid/owneract.go`. For a managed team the custodial deployment holds the controller key, so it
   signs only for the owner's own gesture behind its install UI, as D1 records
   it. **Requirement on the custodial deployment:** that gesture must be an
   interactive owner session with fresh step-up (passkey or re-authentication).

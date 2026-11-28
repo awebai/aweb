@@ -893,9 +893,9 @@ installation and its generation.
   it; signing only for the organization owner after a fresh step-up is the
   signing deployment's obligation. Activation
   compares the act's subject, including the manifest digest the owner's client
-  fetched, with the stored pending row. **Open (aweb-acgh.16.18):** `aw`
-  commands that sign owner acts; the Go library `cli/go/awid/owneract.go`
-  builds them.
+  fetched, with the stored pending row. `aw hooks activate` and
+  `aw hooks revoke` sign owner acts (aw-v1.36.57); the Go library
+  `cli/go/awid/owneract.go` builds them.
   Ordinary activation remains valid without a `hook-terminal-receipt` key.
   Under the [terminal contract](hook-terminal-delivery.md), that optional
   pinned-manifest purpose authorizes only the target's signed completion

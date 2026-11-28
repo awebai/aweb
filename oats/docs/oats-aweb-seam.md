@@ -1,9 +1,7 @@
 # The OATS–aweb seam: Principal, Instance, Session
 
-How this deployment connects OATS instances to aweb identities. The
-architecture is defined in
-`strategy/product/2026-08-12-resident-identities-and-session-grants.md`; this
-document is the operational description for the `oats/` deployment.
+How this deployment connects OATS instances to aweb identities. This document
+is the operational description for the `oats/` deployment.
 
 ## The three entities
 

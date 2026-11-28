@@ -5,7 +5,7 @@ TEST_EGRESS_RUNNER ?= python3 $(abspath scripts/test-egress/native.py) --
 SERVER_TEST_WORKERS ?= $(or $(AWEB_SERVER_TEST_WORKERS),0)
 SERVER_PYTEST_PARALLEL = $(if $(filter-out 0,$(SERVER_TEST_WORKERS)),-n $(SERVER_TEST_WORKERS) --dist loadscope --max-worker-restart=0,)
 
-.PHONY: help clean test test-shipping production-awid-sync test-server naapp-sync typecheck-naapp test-naapp test-awid test-awid-pooler test-key-holder test-hermes-platform test-hermes-platform-source test-clitest-cli-auth-v2 test-node-deps test-channel test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish release test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e test-team-deployment-e2e check-a2a-copy-guardrails build \
+.PHONY: help clean test test-shipping production-awid-sync test-server naapp-sync typecheck-naapp test-naapp test-awid test-awid-pooler test-key-holder test-hermes-platform test-hermes-platform-source test-cli test-cli-auth-v2 test-node-deps test-channel test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish release test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e test-team-deployment-e2e check-a2a-copy-guardrails build \
 	freshness check-go-vulnerability-audit check-node-audit test-go-vulnerability-audit \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
 	awid-prod-verify awid-prod-dump awid-prod-restore awid-prod-migrate \
@@ -138,7 +138,7 @@ build: sync-doc-copies
 #
 # These cheap committed-source controls run first on every ordinary test run.
 # The expensive complete release proof is owned by the clean local-Docker gate.
-test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-identity-primitives test-scripts test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-key-holder test-hermes-platform-source test-cli test-channeltest-channel-core test-wake-channel-core-bundle test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
+test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-identity-primitives test-scripts test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-key-holder test-hermes-platform-source test-cli test-channel test-channel-core test-wake-channel-core-bundle test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
 
 # Discover the host/script controls together, including generators that import
 # the server's MCP registration. Use the locked server environment rather than
@@ -331,7 +331,7 @@ verify-site: check-awid-site-docs
 
 # The AWID release production runs, locked, for the suites that test against
 # it; synced before a suite goes offline.
-PRODUCTION_AWID_PROJECT := scripts/test-egress/production-awid
+export PRODUCTION_AWID_PROJECT := $(CURDIR)/scripts/test-egress/production-awid
 
 production-awid-sync:
 	uv sync --frozen --project $(PRODUCTION_AWID_PROJECT)
@@ -344,6 +344,20 @@ test-server-local:
 .PHONY: test-user-paths-local
 test-user-paths-local:
 	python3 scripts/test_user_paths_local.py
+
+# The trust-web cases the code decides differently from the model (filed
+# disagreements, held out of the gate). Fails while any of them disagrees. It
+# needs disposable PostgreSQL and Redis: on a Mac only inside the isolated
+# launcher (which sets AWEB_TEST_SERVICES=1), elsewhere in a gate runner.
+.PHONY: test-trust-web-disagreements
+test-trust-web-disagreements:
+	@if [ "$$(uname -s)" = Darwin ] && [ "$${AWEB_TEST_SERVICES:-}" != 1 ]; then \
+		echo "test-trust-web-disagreements refuses the host's databases on a Mac." >&2; \
+		echo "Run it through the isolated launcher: LOCAL_TEST_SUITE=server LOCAL_TEST_WORKERS=1 LOCAL_PYTEST_ARGS=tests/trust_web_disagreements.py make test-server-local" >&2; \
+		echo "or ask aweb-protocol-expert-gate-vms for a gate VM run." >&2; \
+		exit 2; \
+	fi
+	cd server && uv run --frozen pytest -q -rA tests/trust_web_disagreements.py
 
 test-server: production-awid-sync
 	cd server && uv sync --frozen
