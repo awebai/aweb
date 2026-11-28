@@ -31,11 +31,18 @@
       "legacy_plaintext_allowed_without_explicit_flag": false
     },
     {
+      "name": "default_new_send",
+      "intended_mode": "legacy_plaintext_v1",
+      "result": "send_legacy_plaintext",
+      "requires_flag": null
+    },
+    {
       "name": "explicit_legacy_plaintext",
       "intended_mode": "legacy_plaintext_v1",
       "result": "send_legacy_plaintext",
       "requires_flag": "--plaintext",
-      "warning": "Sending as legacy plaintext. Subject/body may be stored and visible to the service."
+      "applies_after": "e2e_intent",
+      "condition": "the send would otherwise be encrypted: a reply to encrypted mail, an inherited encrypted continuation, or instead of a refused --e2ee send"
     },
     {
       "name": "hosted_server_readable",

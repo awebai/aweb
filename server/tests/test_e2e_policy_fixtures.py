@@ -71,7 +71,19 @@ def test_legacy_plaintext_policy_fixture_pins_no_downgrade_vocabulary():
         assert cases[name]["result"] == "reject"
         assert cases[name]["legacy_plaintext_allowed_without_explicit_flag"] is False
 
-    assert cases["explicit_legacy_plaintext"]["requires_flag"] == "--plaintext"
+    # docs/mail-and-chat.md "Encryption boundary": a new send is plaintext by
+    # default; --plaintext is the explicit choice only after E2E intent.
+    assert cases["default_new_send"] == {
+        "name": "default_new_send",
+        "intended_mode": "legacy_plaintext_v1",
+        "result": "send_legacy_plaintext",
+        "requires_flag": None,
+    }
+    explicit = cases["explicit_legacy_plaintext"]
+    assert explicit["requires_flag"] == "--plaintext"
+    assert explicit["applies_after"] == "e2e_intent"
+    assert "encrypted" in explicit["condition"] and "--e2ee" in explicit["condition"]
+    assert not any("warning" in case for case in fixture["downgrade_cases"])
     assert cases["hosted_server_readable"]["must_not_call_e2ee"] is True
 
 
