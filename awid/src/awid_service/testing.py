@@ -27,9 +27,11 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from functools import partial
 from inspect import isawaitable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
+from weakref import ReferenceType, ref
 
 import httpx
 from fastapi import FastAPI
@@ -174,6 +176,17 @@ SERVICE_TOKEN = "awid-testing-service-token-32-bytes"
 ResponseFault = Callable[[httpx.Request, httpx.Response], httpx.Response | None]
 
 
+async def _fixture_namespace_verifier(
+    registry_ref: ReferenceType[Registry], /
+) -> DomainVerifier:
+    registry = registry_ref()
+    if registry is None:
+        raise DnsVerificationError(
+            "The fixture namespace verifier outlived its registry app"
+        )
+    return registry.namespace_authority
+
+
 async def fixture_domain_authority(
     overrides: Mapping[
         Callable[..., Any], Callable[[], DomainVerifier | Awaitable[DomainVerifier]]
@@ -310,11 +323,12 @@ class Registry:
             key, _ = generate_keypair()
         self._namespace_keys[domain] = key
         if get_domain_verifier not in self.app.dependency_overrides:
-
-            async def get_namespace_verifier() -> DomainVerifier:
-                return self.namespace_authority
-
-            self.app.dependency_overrides[get_domain_verifier] = get_namespace_verifier
+            # Keep the authority alive with its app. FastAPI can retain the
+            # override itself after discarding the app, so bind only a weak ref.
+            self.app.state.fixture_namespace_registry = self
+            self.app.dependency_overrides[get_domain_verifier] = partial(
+                _fixture_namespace_verifier, ref(self)
+            )
         try:
             await client.register_namespace(domain, did_key_from_signing_key(key), key)
         except Exception:

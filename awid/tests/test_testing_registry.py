@@ -5,8 +5,10 @@ registry client or the real routes."""
 from __future__ import annotations
 
 import base64
+import gc
 import json
 from datetime import UTC, datetime
+from weakref import ref
 
 import os
 
@@ -20,8 +22,13 @@ from awid.team_server_record import verify_team_server_record
 from nacl.signing import SigningKey
 from redis.asyncio import Redis
 
+from awid_service.deps import get_domain_verifier
 from awid_service.main import create_app
-from awid_service.testing import REGISTRY_URL, running_registry
+from awid_service.testing import (
+    REGISTRY_URL,
+    fixture_domain_authority,
+    running_registry,
+)
 
 TEAM_ID = "backend:example.com"
 
@@ -113,6 +120,35 @@ async def test_fixture_setup_creates_a_namespace_before_its_team(database_url) -
             ("POST", "/v1/namespaces"),
             ("POST", "/v1/namespaces/example.com/teams"),
         ]
+
+
+@pytest.mark.asyncio
+async def test_retained_namespace_override_does_not_keep_registry_alive(database_url):
+    domain = "example.com"
+    controller = SigningKey.generate()
+
+    async def exercise_namespace():
+        async with running_registry(database_url) as registry:
+            await registry.ensure_namespace(domain=domain, controller=bytes(controller))
+            app = registry.app
+            registry_ref = ref(registry)
+        del registry
+        # Existing callers resolve the override through the mapping alone.
+        overrides = app.dependency_overrides
+        authority = await fixture_domain_authority(overrides, domain)
+        assert authority.controller_did == _did_key(controller)
+        assert authority.registry_url == REGISTRY_URL
+        assert authority.dns_name == f"_awid.{domain}"
+        return ref(app), registry_ref, overrides
+
+    app_ref, registry_ref, overrides = await exercise_namespace()
+    gc.collect()
+
+    # Like FastAPI's dependency cache, keep the callable reachable after the
+    # app is gone. This also exercises older FastAPI versions without the cache.
+    assert get_domain_verifier in overrides
+    assert app_ref() is None
+    assert registry_ref() is None
 
 
 @pytest.mark.asyncio
