@@ -22,7 +22,9 @@
   (`last_decrypt_error` for a pending preview): `encryption_key_missing` or
   `decrypt_failed`. Text output shows `[undecryptable: <code>]`. Such a row is
   not acknowledged automatically. Exact reads of one message, replies and
-  follow-ups still fail with the typed error. The Go `awid` client opts in
+  follow-ups still fail with the typed error. Under an identity grant, the
+  custody host's refusals for one message become such rows too, while a
+  revoked or otherwise refused grant still fails the listing. The Go `awid` client opts in
   with `KeepUndecryptable` on `InboxParams` and `ChatHistoryParams`, or through
   `MailConversationWithParams` and `ChatPendingWithParams`. Existing calls keep
   their behaviour.
