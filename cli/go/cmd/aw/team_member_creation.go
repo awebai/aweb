@@ -40,31 +40,37 @@ func createProvisionedTeamMember(input teamMemberCreation) (result *acceptedTeam
 	if err != nil {
 		return nil, err
 	}
-	parentHome := ""
-	if input.Scope == awid.IdentityScopeGlobal {
+	parent := memberParentFacts{Scope: input.Scope}
+	if parent.Scope == awid.IdentityScopeGlobal {
 		chain, err := awconfig.LoadInstalledIDChain(actorHome.Root)
 		if err != nil {
 			return nil, err
 		}
 		if chain != nil {
+			parent.CreatorChained = true
 			actor, err := resolveIDExchangeIdentity(anchorDir, actorHome.Root)
 			if err != nil {
 				return nil, err
 			}
-			if actor.StableID == "" {
-				return nil, usageError("this local creator cannot parent a registered global child; use aw id team add-member for the controller's unconditional admission path")
-			}
-			ctx, cancel := commandAPIContext(nil)
-			issuer, err := currentAgentIssuer(idChildOptions{WorkingDir: anchorDir, IdentityHome: actorHome.Root, Now: time.Now})
-			if err == nil {
-				err = checkSelectedTeamInviteIssuer(ctx, issuer)
-			}
-			cancel()
-			if err != nil {
-				return nil, err
-			}
-			parentHome = actorHome.Root
+			parent.CreatorStableID = actor.StableID
 		}
+	}
+	parentsChild, err := decideMemberParent(parent)
+	if err != nil {
+		return nil, err
+	}
+	parentHome := ""
+	if parentsChild {
+		ctx, cancel := commandAPIContext(nil)
+		issuer, err := currentAgentIssuer(idChildOptions{WorkingDir: anchorDir, IdentityHome: actorHome.Root, Now: time.Now})
+		if err == nil {
+			err = checkSelectedTeamInviteIssuer(ctx, issuer)
+		}
+		cancel()
+		if err != nil {
+			return nil, err
+		}
+		parentHome = actorHome.Root
 	}
 	home := awconfig.WorktreeIdentityHome(homeDir)
 	memberAddress := ""
@@ -183,6 +189,26 @@ func createProvisionedTeamMember(input teamMemberCreation) (result *acceptedTeam
 		}
 	}
 	return accepted, nil
+}
+
+// memberParentFacts holds what the creator's home says about parenting a
+// global child: whether it has an installed identity chain, and its stable id.
+type memberParentFacts struct {
+	Scope           awid.IdentityScope
+	CreatorChained  bool
+	CreatorStableID string
+}
+
+// decideMemberParent decides whether the creator parents the new member. A
+// chained creator parents its global children, and only a registered one can.
+func decideMemberParent(facts memberParentFacts) (bool, error) {
+	if facts.Scope != awid.IdentityScopeGlobal || !facts.CreatorChained {
+		return false, nil
+	}
+	if facts.CreatorStableID == "" {
+		return false, usageError("this local creator cannot parent a registered global child; use aw id team add-member for the controller's unconditional admission path")
+	}
+	return true, nil
 }
 
 func rosterInviteSelection(source, sourceHome, team, alias string) initInviteRecovery {

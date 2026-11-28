@@ -2,11 +2,13 @@
 
 This directory contains the standalone `awid.ai` registry service.
 
-It is intentionally thin:
+It:
 
-- imports the DID, namespace, and address routes from the `aweb` package
+- owns the registry routes: DIDs, DNS namespaces and addresses, teams and ID
+  certificates (`awid/src/awid_service/routes/`); the `aweb` server depends on
+  it, not the other way round
 - uses the same signing, verification, and HTTP contracts as `aweb`
-- owns only service-local concerns: startup, pgdbm wiring, Redis-backed rate
+- owns the service concerns: startup, pgdbm wiring, Redis-backed rate
   limiting, health endpoints, Docker packaging, and migration tooling
 
 ## Run locally

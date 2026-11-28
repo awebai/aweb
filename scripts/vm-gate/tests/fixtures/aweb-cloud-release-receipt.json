@@ -1,0 +1,42 @@
+{
+  "project": "aweb-cloud",
+  "sha": "ea4a4bca70f073797b9156349a6111bd4f85ffc8",
+  "intent": "train",
+  "machine": "merak",
+  "command": "python3 scripts/gate.py --require-release",
+  "suite_exit": 0,
+  "evidence": "/state-root/state/runs/vm-f32a5a3ab78346e59197e8cd96f238fa/evidence",
+  "vm_gate": {
+    "exit": 0,
+    "infrastructure": null,
+    "error": null,
+    "summary": "/state-root/state/runs/vm-f32a5a3ab78346e59197e8cd96f238fa/summary.json"
+  },
+  "machine_platform": "linux/amd64",
+  "timeout_seconds": 9000,
+  "real_main": {
+    "aweb-cloud": "f4b2462cc64f1445fc73618d6261e56ed22d0d6f"
+  },
+  "aweb_cloud_parent_of_c": "f4b2462cc64f1445fc73618d6261e56ed22d0d6f",
+  "aweb_source": null,
+  "run_id": "vm-f32a5a3ab78346e59197e8cd96f238fa",
+  "image": {
+    "index": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "member": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "config": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "member_architecture": "amd64"
+  },
+  "launcher_sha": "0f266dc2a934cc1f65f56b1dad4faf4c98217f06",
+  "host_architecture": [
+    "x86_64",
+    "x86_64"
+  ],
+  "suite_classification": null,
+  "stages": {
+    "tool-image": "PASSED",
+    "checks": "PASSED",
+    "storage": "PASSED",
+    "image": "PASSED"
+  },
+  "exit": 0
+}

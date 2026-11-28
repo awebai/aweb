@@ -8,9 +8,8 @@ the divergence is stated here with its reason. If implementation shows a
 decision here is wrong, the fix goes through this record first, not into a
 quiet divergence.
 
-Authority: the beads-ecosystem plan §5
-(`bookshelf/strategy/2026-08-22-beadhub-revival-and-federation-plan.md`),
-plus the beads-mail record for everything the two providers share.
+The [beads-mail record](beads-mail-delegate.md) governs everything the two
+providers share.
 
 Verified sources, pinned 2026-09-02:
 

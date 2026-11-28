@@ -1,6 +1,6 @@
 [project]
 name = "aweb"
-version = "1.27.55"
+version = "1.27.56"
 description = "Agent Web: self-hostable coordination server for AI agents (identity, presence, mail, chat, tasks, locks)"
 readme = "README.md"
 license = "MIT"
@@ -21,7 +21,7 @@ classifiers = [
 dependencies = [
     "awid-service>=0.5.43",
     # Shared origin egress, manifest reader and hooks; no runtime extra.
-    "aweb-naapp[egress,hooks]>=0.5.2",
+    "aweb-naapp[egress,hooks]>=0.6.0",
     "base58>=2.1.1",
     "cryptography>=45.0.6",
     "dnspython>=2.8.0",
@@ -47,8 +47,6 @@ dependencies = [
 
 [tool.uv.sources]
 awid-service = { path = "../awid", editable = true }
-aweb-naapp = { path = "../naapp-lib", editable = true }
-aweb-naapp-testing = { path = "../naapp-lib/testing", editable = true }
 
 [project.urls]
 Homepage = "https://github.com/awebai/aweb"
@@ -88,7 +86,7 @@ dev = [
     # cryptography into the lock the server image installs from.
     "aweb-naapp",
     "pytest>=9.0.0",
-    "pytest-asyncio>=1.2.0",
+    "pytest-asyncio>=1.3.0",
     "pytest-xdist>=3.8.0",
     "playwright==1.63.0",
     "ruff==0.15.0",

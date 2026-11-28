@@ -2,6 +2,78 @@
 
 ## Unreleased
 
+- A revoked or root-replaced enrolled ID that omits its did:aw claim is
+  refused. A request without `X-AWEB-DID-AW`, or with a team certificate
+  that names no `member_did_aw`, used to be attributed to the member's stored
+  did:aw after only a key-binding check, so the ID kept sending as itself
+  after revocation. The server now checks that did:aw's ID-tree status, as it
+  already did for a claimed one (id-certificates.md §5). Local identities, and
+  global IDs the registry confirms are not enrolled in any ID tree, are
+  unaffected. When enrollment evidence is unavailable, the request is refused
+  with 503, as a claimed one already was. Server 1.27.56 carries this change.
+
+- If the egress policy refuses a manifest request, or DNS cannot resolve its
+  destination, `POST /v1/apps/preview`, `/v1/apps/install` and
+  `/v1/apps/requests` answer 422:
+  - `origin_refused` when the egress policy refused the destination:
+    loopback, a private address, an IP literal, or an operator-listed
+    internal origin that resolves outside its network.
+  - `origin_unresolvable` when its name did not resolve: no address, a name
+    that does not exist, or a DNS lookup that timed out.
+
+  The guard stops that request before connecting; these routes used to
+  answer 502 "app down" for it. Connection failures and upstream HTTP
+  failures still answer 502. `aweb reseed-app-registrations` fetches
+  through the same path, so for these two cases its error now reads "The app
+  origin is refused by the egress policy" or "The app origin's name does not
+  resolve" instead of "The app manifest could not be fetched or validated".
+  Server 1.27.56 carries this change.
+
+- Server 1.27.56 removes these unused names from the `aweb` package. No
+  caller in aweb, aweb Cloud or OATS used them:
+  - `aweb.alias_allocator.AliasExhaustedError`
+  - `aweb.app_events.INTENT_RANK`
+  - `aweb.auth.validate_agent_alias`, `AGENT_ALIAS_PATTERN`,
+    `AGENT_ALIAS_MAX_LENGTH` and `RESERVED_ALIASES`
+  - `aweb.claims._now`
+  - `aweb.coordination.routes.team_roles.DEFAULT_TEAM_ROLES_BUNDLE`
+  - `aweb.deps.get_domain_verifier`, and the `DomainVerifier` and
+    `DomainAuthority` names it imported into `aweb.deps`; import them from
+    `awid_service.deps` (`get_domain_verifier`) and `awid.dns_verify`
+    (`DomainVerifier`, `DomainAuthority`)
+  - `aweb.identity_metadata.lookup_participant_identity_metadata`, and the
+    `ContractRecord` and `canonical_record` names it imported into
+    `aweb.identity_metadata`; import them from `aweb.human_channels.contract`
+  - `aweb.mcp.tools.federation.registry_delivery_origin`
+  - `aweb.member_team_key.current_member_team_ids_for_identity`
+  - `aweb.messaging.contacts.CONTACT_REFERENCE_TYPES`
+  - `aweb.messaging.conversations.ConversationStatus`,
+    `add_conversation_participant` and `expire_conversation`
+
+- Server 1.27.56 requires `aweb-naapp[egress,hooks]>=0.6.0`, the first
+  published aweb-naapp with `EgressUnresolved`, which the 422 answers above
+  use. The server builds and tests against the published aweb-naapp and
+  aweb-naapp-testing packages rather than the repository's `naapp-lib`
+  copy, so its image and test suite run the version customers install.
+
+- The in-process test helpers `aweb.testing.running_server` and
+  `awid_service.testing.running_registry` open smaller database pools, 1 to 5
+  connections where pgdbm's defaults gave 10 to 20, named
+  `aweb_testing_running_server` and `awid_testing_running_registry` in
+  `pg_stat_activity`. That reduces the connections these two helpers hold on
+  a shared Postgres; other test pools still use pgdbm's defaults.
+
+- `aw mail send` accepts `--new-conversation` again, as a hidden flag that
+  changes nothing: a send to a recipient already starts a new thread. Released
+  OATS aweb providers v1.25.0 to v1.42.1 send it in their delivery probe, which
+  failed with an unknown flag since aw 1.36.53. Combining it with
+  `--conversation-id` is refused, as it was before.
+
+- When `aw` waits for a browser handoff, its loopback listener now sends the
+  whole "Done" page before it hands the code over, and is closed by the time
+  `aw` goes on. The listener used to close on its own schedule, so the browser
+  could show a connection error although the handoff had succeeded.
+
 - The Go packages `wake` (with `wake/session`), `hookevent`, `a2a`, `a2agw`,
   `strictjson`, `canonicaljson`, `logschain` and `signaturewire` were never part
   of the documented Go library and are now internal to the `aw` module, under
