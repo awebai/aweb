@@ -21,6 +21,20 @@ HUMAN_CASES = {
 }
 
 
+def declared_agent_cases(model):
+    """The agent cases both lanes must run, from the declared inventory alone:
+    each pair by kind and mode, and each control."""
+    lanes = ("head", "released")
+    pairs = {
+        f"{lane}/{sender}->{receiver}/{kind}/{mode}"
+        for lane in lanes
+        for sender, receiver in model.PAIRS
+        for kind in ("mail", "chat")
+        for mode in ("plain", "v2")
+    }
+    return pairs | {f"{lane}/{case}" for lane in lanes for case in model.CONTROLS}
+
+
 def known_failure(case):
     sender, receiver = case.split("/")[1].split("->")
     message = (
@@ -88,7 +102,7 @@ class UserPathsAdmission(unittest.TestCase):
             self.assertIn("incomplete: human paths not covered", result.stdout)
 
     def test_agent_failures_cleanup_budget_and_visible_human_gap(self):
-        inventory = result_model.qualification({}, 10, [])["required_agent_cases"]
+        inventory = sorted(declared_agent_cases(result_model))
         lanes = {
             lane: {
                 "outcomes": [
@@ -115,10 +129,9 @@ class UserPathsAdmission(unittest.TestCase):
                 for row in full["required_humans"]
             )
         )
-        # Every required case is counted as passed and none is dropped.
-        self.assertEqual(
-            set(full["passed_agent_cases"]), set(full["required_agent_cases"])
-        )
+        # The gate requires and passes exactly the declared inventory.
+        self.assertEqual(set(full["required_agent_cases"]), set(inventory))
+        self.assertEqual(set(full["passed_agent_cases"]), set(inventory))
         self.assertEqual(full["missing_agent_cases"], [])
         self.assertEqual({row["case"] for row in full["required_humans"]}, HUMAN_CASES)
         self.assertEqual(

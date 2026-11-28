@@ -13,6 +13,8 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent / "e2e"))
 from user_paths import CLICommandError, Lane  # noqa: E402
 from user_paths_result import classify_outcome, qualification  # noqa: E402
+import user_paths_result  # noqa: E402
+from test_user_paths_gate import declared_agent_cases  # noqa: E402
 
 MESSAGE = (
     "sending message: recipient has no published E2E encryption key; ask them to upgrade aw/Pi/channel "
@@ -114,7 +116,7 @@ class HistoricalChatIssue(unittest.TestCase):
         self.assertEqual(error.failure["phase"], "initial-send")
 
     def test_parent_keeps_known_failures_out_of_passed_case_count(self):
-        inventory = qualification({}, 10, [])["required_agent_cases"]
+        inventory = sorted(declared_agent_cases(user_paths_result))
         lanes = {
             name: dict(
                 version="1.36.40" if name == "released" else "dev",
