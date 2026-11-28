@@ -448,7 +448,7 @@ architectural ceiling — the residual is accepted as unbounded, resting
 entirely on the operator trust assumption already named.
 
 The full assessment and its adversarial review live in
-[local sender-verification authority assessment](https://github.com/awebai/aweb/blob/main/docs/drafts/local-sender-verification-authority.md)
+[local sender-verification authority assessment](https://github.com/awebai/aweb/blob/39b3f091142280238ef2fbcc2d17ab659167d9cf/docs/drafts/local-sender-verification-authority.md)
 and on task `aweb-abfm`.
 
 For cross-registry ingress, the receiving service's strict external-address

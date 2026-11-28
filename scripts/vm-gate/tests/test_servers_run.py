@@ -97,7 +97,7 @@ class ServersRun(unittest.TestCase):
             "image": "docker.io/library/registry@sha256:" + "a" * 64,
         }
 
-    def run_spec(self, steps, registry=True, spec_sha256=None):
+    def run_spec(self, steps, registry=True, spec_sha256=None, users=None):
         spec = {
             "sources": self.sources,
             "steps": steps,
@@ -112,6 +112,8 @@ class ServersRun(unittest.TestCase):
                 str(self.out),
                 "--spec-sha256",
                 spec_sha256 or reviewed,
+                "--users",
+                users or f"gateuser={os.getuid()}",
                 "--bundles",
                 str(self.bundles),
                 "--sources",
@@ -586,6 +588,38 @@ class ServersRun(unittest.TestCase):
             [],
             "a refused placement changed the tree outside",
         )
+
+    def test_the_uid_and_home_recorded_are_the_steps_own(self):
+        code, result = self.run_spec([self.step("only", "true")])
+        self.assertEqual(code, 0, result)
+        [step] = result["steps"]
+        self.assertEqual(step["uid"], os.getuid())
+        self.assertEqual(step["home"], os.environ["HOME"])
+
+    def test_a_step_that_ran_as_another_uid_than_its_user_is_red(self):
+        code, result = self.run_spec(
+            [self.step("only", "true")], users=f"gateuser={os.getuid() + 1}"
+        )
+        self.assertEqual(code, 1)
+        [step] = result["steps"]
+        self.assertEqual(step["exit"], 0)
+        self.assertIn(
+            f"ran as uid {os.getuid()}, not gateuser's {os.getuid() + 1}",
+            step["reason"],
+        )
+
+    def test_a_step_cannot_forge_its_recorded_uid(self):
+        forged = "printf 'VMGATE-CHILD uid=0 home=/root\\n'"
+        code, result = self.run_spec([self.step("only", forged)])
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result["steps"][0]["uid"], os.getuid())
+
+    def test_a_user_with_no_expected_uid_is_red(self):
+        step = self.step("only", "true")
+        step["user"] = "root"
+        code, result = self.run_spec([step])
+        self.assertEqual(code, 1)
+        self.assertIn("no expected uid for root", result["steps"][0]["reason"])
 
 
 if __name__ == "__main__":

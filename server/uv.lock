@@ -128,7 +128,7 @@ wheels = [
 
 [[package]]
 name = "aweb"
-version = "1.27.55"
+version = "1.27.56"
 source = { editable = "." }
 dependencies = [
     { name = "asyncpg" },
@@ -167,7 +167,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "asyncpg", specifier = ">=0.32.0" },
-    { name = "aweb-naapp", extras = ["egress", "hooks"], editable = "../naapp-lib" },
+    { name = "aweb-naapp", extras = ["egress", "hooks"], specifier = ">=0.6.0" },
     { name = "awid-service", editable = "../awid" },
     { name = "base58", specifier = ">=2.1.1" },
     { name = "cryptography", specifier = ">=45.0.6" },
@@ -189,20 +189,24 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "aweb-naapp", editable = "../naapp-lib" },
-    { name = "aweb-naapp-testing", editable = "../naapp-lib/testing" },
+    { name = "aweb-naapp" },
+    { name = "aweb-naapp-testing" },
     { name = "mypy", specifier = "==1.19.1" },
     { name = "playwright", specifier = "==1.63.0" },
     { name = "pytest", specifier = ">=9.0.0" },
-    { name = "pytest-asyncio", specifier = ">=1.2.0" },
+    { name = "pytest-asyncio", specifier = ">=1.3.0" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
     { name = "ruff", specifier = "==0.15.0" },
 ]
 
 [[package]]
 name = "aweb-naapp"
-version = "0.5.2"
-source = { editable = "../naapp-lib" }
+version = "0.6.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/cf/7d/e0ae3120e52f152a6b6772559aa06b5c783979b1e642549277fb3e26058c/aweb_naapp-0.6.0.tar.gz", hash = "sha256:9d6f69a046e475aa9c863c4f3b669f52d59e667b39b1db8e072786ca80c49770", size = 1327654, upload-time = "2026-11-28T01:13:52.435Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e5/c0/7a4700ec9b1f8ab7cee98fdcb354ddf1cb34e4ebeb968b2588ff813d54fc/aweb_naapp-0.6.0-py3-none-any.whl", hash = "sha256:041e90d81b9a618c0b0fbefb345de99d2b55360a651ad9e7498ead3e80833128", size = 776829, upload-time = "2026-11-28T01:13:50.996Z" },
+]
 
 [package.optional-dependencies]
 egress = [
@@ -229,60 +233,10 @@ runtime = [
     { name = "webauthn" },
 ]
 
-[package.metadata]
-requires-dist = [
-    { name = "asyncpg", marker = "extra == 'runtime'", specifier = ">=0.32.0" },
-    { name = "awid-service", marker = "extra == 'hooks'", editable = "../awid" },
-    { name = "awid-service", marker = "extra == 'runtime'", editable = "../awid" },
-    { name = "cbor2", marker = "extra == 'runtime'", specifier = ">=6.1.2" },
-    { name = "cryptography", marker = "extra == 'crypto'", specifier = ">=50.0.0" },
-    { name = "dnspython", marker = "extra == 'egress'", specifier = ">=2.7.0" },
-    { name = "fastapi", marker = "extra == 'runtime'", specifier = ">=0.116.1" },
-    { name = "httpcore", extras = ["asyncio"], marker = "extra == 'egress'", specifier = ">=1.0.9" },
-    { name = "httpx", marker = "extra == 'runtime'", specifier = ">=0.28.1" },
-    { name = "idna", marker = "extra == 'egress'", specifier = ">=3.10" },
-    { name = "jsonschema", marker = "extra == 'page-store'", specifier = ">=4.23" },
-    { name = "jsonschema", marker = "extra == 'pages'", specifier = ">=4.23" },
-    { name = "jsonschema", marker = "extra == 'runtime'", specifier = ">=4.23.0" },
-    { name = "pgdbm", marker = "extra == 'dispatch'", specifier = ">=0.5.0" },
-    { name = "pgdbm", marker = "extra == 'hooks'", specifier = ">=0.5.0" },
-    { name = "pgdbm", marker = "extra == 'idempotency'", specifier = ">=0.5.0" },
-    { name = "pgdbm", marker = "extra == 'nonces'", specifier = ">=0.5.0" },
-    { name = "pgdbm", marker = "extra == 'outbox'", specifier = ">=0.5.0" },
-    { name = "pgdbm", marker = "extra == 'page-store'", specifier = ">=0.5.0" },
-    { name = "pgdbm", marker = "extra == 'ratelimit'", specifier = ">=0.5.0" },
-    { name = "pgdbm", marker = "extra == 'roles'", specifier = ">=0.5.0" },
-    { name = "pgdbm", marker = "extra == 'runtime'", specifier = ">=0.5.0" },
-    { name = "publicsuffixlist", marker = "extra == 'egress'", specifier = "==1.1.0.20261018" },
-    { name = "pydantic-settings", marker = "extra == 'runtime'", specifier = ">=2.10.1" },
-    { name = "pynacl", marker = "extra == 'hooks'", specifier = ">=1.6.2" },
-    { name = "pynacl", marker = "extra == 'runtime'", specifier = ">=1.6.2" },
-    { name = "pynacl", marker = "extra == 'signing-key'", specifier = ">=1.6.2" },
-    { name = "webauthn", marker = "extra == 'runtime'", specifier = ">=3.0.1" },
-]
-provides-extras = ["crypto", "nonces", "runtime", "outbox", "signing-key", "dispatch", "idempotency", "roles", "ratelimit", "pages", "egress", "hooks", "page-store"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "aweb-naapp", extras = ["egress"] },
-    { name = "aweb-naapp", extras = ["runtime", "pages"] },
-    { name = "aweb-naapp-testing", extras = ["server"], editable = "../naapp-lib/testing" },
-    { name = "cryptography", specifier = ">=44.0.0" },
-    { name = "hatchling", specifier = ">=1.32.4" },
-    { name = "httpx2", specifier = ">=2.9.1" },
-    { name = "mypy", specifier = ">=1.18.0" },
-    { name = "playwright", specifier = "==1.63.0" },
-    { name = "pytest", specifier = ">=9.0.0" },
-    { name = "pytest-asyncio", specifier = ">=1.2.0" },
-    { name = "pytest-xdist", specifier = ">=3.8.0" },
-    { name = "ruff", specifier = ">=0.14.0" },
-    { name = "uvicorn", specifier = ">=0.35.0" },
-]
-
 [[package]]
 name = "aweb-naapp-testing"
-version = "0.5.2"
-source = { editable = "../naapp-lib/testing" }
+version = "0.6.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiosmtpd" },
     { name = "aweb-naapp", extra = ["hooks", "runtime"] },
@@ -291,20 +245,10 @@ dependencies = [
     { name = "cryptography" },
     { name = "dnspython" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiosmtpd", specifier = ">=1.4.6" },
-    { name = "aweb", marker = "extra == 'server'", editable = "." },
-    { name = "aweb-naapp", extras = ["hooks", "runtime"], editable = "../naapp-lib" },
-    { name = "awid-service", editable = "../awid" },
-    { name = "cbor2", specifier = ">=5.6.0" },
-    { name = "cryptography", specifier = ">=46.0.0" },
-    { name = "dnspython", specifier = ">=2.7.0" },
-    { name = "pytest-asyncio", marker = "extra == 'server'", specifier = ">=1.2.0" },
-    { name = "redis", marker = "extra == 'server'", specifier = ">=6.4.0" },
+sdist = { url = "https://files.pythonhosted.org/packages/eb/f9/6bb0fa3963e4525db469dcda372c401515c5ed5f2dcb4a142feb2a081efc/aweb_naapp_testing-0.6.0.tar.gz", hash = "sha256:a3321708b43f5c1d621fb7a7b5096a075697cdba60919f2de3234b739a695ede", size = 33025, upload-time = "2026-11-28T01:14:55.822Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6d/38/65f80d0abea1776089b4dfe6efb263f94ed4a5231efa1443647117f47d7a/aweb_naapp_testing-0.6.0-py3-none-any.whl", hash = "sha256:be93e3ebaf3a35c82bebb33f24d46034aa91d2235f11a1f2330918c596675fc3", size = 42448, upload-time = "2026-11-28T01:14:55.036Z" },
 ]
-provides-extras = ["server"]
 
 [[package]]
 name = "awid-service"

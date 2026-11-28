@@ -320,6 +320,102 @@ Each item pairs a sentence about the model with one about the real system.
 | `Enrolment`, `Assertion` and the three definitions | Near-literal readings of their bodies | definition | Bodies |
 | `Enrolment.controller`, `Enrolment.hostedEmail` | What each tag names: an assertion by the organisation's domain controller; one by a hosted service, for an email enrolment | source | `docs/id-certificates.md`; the protocol seat's wording |
 
+## TrustWeb/Spheres.lean and the README's trust spheres section
+
+| Where | Sentence | Kind | What makes it true |
+|---|---|---|---|
+| README, module doc | `Spheres.lean` adds where secrets sit and changes nothing in the model | process | The file imports the model and declares only new names; no other model file changes |
+| README | A sphere is any place whose secrets are reachable together; the layer does not say what a sphere is | definition | `Sphere` is a number; nothing else is said of it |
+| README, `Party.secret` | Each party asks with one secret, of five kinds | definition | `Secret`, `Party.secret` |
+| README, `Secret.approval` | A person also holds the credential it enrolled to approve with, in aweb a key of its own, not its identity key | definition, source | `Secret.approval`; `docs/human-approval-architecture.md` (the enrolled key signs the challenge); the key holder's enrolment binds credentials beside the identity key; the approval service verifies a receipt with the enrolled credential's key |
+| README, `World` | A world is a record, the secrets each sphere holds, and the secrets each sphere got from acts | definition | `World` |
+| README, `WStep` | A step is an act asked from a sphere holding the asker's secret, after which that sphere holds and has got every secret the act gives, or a leak from a persuadable sphere to one it talks to | definition | `WStep.act`, `WStep.leak` |
+| README, `SphereActs.lean` | `SphereActs.lean` gives the secrets and the acts that give them | definition | `Secret`, `Party.secret`, `StepVia` |
+| README, `StepVia` | Creating an organisation and replacing its root give the root key they make, a re-key the team's new key, an invitation its secret, a grant its session key, and having a key given back that key; no other act gives a secret | definition, source | `StepVia`'s `received` lists; awid's namespace registration and controller rotation require the caller's signature with the new controller key (awid routes, dns namespaces); `rotate_team_key` installs the caller's new team key, which the CLI makes; the CLI makes a grant's session key; an invitation's token is returned to whoever asks for it |
+| README | Who talks to whom and who is persuadable are parameters | definition | `WStep`'s and `WReachable`'s arguments |
+| README, three defs | The three worlds | definition | `noneSwayed`, `agentsSwayed`, `agentsAndPersonsSwayed` |
+| `WReachable`, `Flows`, `Occupant` | Their meaning | definition | Their bodies |
+| 60 | Construction note | construction | The proof |
+| README | In `WStep` an approval is not tied to a sphere, so approvals there rest on assumption 6 | definition, assumption | `Step`'s constructors take `approvals` as an implicit argument that `WStep` does not see; A6 |
+| README | An identity key, an approval credential and a DNS credential are never given by an act; the initial placement may give a sphere identity keys no record names yet | definition | `Secret.Givable`; `WReachable.start` takes any `init` |
+| README | Such a key already lets its holder send | act | `sendOwn` needs only `CanAct`, which an unregistered key meets |
+| README | An invitation secret or a session key held before its record exists gives nothing | act | `redeem` needs the invitation unused; `sendGrant` needs the grant live |
+| README | A team's first key is placed too, since the model does not create teams | definition | No `Step` constructor creates a team |
+| README | After a re-key or a root replacement the asking sphere holds the new key; copies of the old one still count, which can only overstate their holders | definition | `WStep.act` adds the received secrets to the asking sphere and keeps `holds`; `Party.secret` maps a key's controller to the key's name, not to a version of it |
+| README | A key given back goes to the sphere that asked for it; `release` does not say to whom, and the asker is the most it can overstate | definition | `StepVia.release` gives `[.orgKey key]`; `release`'s effect only removes the key from `held` |
+
+## TrustWeb/SphereApprovals.lean and the README's approvals section
+
+| Where | Sentence | Kind | What makes it true |
+|---|---|---|---|
+| README | `SphereApprovals.lean` changes nothing in the model | process | The file imports the model and declares only new names |
+| README, 61 | `StepVia` is the model's acts with their approvals and the secrets each gives the asker; an act with no `Authorised` premise carries no approvals | definition | `StepVia`'s constructors; each passes `approvals` only where `Authorised` takes them, else `[]` |
+| 61 | Generated from `Step` | process | Its text was generated from `Step`'s |
+| README, `Available`, `AStep` | An adversarial sphere's act counts an approval only when available to it: it holds the approval credential or the identity key, or a persuadable holder of one talks to it | definition | `Available`, `Secret.ApprovesAs`; `AStep.act`'s third premise |
+| README | aweb's approvals are signed with the approval credential; counting the identity key too can only overstate its holder | source, definition | `docs/human-approval-architecture.md`; `Available` is a disjunction over both |
+| README | Which spheres are adversarial is a parameter; an honest sphere that is not persuadable never approves an adversarial request | definition | `AStep`'s `Adv`; `Available` has no case for such a sphere |
+| README, `NamedStep` | Redeeming adds a certificate for the key the invitation names | definition | `NamedStep.redeem` |
+| README, `NamedStep` | Planned | source | A proposed design; aweb's invitations do not name an identity |
+| 65 | "Whoever asks" | result | The theorem quantifies over `who` |
+| 68 | Resting on the planned premises of `admit` and `redeem` | result | It uses `new_admin_needs_controller_or_asker`, row 6 |
+| README | These results do not say a persuaded person's approval can be refused | definition | No result above has such a conclusion |
+| README | Row 68 joins the layer to one act; rows 69 to 74 bound a chain | result | Row 68's theorems take one `Step`; rows 69 to 71 take an `Attack`; row 74 builds one |
+
+## TrustWeb/SphereAdmins.lean and the README's chain section
+
+| Where | Sentence | Kind | What makes it true |
+|---|---|---|---|
+| README, `Attack` | Only the attacker acts, with any secret it holds and no approval beyond the model's premises; it holds every secret its acts give | definition | `Attack.act` takes the attacker's held secret and a `StepVia`, whose approvals are not checked, and adds its received secrets to the attacker |
+| README | Which can only overstate it | definition | An `Attack` act has no premise beyond `StepVia`'s and the held secret |
+| README, `Attack` | Persuadable spheres give secrets to the spheres they talk to | definition | `Attack.leak` |
+| README | What a persuaded agent could do with its keys, the attacker can do once they reach it | definition | Every act needs only `who.secret` held by the attacker; leaks move secrets one at a time along `Flows` |
+| README, `CanReach` | Its meaning | definition | Its body |
+| 70 | Resting on the planned premises of `admit` and `redeem` | result | It uses `new_admin_needs_controller_or_asker`, row 6 |
+| 72 | The Design rule is planned | source | `adminRule`, row 72 names it |
+| 73, 74 | Construction notes | construction | The proofs |
+| README | Row 70 says the attacker never gains an admin's key; an attack that begins with one within its reach is outside it | result | Its premises are about the world when the attack begins |
+| README | It does not bound what honest spheres do | definition | Only the attacker acts in `Attack` |
+| README | Rows 73's and 74's starting worlds are any record; row 48 reaches one of row 73's kind | result, construction | Both theorems build their record without `Reachable`; `invitation_then_own_request_makes_an_admin` |
+| README | The DNS credential is in row 70's premises for the same reason as the root key | act, result | `replaceRoot` gives the root key (`StepVia.given_root`); a root key then re-keys the admin team as in row 74 |
+| README | Having a key given back is in row 70's rule premise for the same reason | act | `StepVia.release` gives the key to the asker (`StepVia.given_root`, `StepVia.given_team`) |
+
+## TrustWeb/Standing.lean and the README's standing section
+
+| Where | Sentence | Kind | What makes it true |
+|---|---|---|---|
+| README, module doc | `Standing.lean` adds statements and a feed beside the model and changes nothing in it | process | The file imports only the model's definitions (`Model.lean`) and declares only new names; no other model file changes |
+| README | All of it is Design | source | The standing-statement and feed design is a protocol proposal for the pilot, not built |
+| README, `Statement`, `Fact`, `Fact.Holds`, `Fact.subject` | What a statement says, the two kinds of fact, and how a fact is read off a record | definition | Their bodies; `Fact.Holds` uses `InTeam` and `Valid` |
+| README, `Registry` | What a registry gives | definition | Its fields |
+| README, `Issued`, `Purpose`, `Purpose.life`, `Bounds` | When the registry issues a statement, the two purposes, and the lifetimes | definition | Their bodies |
+| README, `Verifier`, `Request` | What a verifier decides from, and what a request carries, including whether it creates authority | definition | Their fields |
+| README, `Admits`, `Defeated`, `Purpose.Fits` | What admitting needs; ordinary standing serves only requests that create no authority, current evidence only requests that create authority | definition | Their bodies |
+| README, `IssuedAtHead` | Evidence issued at the registry's head | definition | Its body |
+| README, `Admits` | It keeps no record of which statements the verifier has seen, so a first presentation is judged like any other | definition | `Admits` reads only the statement, the request and the verifier's applied cut, barrier, clock and used nonces; no field records a statement |
+| `Purpose.consume` | Using current evidence uses its nonce | definition | Its body |
+| README, `FeedComplete`, `TimeMonotone`, `BarrierBefore`, `NoRetiredHandles` | The four premises, named and taken as given | assumption | Their bodies; each appears only as a hypothesis |
+| README, `NoRetiredHandles` | It is the issuer's duty; the verifier does not rely on it and refuses on any applied entry | definition, result | `Defeated` ranges over every applied cut; `NoRetiredHandles` is a hypothesis only of `defeat_is_after_cut` |
+| `Handle` | A handle the registry mints | definition | An abbreviation for a number |
+| 75 to 81 | The rules | result | The theorems named in each row |
+| 75, 77 | Rows 75 and 77 hold for issued statements, under the feed premise | result | `admitted_fact_holds_at_applied` and `ended_fact_not_admitted` take both `FeedComplete` and `Issued`; issuance is the registry's, admission the verifier's |
+| 75 | The first theorem of the row is by definition | result | `issued_fact_holds` is the first part of `Issued` |
+| README, example | The example registry, its cuts, times, handles and bounds, and its two requests | definition | `exampleRegistry`, `exampleBounds`, `memberRecord`, `emptyRecord`, `exampleFact`, `exampleRequest`, `exampleCreation` |
+| README, example | The removal falls inside both lifetimes; each refused case other than the expiry boundary is unexpired, and each is refused for the reason it names | definition, result | Removal at time 4; statement expiry 1800, evidence expiry 10; each refused case's clock is below its statement's expiry except `refused_at_expiry`, at it; each proof uses the theorem of its reason |
+| README, `Consistent` | Every verifier the cases use is consistent with the example's times | definition, result | `Consistent`; `example_verifiers_consistent` lists every verifier the cases use |
+| README, example | The example meets the feed and time premises, the barrier premise where a case uses it, and issues its statements | result | `exampleRegistry_feedComplete`, `exampleRegistry_timeMonotone`, the barrier premise in `refused_at_removal_bound`, `exampleStatement_issued`, `exampleStatementAgain_issued`, `exampleEvidence_issued_at_head`, with `exampleFact_holds` and `Fact.not_holds_empty` |
+| 82 | This is the window the Design allows, and row 80 closes it | result | `admitted_before_removal_reaches_verifier`; `refused_at_removal_bound` uses `removal_bound` |
+| 82 to 90 | The paired cases | result | The theorems named in each row; each refused case has an admitted neighbour one change away, in its row or in row 82 (the statement at time 7 with a barrier at 4) or row 88 (the evidence at time 7) |
+| README, limits | Re-admission and continuity are shown with a team fact; cutting off an identity is a fact that stops holding; continuity is a change that leaves the fact holding and retires none of its handles; a rotation that keeps registrations is not in the model | definition, result | `exampleFact` is a team fact; rows 77 and 80 are for any `Fact`; `continuity_keeps_statement`; the README's "Where the model does less" on root replacement |
+| README, limits | Which acts create authority is the request's flag; the layer does not list them | definition | `Request.creates` is a field; no act is named |
+| README, limits | `Verifier.consumed` stands for the destination's shared replay state; row 81 proves the step that records a use; sharing across processes is for the integration cases | definition, source | `Purpose.consume` updates one `Verifier`; the design asks for two processes of one destination in the replay case |
+| README, example | The second registry and what it reuses | definition | `reuseRegistry`, `reusedStatement` |
+| README, limits | The premises are what the registry must do, and the integration tests prove them | assumption, source | They are hypotheses of the rows; the design leaves issuance, feed and transaction premises to integration cases |
+| README, limits | The record at each cut is any record, so the rows hold for any history | definition | `Registry.record` is any function; no row assumes `Reachable` or `Step` |
+| README, limits | Signatures rest on assumption 1; handles are numbers, so their randomness and what the feed reveals are outside | assumption, definition | A1; `Handle` |
+| README, limits | One registry and no grants | definition | `Admits` takes one `Registry`; `Fact` has no grant |
+| README, limits | A decision is one `Admits`; a later emission or queued decision is another | definition | `Admits` is one decision; nothing in the layer carries a decision forward |
+| README, limits | Clock error is folded into the clock premise | definition | `Verifier.now` is read as an upper bound on the issuer's time; `removal_bound` takes it as such |
+
 ## TrustWeb/DocNames.lean
 
 Its doc comments are about the build, not the model.

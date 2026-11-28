@@ -1,0 +1,1470 @@
+{
+  "format": "aweb.trust-web-cases/1",
+  "status": "experimental",
+  "description": "Cases of the experimental trust-web model (spec/trust-model) run against the real AWID registry and aweb server by server/tests/test_trust_web_cases.py. Seed cases are hand-written to qualify the runner; they reference the model's definitions at the named commit and make no claim that an emitter ran.",
+  "model": {
+    "path": "spec/trust-model",
+    "commit": "e5c0ca236200c8e43c5bcac1a3f13816a65f824c",
+    "emitter": null
+  },
+  "cases": [
+    {
+      "id": "register-person-by-root",
+      "source": "seed",
+      "status": "implemented",
+      "rule": "any",
+      "setup": [
+        {
+          "who": {
+            "dns": "o1"
+          },
+          "act": "createOrg",
+          "args": {
+            "org": "o1"
+          }
+        },
+        {
+          "who": {
+            "dns": "o2"
+          },
+          "act": "createOrg",
+          "args": {
+            "org": "o2"
+          }
+        }
+      ],
+      "who": {
+        "controller": {
+          "root": "o1"
+        }
+      },
+      "act": "registerByRoot",
+      "args": {
+        "cert": {
+          "org": "o1",
+          "subject": "alice",
+          "kind": "person",
+          "issuer": "root"
+        }
+      },
+      "expect": {
+        "result": "allowed"
+      },
+      "observe": [
+        {
+          "cert": {
+            "subject": "alice"
+          },
+          "is": {
+            "org": "o1",
+            "kind": "person",
+            "issuer": "root"
+          }
+        },
+        {
+          "valid": {
+            "org": "o1",
+            "key": "alice",
+            "kind": "person"
+          },
+          "is": true
+        }
+      ]
+    },
+    {
+      "id": "register-person-by-other-org-root-refused",
+      "source": "seed",
+      "status": "implemented",
+      "rule": "any",
+      "setup": [
+        {
+          "who": {
+            "dns": "o1"
+          },
+          "act": "createOrg",
+          "args": {
+            "org": "o1"
+          }
+        },
+        {
+          "who": {
+            "dns": "o2"
+          },
+          "act": "createOrg",
+          "args": {
+            "org": "o2"
+          }
+        }
+      ],
+      "who": {
+        "controller": {
+          "root": "o2"
+        }
+      },
+      "act": "registerByRoot",
+      "args": {
+        "cert": {
+          "org": "o1",
+          "subject": "alice",
+          "kind": "person",
+          "issuer": "root"
+        }
+      },
+      "expect": {
+        "result": "refused",
+        "premise": "registerByRoot.Authorised"
+      },
+      "neighbour": "register-person-by-root",
+      "observe": [
+        {
+          "cert": {
+            "subject": "alice"
+          },
+          "is": null
+        }
+      ]
+    },
+    {
+      "id": "register-agent-by-person-parent",
+      "source": "seed",
+      "status": "implemented",
+      "rule": "any",
+      "setup": [
+        {
+          "who": {
+            "dns": "o1"
+          },
+          "act": "createOrg",
+          "args": {
+            "org": "o1"
+          }
+        },
+        {
+          "who": {
+            "controller": {
+              "root": "o1"
+            }
+          },
+          "act": "registerByRoot",
+          "args": {
+            "cert": {
+              "org": "o1",
+              "subject": "alice",
+              "kind": "person",
+              "issuer": "root"
+            }
+          }
+        }
+      ],
+      "who": {
+        "id": "alice"
+      },
+      "act": "registerByParent",
+      "args": {
+        "cert": {
+          "org": "o1",
+          "subject": "bot1",
+          "kind": "agent",
+          "issuer": {
+            "member": "alice"
+          }
+        }
+      },
+      "expect": {
+        "result": "allowed"
+      },
+      "observe": [
+        {
+          "cert": {
+            "subject": "bot1"
+          },
+          "is": {
+            "org": "o1",
+            "kind": "agent",
+            "issuer": {
+              "member": "alice"
+            }
+          }
+        },
+        {
+          "valid": {
+            "org": "o1",
+            "key": "bot1",
+            "kind": "agent"
+          },
+          "is": true
+        }
+      ]
+    },
+    {
+      "id": "register-agent-by-agent-parent",
+      "source": "seed",
+      "status": "implemented",
+      "rule": "any",
+      "setup": [
+        {
+          "who": {
+            "dns": "o1"
+          },
+          "act": "createOrg",
+          "args": {
+            "org": "o1"
+          }
+        },
+        {
+          "who": {
+            "controller": {
+              "root": "o1"
+            }
+          },
+          "act": "registerByRoot",
+          "args": {
+            "cert": {
+              "org": "o1",
+              "subject": "alice",
+              "kind": "person",
+              "issuer": "root"
+            }
+          }
+        },
+        {
+          "who": {
+            "id": "alice"
+          },
+          "act": "registerByParent",
+          "args": {
+            "cert": {
+              "org": "o1",
+              "subject": "bot1",
+              "kind": "agent",
+              "issuer": {
+                "member": "alice"
+              }
+            }
+          }
+        }
+      ],
+      "who": {
+        "id": "bot1"
+      },
+      "act": "registerByParent",
+      "args": {
+        "cert": {
+          "org": "o1",
+          "subject": "bot2",
+          "kind": "agent",
+          "issuer": {
+            "member": "bot1"
+          }
+        }
+      },
+      "expect": {
+        "result": "allowed"
+      },
+      "observe": [
+        {
+          "cert": {
+            "subject": "bot2"
+          },
+          "is": {
+            "org": "o1",
+            "kind": "agent",
+            "issuer": {
+              "member": "bot1"
+            }
+          }
+        },
+        {
+          "valid": {
+            "org": "o1",
+            "key": "bot2",
+            "kind": "agent"
+          },
+          "is": true
+        }
+      ]
+    },
+    {
+      "id": "register-person-by-agent-parent-refused",
+      "source": "seed",
+      "status": "implemented",
+      "rule": "any",
+      "setup": [
+        {
+          "who": {
+            "dns": "o1"
+          },
+          "act": "createOrg",
+          "args": {
+            "org": "o1"
+          }
+        },
+        {
+          "who": {
+            "controller": {
+              "root": "o1"
+            }
+          },
+          "act": "registerByRoot",
+          "args": {
+            "cert": {
+              "org": "o1",
+              "subject": "alice",
+              "kind": "person",
+              "issuer": "root"
+            }
+          }
+        },
+        {
+          "who": {
+            "id": "alice"
+          },
+          "act": "registerByParent",
+          "args": {
+            "cert": {
+              "org": "o1",
+              "subject": "bot1",
+              "kind": "agent",
+              "issuer": {
+                "member": "alice"
+              }
+            }
+          }
+        }
+      ],
+      "who": {
+        "id": "bot1"
+      },
+      "act": "registerByParent",
+      "args": {
+        "cert": {
+          "org": "o1",
+          "subject": "bot2",
+          "kind": "person",
+          "issuer": {
+            "member": "bot1"
+          }
+        }
+      },
+      "expect": {
+        "result": "refused",
+        "premise": "registerByParent.MayIssue"
+      },
+      "neighbour": "register-agent-by-agent-parent",
+      "observe": [
+        {
+          "cert": {
+            "subject": "bot2"
+          },
+          "is": null
+        }
+      ]
+    },
+    {
+      "id": "register-agent-by-revoked-parent-refused",
+      "source": "seed",
+      "status": "implemented",
+      "rule": "any",
+      "setup": [
+        {
+          "who": {
+            "dns": "o1"
+          },
+          "act": "createOrg",
+          "args": {
+            "org": "o1"
+          }
+        },
+        {
+          "who": {
+            "controller": {
+              "root": "o1"
+            }
+          },
+          "act": "registerByRoot",
+          "args": {
+            "cert": {
+              "org": "o1",
+              "subject": "alice",
+              "kind": "person",
+              "issuer": "root"
+            }
+          }
+        },
+        {
+          "who": {
+            "id": "alice"
+          },
+          "act": "revokeSelf",
+          "args": {
+            "subject": "alice"
+          }
+        }
+      ],
+      "who": {
+        "id": "alice"
+      },
+      "act": "registerByParent",
+      "args": {
+        "cert": {
+          "org": "o1",
+          "subject": "bot1",
+          "kind": "agent",
+          "issuer": {
+            "member": "alice"
+          }
+        }
+      },
+      "expect": {
+        "result": "refused",
+        "premise": "registerByParent.Valid"
+      },
+      "neighbour": "register-agent-by-person-parent",
+      "observe": [
+        {
+          "cert": {
+            "subject": "bot1"
+          },
+          "is": null
+        }
+      ]
+    },
+    {
+      "id": "register-agent-by-orphaned-agent-parent-refused",
+      "source": "seed",
+      "status": "implemented",
+      "rule": "any",
+      "setup": [
+        {
+          "who": {
+            "dns": "o1"
+          },
+          "act": "createOrg",
+          "args": {
+            "org": "o1"
+          }
+        },
+        {
+          "who": {
+            "controller": {
+              "root": "o1"
+            }
+          },
+          "act": "registerByRoot",
+          "args": {
+            "cert": {
+              "org": "o1",
+              "subject": "alice",
+              "kind": "person",
+              "issuer": "root"
+            }
+          }
+        },
+        {
+          "who": {
+            "id": "alice"
+          },
+          "act": "registerByParent",
+          "args": {
+            "cert": {
+              "org": "o1",
+              "subject": "bot1",
+              "kind": "agent",
+              "issuer": {
+                "member": "alice"
+              }
+            }
+          }
+        },
+        {
+          "who": {
+            "id": "alice"
+          },
+          "act": "revokeSelf",
+          "args": {
+            "subject": "alice"
+          }
+        }
+      ],
+      "who": {
+        "id": "bot1"
+      },
+      "act": "registerByParent",
+      "args": {
+        "cert": {
+          "org": "o1",
+          "subject": "bot2",
+          "kind": "agent",
+          "issuer": {
+            "member": "bot1"
+          }
+        }
+      },
+      "expect": {
+        "result": "refused",
+        "premise": "registerByParent.Valid"
+      },
+      "neighbour": "register-agent-by-agent-parent",
+      "observe": [
+        {
+          "cert": {
+            "subject": "bot2"
+          },
+          "is": null
+        }
+      ]
+    },
+    {
+      "id": "revoke-self",
+      "source": "seed",
+      "status": "implemented",
+      "rule": "any",
+      "setup": [
+        {
+          "who": {
+            "dns": "o1"
+          },
+          "act": "createOrg",
+          "args": {
+            "org": "o1"
+          }
+        },
+        {
+          "who": {
+            "controller": {
+              "root": "o1"
+            }
+          },
+          "act": "registerByRoot",
+          "args": {
+            "cert": {
+              "org": "o1",
+              "subject": "alice",
+              "kind": "person",
+              "issuer": "root"
+            }
+          }
+        }
+      ],
+      "who": {
+        "id": "alice"
+      },
+      "act": "revokeSelf",
+      "args": {
+        "subject": "alice"
+      },
+      "expect": {
+        "result": "allowed"
+      },
+      "observe": [
+        {
+          "revoked": {
+            "key": "alice"
+          },
+          "is": true
+        },
+        {
+          "valid": {
+            "org": "o1",
+            "key": "alice",
+            "kind": "person"
+          },
+          "is": false
+        }
+      ]
+    },
+    {
+      "id": "revoke-child-by-parent",
+      "source": "seed",
+      "status": "implemented",
+      "rule": "any",
+      "setup": [
+        {
+          "who": {
+            "dns": "o1"
+          },
+          "act": "createOrg",
+          "args": {
+            "org": "o1"
+          }
+        },
+        {
+          "who": {
+            "controller": {
+              "root": "o1"
+            }
+          },
+          "act": "registerByRoot",
+          "args": {
+            "cert": {
+              "org": "o1",
+              "subject": "alice",
+              "kind": "person",
+              "issuer": "root"
+            }
+          }
+        },
+        {
+          "who": {
+            "id": "alice"
+          },
+          "act": "registerByParent",
+          "args": {
+            "cert": {
+              "org": "o1",
+              "subject": "bot1",
+              "kind": "agent",
+              "issuer": {
+                "member": "alice"
+              }
+            }
+          }
+        }
+      ],
+      "who": {
+        "id": "alice"
+      },
+      "act": "revokeChild",
+      "args": {
+        "subject": "bot1"
+      },
+      "expect": {
+        "result": "allowed"
+      },
+      "observe": [
+        {
+          "revoked": {
+            "key": "bot1"
+          },
+          "is": true
+        },
+        {
+          "valid": {
+            "org": "o1",
+            "key": "bot1",
+            "kind": "agent"
+          },
+          "is": false
+        }
+      ]
+    },
+    {
+      "id": "revoke-child-by-revoked-parent-refused",
+      "source": "seed",
+      "status": "implemented",
+      "rule": "any",
+      "setup": [
+        {
+          "who": {
+            "dns": "o1"
+          },
+          "act": "createOrg",
+          "args": {
+            "org": "o1"
+          }
+        },
+        {
+          "who": {
+            "controller": {
+              "root": "o1"
+            }
+          },
+          "act": "registerByRoot",
+          "args": {
+            "cert": {
+              "org": "o1",
+              "subject": "alice",
+              "kind": "person",
+              "issuer": "root"
+            }
+          }
+        },
+        {
+          "who": {
+            "id": "alice"
+          },
+          "act": "registerByParent",
+          "args": {
+            "cert": {
+              "org": "o1",
+              "subject": "bot1",
+              "kind": "agent",
+              "issuer": {
+                "member": "alice"
+              }
+            }
+          }
+        },
+        {
+          "who": {
+            "id": "alice"
+          },
+          "act": "revokeSelf",
+          "args": {
+            "subject": "alice"
+          }
+        }
+      ],
+      "who": {
+        "id": "alice"
+      },
+      "act": "revokeChild",
+      "args": {
+        "subject": "bot1"
+      },
+      "expect": {
+        "result": "refused",
+        "premise": "revokeChild.Valid"
+      },
+      "neighbour": "revoke-child-by-parent",
+      "observe": [
+        {
+          "revoked": {
+            "key": "bot1"
+          },
+          "is": false
+        }
+      ]
+    },
+    {
+      "id": "revoke-by-org",
+      "source": "seed",
+      "status": "implemented",
+      "rule": "any",
+      "setup": [
+        {
+          "who": {
+            "dns": "o1"
+          },
+          "act": "createOrg",
+          "args": {
+            "org": "o1"
+          }
+        },
+        {
+          "who": {
+            "controller": {
+              "root": "o1"
+            }
+          },
+          "act": "registerByRoot",
+          "args": {
+            "cert": {
+              "org": "o1",
+              "subject": "alice",
+              "kind": "person",
+              "issuer": "root"
+            }
+          }
+        }
+      ],
+      "who": {
+        "controller": {
+          "root": "o1"
+        }
+      },
+      "act": "revokeByOrg",
+      "args": {
+        "subject": "alice"
+      },
+      "expect": {
+        "result": "allowed"
+      },
+      "observe": [
+        {
+          "revoked": {
+            "key": "alice"
+          },
+          "is": true
+        },
+        {
+          "valid": {
+            "org": "o1",
+            "key": "alice",
+            "kind": "person"
+          },
+          "is": false
+        }
+      ]
+    },
+    {
+      "id": "admit-member",
+      "source": "seed",
+      "status": "implemented",
+      "rule": "any",
+      "setup": [
+        {
+          "who": {
+            "dns": "o1"
+          },
+          "act": "createOrg",
+          "args": {
+            "org": "o1"
+          }
+        }
+      ],
+      "who": {
+        "controller": {
+          "team": {
+            "org": "o1",
+            "team": {
+              "named": 1
+            }
+          }
+        }
+      },
+      "act": "admit",
+      "args": {
+        "membership": {
+          "org": "o1",
+          "team": {
+            "named": 1
+          },
+          "member": "carol"
+        }
+      },
+      "expect": {
+        "result": "allowed"
+      },
+      "observe": [
+        {
+          "hasTeamCert": {
+            "org": "o1",
+            "team": {
+              "named": 1
+            },
+            "key": "carol"
+          },
+          "is": true
+        }
+      ]
+    },
+    {
+      "id": "admit-by-other-team-key-refused",
+      "source": "seed",
+      "status": "implemented",
+      "rule": "any",
+      "setup": [
+        {
+          "who": {
+            "dns": "o1"
+          },
+          "act": "createOrg",
+          "args": {
+            "org": "o1"
+          }
+        }
+      ],
+      "who": {
+        "controller": {
+          "team": {
+            "org": "o1",
+            "team": {
+              "named": 2
+            }
+          }
+        }
+      },
+      "act": "admit",
+      "args": {
+        "membership": {
+          "org": "o1",
+          "team": {
+            "named": 1
+          },
+          "member": "carol"
+        }
+      },
+      "expect": {
+        "result": "refused",
+        "premise": "admit.Authorised"
+      },
+      "neighbour": "admit-member",
+      "observe": [
+        {
+          "hasTeamCert": {
+            "org": "o1",
+            "team": {
+              "named": 1
+            },
+            "key": "carol"
+          },
+          "is": false
+        }
+      ]
+    },
+    {
+      "id": "remove-member",
+      "source": "seed",
+      "status": "implemented",
+      "rule": "any",
+      "setup": [
+        {
+          "who": {
+            "dns": "o1"
+          },
+          "act": "createOrg",
+          "args": {
+            "org": "o1"
+          }
+        },
+        {
+          "who": {
+            "controller": {
+              "team": {
+                "org": "o1",
+                "team": {
+                  "named": 1
+                }
+              }
+            }
+          },
+          "act": "admit",
+          "args": {
+            "membership": {
+              "org": "o1",
+              "team": {
+                "named": 1
+              },
+              "member": "carol"
+            }
+          }
+        }
+      ],
+      "who": {
+        "controller": {
+          "team": {
+            "org": "o1",
+            "team": {
+              "named": 1
+            }
+          }
+        }
+      },
+      "act": "remove",
+      "args": {
+        "membership": {
+          "org": "o1",
+          "team": {
+            "named": 1
+          },
+          "member": "carol"
+        }
+      },
+      "expect": {
+        "result": "allowed"
+      },
+      "observe": [
+        {
+          "hasTeamCert": {
+            "org": "o1",
+            "team": {
+              "named": 1
+            },
+            "key": "carol"
+          },
+          "is": false
+        }
+      ]
+    },
+    {
+      "id": "remove-by-other-team-key-refused",
+      "source": "seed",
+      "status": "implemented",
+      "rule": "any",
+      "setup": [
+        {
+          "who": {
+            "dns": "o1"
+          },
+          "act": "createOrg",
+          "args": {
+            "org": "o1"
+          }
+        },
+        {
+          "who": {
+            "controller": {
+              "team": {
+                "org": "o1",
+                "team": {
+                  "named": 1
+                }
+              }
+            }
+          },
+          "act": "admit",
+          "args": {
+            "membership": {
+              "org": "o1",
+              "team": {
+                "named": 1
+              },
+              "member": "carol"
+            }
+          }
+        }
+      ],
+      "who": {
+        "controller": {
+          "team": {
+            "org": "o1",
+            "team": {
+              "named": 2
+            }
+          }
+        }
+      },
+      "act": "remove",
+      "args": {
+        "membership": {
+          "org": "o1",
+          "team": {
+            "named": 1
+          },
+          "member": "carol"
+        }
+      },
+      "expect": {
+        "result": "refused",
+        "premise": "remove.Authorised"
+      },
+      "neighbour": "remove-member",
+      "observe": [
+        {
+          "hasTeamCert": {
+            "org": "o1",
+            "team": {
+              "named": 1
+            },
+            "key": "carol"
+          },
+          "is": true
+        }
+      ]
+    },
+    {
+      "id": "mint-grant",
+      "source": "seed",
+      "status": "implemented",
+      "rule": "any",
+      "setup": [
+        {
+          "who": {
+            "dns": "o1"
+          },
+          "act": "createOrg",
+          "args": {
+            "org": "o1"
+          }
+        },
+        {
+          "who": {
+            "controller": {
+              "team": {
+                "org": "o1",
+                "team": {
+                  "named": 1
+                }
+              }
+            }
+          },
+          "act": "admit",
+          "args": {
+            "membership": {
+              "org": "o1",
+              "team": {
+                "named": 1
+              },
+              "member": "carol"
+            }
+          }
+        }
+      ],
+      "who": {
+        "id": "carol"
+      },
+      "act": "mintGrant",
+      "args": {
+        "grant": {
+          "session": "s1",
+          "subject": "carol",
+          "org": "o1",
+          "team": {
+            "named": 1
+          },
+          "maySend": true
+        }
+      },
+      "expect": {
+        "result": "allowed"
+      },
+      "observe": [
+        {
+          "grant": {
+            "session": "s1"
+          },
+          "is": true
+        }
+      ]
+    },
+    {
+      "id": "mint-grant-after-removal-refused",
+      "source": "seed",
+      "status": "implemented",
+      "rule": "any",
+      "setup": [
+        {
+          "who": {
+            "dns": "o1"
+          },
+          "act": "createOrg",
+          "args": {
+            "org": "o1"
+          }
+        },
+        {
+          "who": {
+            "controller": {
+              "team": {
+                "org": "o1",
+                "team": {
+                  "named": 1
+                }
+              }
+            }
+          },
+          "act": "admit",
+          "args": {
+            "membership": {
+              "org": "o1",
+              "team": {
+                "named": 1
+              },
+              "member": "carol"
+            }
+          }
+        },
+        {
+          "who": {
+            "controller": {
+              "team": {
+                "org": "o1",
+                "team": {
+                  "named": 1
+                }
+              }
+            }
+          },
+          "act": "remove",
+          "args": {
+            "membership": {
+              "org": "o1",
+              "team": {
+                "named": 1
+              },
+              "member": "carol"
+            }
+          }
+        }
+      ],
+      "who": {
+        "id": "carol"
+      },
+      "act": "mintGrant",
+      "args": {
+        "grant": {
+          "session": "s1",
+          "subject": "carol",
+          "org": "o1",
+          "team": {
+            "named": 1
+          },
+          "maySend": true
+        }
+      },
+      "expect": {
+        "result": "refused",
+        "premise": "mintGrant.InTeam"
+      },
+      "neighbour": "mint-grant",
+      "observe": [
+        {
+          "grant": {
+            "session": "s1"
+          },
+          "is": false
+        }
+      ]
+    },
+    {
+      "id": "revoke-grant",
+      "source": "seed",
+      "status": "implemented",
+      "rule": "any",
+      "setup": [
+        {
+          "who": {
+            "dns": "o1"
+          },
+          "act": "createOrg",
+          "args": {
+            "org": "o1"
+          }
+        },
+        {
+          "who": {
+            "controller": {
+              "team": {
+                "org": "o1",
+                "team": {
+                  "named": 1
+                }
+              }
+            }
+          },
+          "act": "admit",
+          "args": {
+            "membership": {
+              "org": "o1",
+              "team": {
+                "named": 1
+              },
+              "member": "carol"
+            }
+          }
+        },
+        {
+          "who": {
+            "id": "carol"
+          },
+          "act": "mintGrant",
+          "args": {
+            "grant": {
+              "session": "s1",
+              "subject": "carol",
+              "org": "o1",
+              "team": {
+                "named": 1
+              },
+              "maySend": true
+            }
+          }
+        }
+      ],
+      "who": {
+        "id": "carol"
+      },
+      "act": "revokeGrant",
+      "args": {
+        "grant": {
+          "session": "s1",
+          "subject": "carol",
+          "org": "o1",
+          "team": {
+            "named": 1
+          },
+          "maySend": true
+        }
+      },
+      "expect": {
+        "result": "allowed"
+      },
+      "observe": [
+        {
+          "grant": {
+            "session": "s1"
+          },
+          "is": false
+        }
+      ]
+    },
+    {
+      "id": "remove-member-ends-its-grant",
+      "source": "seed",
+      "status": "implemented",
+      "rule": "any",
+      "setup": [
+        {
+          "who": {
+            "dns": "o1"
+          },
+          "act": "createOrg",
+          "args": {
+            "org": "o1"
+          }
+        },
+        {
+          "who": {
+            "controller": {
+              "team": {
+                "org": "o1",
+                "team": {
+                  "named": 1
+                }
+              }
+            }
+          },
+          "act": "admit",
+          "args": {
+            "membership": {
+              "org": "o1",
+              "team": {
+                "named": 1
+              },
+              "member": "carol"
+            }
+          }
+        },
+        {
+          "who": {
+            "id": "carol"
+          },
+          "act": "mintGrant",
+          "args": {
+            "grant": {
+              "session": "s1",
+              "subject": "carol",
+              "org": "o1",
+              "team": {
+                "named": 1
+              },
+              "maySend": true
+            }
+          }
+        }
+      ],
+      "who": {
+        "controller": {
+          "team": {
+            "org": "o1",
+            "team": {
+              "named": 1
+            }
+          }
+        }
+      },
+      "act": "remove",
+      "args": {
+        "membership": {
+          "org": "o1",
+          "team": {
+            "named": 1
+          },
+          "member": "carol"
+        }
+      },
+      "expect": {
+        "result": "allowed"
+      },
+      "observe": [
+        {
+          "hasTeamCert": {
+            "org": "o1",
+            "team": {
+              "named": 1
+            },
+            "key": "carol"
+          },
+          "is": false
+        },
+        {
+          "grantLive": {
+            "session": "s1"
+          },
+          "is": false
+        }
+      ]
+    },
+    {
+      "id": "leave-team-held-by-key-holder",
+      "source": "seed",
+      "status": "design",
+      "rule": "any",
+      "setup": [
+        {
+          "who": {
+            "dns": "o1"
+          },
+          "act": "createOrg",
+          "args": {
+            "org": "o1"
+          }
+        },
+        {
+          "who": {
+            "controller": {
+              "team": {
+                "org": "o1",
+                "team": {
+                  "named": 1
+                }
+              }
+            }
+          },
+          "act": "admit",
+          "args": {
+            "membership": {
+              "org": "o1",
+              "team": {
+                "named": 1
+              },
+              "member": "carol"
+            }
+          }
+        },
+        {
+          "who": {
+            "controller": {
+              "team": {
+                "org": "o1",
+                "team": {
+                  "named": 1
+                }
+              }
+            }
+          },
+          "act": "entrust",
+          "args": {
+            "key": {
+              "team": {
+                "org": "o1",
+                "team": {
+                  "named": 1
+                }
+              }
+            }
+          }
+        }
+      ],
+      "who": {
+        "id": "carol"
+      },
+      "act": "leave",
+      "args": {
+        "membership": {
+          "org": "o1",
+          "team": {
+            "named": 1
+          },
+          "member": "carol"
+        }
+      },
+      "expect": {
+        "result": "allowed"
+      },
+      "observe": [
+        {
+          "hasTeamCert": {
+            "org": "o1",
+            "team": {
+              "named": 1
+            },
+            "key": "carol"
+          },
+          "is": false
+        }
+      ]
+    }
+  ]
+}
