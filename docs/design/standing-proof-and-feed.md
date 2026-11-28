@@ -642,10 +642,14 @@ with its original verification and an exact retry yields one receipt and effect.
 This is a proposed extension to the future customer transfer, outside E5.
 Moving the hosting parent's controller out of the service and publishing
 per-child DNS records both require operator approval before rollout. The
-transfer still needs the customer decision above. The frozen registry has no
-registration-only key. Until the scoped operation is available on the
-selected registry, fresh child creation needs the outside controller or
-pauses. The service never receives the controller key as a fallback.
+transfer still needs the customer decision above. The frozen service uses
+that controller to create customer namespaces, and the frozen registry has
+no registration-only key. As soon as the controller leaves the service,
+automated sign-ups that need a new child pause. They can continue only with
+an outside controller signature for each new child or after moving sign-up
+traffic to a live provisioner lane. Time the key removal with that lane and
+traffic switch unless the operator approves the pause or outside signing
+for the gap. Keep the controller key outside the service after removal.
 
 #### Registration-only key
 
@@ -696,13 +700,18 @@ claim still-unused, allowed names until the grant ends. Reconcile those
 registrations under the controller path.
 
 A hosting parent may reserve a closed set of canonical direct-child labels.
-The operator owns the list. AWID applies it to fresh registration under that
-parent regardless of the registration proof, with a typed refusal for a
-reserved label. It leaves existing registrations intact. Hosting-zone policy
-prohibits child NS delegation and wildcard AWID TXT records. Apply it in the
-zone configuration and validate the published zone before transfer. Exact
-per-child TXT records are allowed. This hosting policy imposes no new
-restriction on unrelated zones.
+The operator owns the policy and the selected registry's published set for
+the exact parent is authoritative. AWID applies it to fresh registration
+regardless of the registration proof, with a typed refusal for a reserved
+label. Existing registrations stay intact. The hosted sign-up service's
+copy is only a pre-check for local refusal and messages. Its acceptance
+gate refuses a release if the canonical sets differ. On a reservation
+change, a mismatch disables the service's pre-check and is reported.
+AWID still decides, and the service maps its typed refusal.
+Hosting-zone policy prohibits child NS delegation and wildcard AWID TXT
+records. Apply it in the zone configuration and validate the published
+zone before transfer. Exact per-child TXT records are allowed. This hosting
+policy imposes no new restriction on unrelated zones.
 
 #### Transfer a hosting parent before its children
 
@@ -714,11 +723,16 @@ restriction on unrelated zones.
    current key and approves the exact domain, controller and source registry.
    The zone operator publishes the record if it controls DNS. The holder
    keeps its key and separately signs its own later transfer. For a hosted
-   child, its custodian supplies the same child-controller proof. Confirm
-   exact discovery and current source status with cold and warmed released
-   clients. Wait out the old inherited answer and negative-cache lifetimes.
-   Hold the parent flip if any child that must stay live lacks a verified
-   path to the source.
+   child, operations obtains the same child-controller proof using a
+   separately reviewed tool within the frozen service's production custody
+   boundary. Rehearse the tool against a representative custody store. The
+   production run opens each child's encrypted controller key with the
+   service's key ring, signs within custody, and exports only the public
+   proof and DNS binding. Operations owns the run and its review. The pilot
+   gets no source keys. Confirm exact discovery and current source status
+   with cold and warmed released clients. Wait out the old inherited answer
+   and negative-cache lifetimes. Hold the parent flip if any child that
+   must stay live lacks a verified path to the source.
 2. **Transfer the parent only.** Apply the fenced transfer above to the
    parent's own namespace and flip its `_awid` after verification. Existing
    held-out children stay at the source. Exact child authority is independent
