@@ -296,6 +296,9 @@ cleanup() {
   local status=$?
   echo ""
   echo "--- Cleanup ---"
+  if [[ -n "${REVOCATION_PROBE_PID:-}" ]]; then
+    kill "$REVOCATION_PROBE_PID" 2>/dev/null || true
+  fi
   stop_quickstart_bridges
   release_service_ports || status=1
   release_customer_port 2>/dev/null || status=1
@@ -2922,6 +2925,11 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 17: Revoke bob's membership ==="
 
+# Bob's credential is accepted just before his removal, which also fills the
+# server's cached revocation list, so the window below starts from a warm cache.
+run_success "bob's send is accepted before revocation" run_aw_in "$BOB_DIR" mail send --plaintext \
+  --to alice --subject "before-revocation" --body "accepted before revocation"
+
 capture_success revoke_out "revoke_out" run_aw_in "$ALICE_DIR" id team remove-member \
   --team devteam \
   --namespace test.local \
@@ -2933,6 +2941,77 @@ REVOKE_STATUS="$(echo "$revoke_out" | jq_field status)"
 # revoked when it revoked something, no_active_certificate when the registry
 # stated there was nothing active to revoke.
 assert_eq "bob revoked" "revoked" "$REVOKE_STATUS"
+
+# The successful removal anchors the revocation window. Bob's sends are polled
+# against the untouched service in the background while Phases 18-21 run;
+# finish_revocation_probe collects the verdict before Phase 22 recreates the
+# server. The window is the deployed server's own: one fresh window of its
+# cached revocation list plus the stale-while-revalidate window.
+probe_revocation() {
+  local dir="$1" window="$2" started attempt=0 out status
+  started="$(date +%s)"
+  while :; do
+    attempt=$((attempt + 1))
+    if out="$(run_aw_in "$BOB_DIR" mail send --plaintext --to alice \
+      --subject "after-revocation-$attempt" --body "must not arrive" --json 2>"$dir/stderr")"; then
+      status=0
+    else
+      status=$?
+    fi
+    if [[ "$status" != 0 ]]; then
+      printf '%s\n' "$out" >"$dir/refusal.json"
+      printf 'after-revocation-%s\n' "$attempt" >"$dir/refused-subject"
+      printf '%s\n' "$(($(date +%s) - started))" >"$dir/seconds"
+      printf '%s\n' "$status" >"$dir/exit"
+      return 0
+    fi
+    if (($(date +%s) - started > window + 5)); then
+      printf 'accepted\n' >"$dir/exit"
+      return 0
+    fi
+    sleep 5
+  done
+}
+
+finish_revocation_probe() {
+  echo "=== Phase 20: Bob's requests fail after revocation ==="
+  wait "$REVOCATION_PROBE_PID" || true
+  REVOCATION_PROBE_PID=""
+  local verdict refused_subject alice_inbox
+  if [[ "$(cat "$REVOCATION_PROBE/exit")" == accepted ]]; then
+    echo "  FAIL: bob was still accepted ${REVOCATION_WINDOW}s + 5s after his removal"
+    fail=$((fail + 1))
+    exit 1
+  fi
+  echo "  bob refused $(cat "$REVOCATION_PROBE/seconds")s after removal (window ${REVOCATION_WINDOW}s)"
+  verdict="$(python3 -c '
+import json, sys
+error = json.load(open(sys.argv[1]))["error"]
+print(error.get("http_status"), error.get("reason"))
+' "$REVOCATION_PROBE/refusal.json" 2>&1)"
+  assert_eq "bob's send is refused as a revoked certificate" "401 certificate_revoked" "$verdict"
+  refused_subject="$(cat "$REVOCATION_PROBE/refused-subject")"
+  capture_success alice_inbox "alice inbox after revocation" run_aw_in "$ALICE_DIR" mail inbox --show-all
+  if [[ "$alice_inbox" == *"$refused_subject"* ]]; then
+    echo "  FAIL: bob's refused send $refused_subject was delivered"
+    fail=$((fail + 1))
+    exit 1
+  fi
+  echo "  PASS: bob's refused send was not delivered"
+  pass=$((pass + 1))
+  echo ""
+}
+
+REVOCATION_WINDOW="$(cd "$SERVER_DIR" && compose exec -T aweb python -c \
+  'from awid import registry; print(registry._TEAM_REVOCATIONS_CACHE_TTL_SECONDS * registry._STALE_MULTIPLIER)')"
+[[ "$REVOCATION_WINDOW" =~ ^[1-9][0-9]*$ ]] || {
+  echo "FATAL: the server reported no revocation window: $REVOCATION_WINDOW" >&2
+  exit 1
+}
+REVOCATION_PROBE="$E2E_ROOT/revocation-probe"
+mkdir -p "$REVOCATION_PROBE"
+probe_revocation "$REVOCATION_PROBE" "$REVOCATION_WINDOW" >"$REVOCATION_PROBE/probe.log" 2>&1 &
+REVOCATION_PROBE_PID=$!
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -3034,40 +3113,6 @@ alice_alias_check="$(echo "$alice_whoami" | jq_field alias)"
 assert_eq "alice still connected" "alice" "$alice_alias_check"
 echo ""
 
-# ---------------------------------------------------------------------------
-# Phase 20: Bob's requests fail after cache flush
-# ---------------------------------------------------------------------------
-echo "=== Phase 20: Bob's requests fail after revocation ==="
-
-echo "  Flushing cached team revocations from Redis..."
-revocation_flush_out="$(
-  cd "$SERVER_DIR" && compose exec -T redis sh -lc "
-    keys=\$(redis-cli --scan --pattern 'awid:registry_cache:v1:team_revocations:*')
-    if [ -n \"\$keys\" ]; then
-      printf '%s\n' \"\$keys\" | xargs redis-cli DEL
-    else
-      echo 0
-    fi
-  "
-)"
-echo "$revocation_flush_out"
-
-if bob_mail_out="$(run_aw_in "$BOB_DIR" mail send --plaintext \
-  --to alice --subject "Should fail" --body "should fail" 2>&1)"; then
-  bob_mail_exit=0
-else
-  bob_mail_exit=$?
-fi
-
-if echo "$bob_mail_out" | grep -qi "revoked\|unauthorized\|forbidden\|401\|403\|certificate"; then
-  echo "  PASS: bob's request rejected after revocation"
-  pass=$((pass + 1))
-else
-  echo "  FAIL: bob request should be rejected after revocation cache flush (exit=$bob_mail_exit output=${bob_mail_out:0:120})"
-  fail=$((fail + 1))
-  exit 1
-fi
-echo ""
 
 fi
 
@@ -3331,6 +3376,7 @@ phase_aw_init_local_quickstart() {
 
 if [[ "${AWEB_E2E_PHASE:-all}" == all ]]; then
   phase_aw_init_reconnect
+  finish_revocation_probe
 fi
 phase_aw_init_local_quickstart
 if [[ "${AWEB_E2E_PHASE:-all}" == 22 ]]; then
