@@ -554,7 +554,16 @@ as historical evidence. The frozen boundary has no automatic
 forwarding. New requests and replies use the verified destination
 binding.
 
-For a known moved binding, an old request receives a typed
+For this cohort, give each operator the migration instructions, exact
+issuer and new client binding before the window. Verify that the frozen
+service returns its existing revoked-certificate refusal for the old
+credential. Record the direct handoff in the cohort's change record.
+Keep the frozen service on its released code.
+
+#### Refusals for a later customer move
+
+These two refusal contracts apply to a separately approved customer
+move. For a known moved binding, an old request receives a typed
 `standing_upgrade_required` refusal with the new issuer and the standing
 request contract. Check the refusal
 on the stale client entry point as well as at the destination. Any
@@ -717,6 +726,6 @@ extrapolating from raw signature operations.
 | AWID feed and public snapshot | Complete mutation inventory, atomic append, signed barriers, both feed reads, retention and scope-preserving resync. |
 | Verifier SDK | Local validation and shared apply logic, published conformance for both transports, and issuer selection independent of the configured default. Exercise two exact domains with different issuers, an unavailable or conflicting discovery result, and a wrong-issuer response, with zero fallback. |
 | aweb runtime and grants | Complete request inventory, local gates and typed refusal, owner-held grant/application facts, effect and stream tests. Show that the stream recheck reads registry standing only from the process's applied view, with no DB round trip for it. Show that grant revocation, app uninstall and workspace removal still end the affected stream before its next protected emission. Use event-driven local service facts or bounded DB reads, and measure and report any remaining DB recheck cost. |
-| Federation | Native interoperability between real standing issuers, exact trust bootstrap and recovery, and no request-time authority fetch. At E5, prove both directions refuse across the frozen boundary with no effect. Check retired, unknown and current addresses, including opt-in disclosure of a verified replacement. |
-| Pilot, clients and registry deployment | Separate digest-pinned registry deploy at `https://api.awdid.org` in `servers`, named operations ownership, HA signer and feed recovery, and a first-deployment rehearsal for `awebai.org`. Verify client protocol selection, the per-process subscriber and readiness, and the exact DNS/controller bootstrap. Keep existing customers on the frozen service and registry. Verify cohort client readiness and a typed upgrade refusal with a discoverable upgrade path from the pinned released client. |
+| Federation | Native interoperability between real standing issuers, exact trust bootstrap and recovery, and no request-time authority fetch. At E5, prove both directions refuse across the frozen boundary with no effect. For a later customer move, check retired, unknown and current addresses, including opt-in disclosure of a verified replacement. |
+| Pilot, clients and registry deployment | Separate digest-pinned registry deploy at `https://api.awdid.org` in `servers`, named operations ownership, HA signer and feed recovery, and a first-deployment rehearsal for `awebai.org`. Verify client protocol selection, the per-process subscriber and readiness, and the exact DNS/controller bootstrap. Keep existing customers on the frozen service and registry. Verify cohort client readiness, direct operator handoff and the existing revoked-certificate refusal. For a later customer move, verify the typed refusal and discoverable upgrade path from the pinned released client. |
 | Scale and integration gate | Reproducible history, traffic, change, partition and recovery fixtures with stated hardware and measured limits. Run the E5 boundary against the real new registry and the pinned released registry and server. Test both standing and frozen serving paths with the same client and verify issuance/feed loss, discovery failure and issuer isolation. Qualify the first cohort cutover separately with §7's independent source-cut verification, exclusion and abort controls, full negative inventory check, source retirement and mail controls. |
