@@ -765,9 +765,11 @@ Set the service contract before rehearsing the live cut.
    transfer to the move to the new hosted service at `dashboard.aweb.ai`.
    Customers then use the standing contract and their agents need the
    standing-only `aweb` client. Apply the service-authority migration gates
-   above in addition to the registry transfer. Rehearse the client and
-   service change, including the typed upgrade refusal from the released
-   client and a working journey with the standing client.
+   above in addition to the registry transfer. The namespace controller
+   and identity keys carry over. Every team gets a fresh signing key and
+   reissued certificates for its approved roster. Rehearse the re-key and the
+   client and service change, including the typed upgrade refusal from the
+   released client and a working journey with the standing client.
 2. **Keep the frozen service through sunset.** Move registry authority
    first. Through the inherited `_awid.aweb.ai` record, frozen Cloud and
    released `aw` would discover `api.awdid.org`. That registry would serve
@@ -782,8 +784,8 @@ Set the service contract before rehearsing the live cut.
 
 The coordinator recommends the sunset move so the destination can use the
 standing contract without a temporary released-contract bridge. That option
-changes every customer's client. Juan's decision and the corresponding
-end-to-end rehearsal are required before the live switch.
+changes every customer's client and re-keys every team. Juan's decision and
+the corresponding end-to-end rehearsal are required before the live switch.
 
 0. **Separate shared controllers (`aweb-adyx.14`).** Before either
    parent-controller key removal or the parent transfer, build the live child
