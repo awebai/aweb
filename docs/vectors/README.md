@@ -903,6 +903,92 @@ in `awid/tests/test_a2a_publication_route.py`. The digest-only fixture proves
 byte/digest parity; those tests prove verification and authority enforcement.
 Both are required.
 
+## Experimental model cases
+
+### `trust-web-cases-v1.json` — experimental
+
+Cases of the experimental trust-web model in `spec/trust-model` (a Lean 4
+model of selected trust rules). The model's author owns its decisions, the
+cases it emits and their meaning. `server/tests/test_trust_web_cases.py` runs
+every implemented case against a real AWID registry and a real aweb server, and
+compares the code's decision and the evidence it commits with the case. The
+file proves nothing about a rule unless a case pins that rule and the runner
+reads it from committed evidence.
+
+**Format `aweb.trust-web-cases/1`.** The document is `format`, `status`
+(always `experimental`), `description`, `model` and `cases`. `model` names the
+model's `path`, the `commit` its definitions were read at, and the `emitter`
+invocation that produced the cases, or `null` when there is none. Each case has
+exactly these fields:
+
+- `id`: unique. The runner consumes cases by id.
+- `source`: `emitted` (produced by the model's emitter at `model.commit`) or
+  `seed` (hand-written to qualify the runner). A seed references the model's
+  definitions at that commit and makes no claim that an emitter ran.
+  Model-to-code agreement is claimed only from emitted cases.
+- `status`: `implemented`, or `design` for something the model describes and
+  aweb does not build: key holders taking in or giving back keys, the
+  last-admin rule, leaving through a key holder, invitations never reaching the
+  admin team, `adminRule`/`teamRule`, re-admission as the model writes it, and
+  root replacement's effect on held keys. Design cases are parsed and never
+  sent.
+- `rule`: the model's rule for who may ask a key holder that the expectation
+  holds under: `any` (every rule), `built`, `admin` or `team`. Only `any` and
+  `built` may be `implemented`.
+- `setup`: model acts from the empty record, each expected to be allowed. The
+  runner replays them through signed public routes; it never seeds a database.
+  A refused setup act fails the case.
+- `who`, `act`, `args`: one constructor of the model's `Step`, its party and
+  its arguments, in the model's names. Keys, organisations and sessions are
+  symbols that the runner binds to fresh real keys and domains per case. A
+  team is `"admin"` or `{"named": n}`, as the model's `Team` is.
+- `expect`: `{"result": "allowed"}`, or `{"result": "refused", "premise":
+  "<act>.<premise>"}` naming the one premise of that act that fails. Until the
+  model names every premise, only definition names are used (`MayIssue`,
+  `Valid`, `Authorised`, `InTeam`, ...).
+- `neighbour`: present exactly on refusals. It is the id of an allowed case of
+  the same act that differs from the refusal in what makes that premise hold:
+  the actor, or one setup fact. Every other premise and wire prerequisite stays
+  the same, so the refusal is single-fault.
+- `observe`: predicates over the model's record (`cert`, `revoked`, `valid`,
+  `canAct`, `hasTeamCert`, `inTeam`, `grant`, `grantLive`), each with the value
+  it must have after the act (`is`). The runner reads each predicate before and
+  after the act. On an allowed case it must change to `is`, since a predicate
+  that already held proves nothing. On a refusal it must equal `is` both
+  before and after. An observation that cannot be read fails the case; it is
+  never taken as false.
+
+Any other format, field or value is refused, nested fields and their types
+included, and `emitted` cases require `model.emitter`.
+
+**What the runner adds.** The model has no team creation, DID registration or
+server connection. The runner performs these wire prerequisites through
+signed public routes: a team is created by its namespace controller, and an
+admitted member connects to its team server. The model has no error codes
+either. The runner maps each premise to reviewed wire refusals, each citing the
+route line that refuses for it (`REFUSALS`). A refusal for another reason is a
+mismatch. The model assumes one current record, so registry readings are
+uncached: identity status from `POST /v1/id-certificates/status`, judged by the
+real chain verifier at age zero, and team certificates from their exact status
+route. `grant` is read by the grant's subject: the grant's exact status once
+minted, the subject's own grant list before. `grantLive` is a read signed with
+the grant's session key. It goes through the server's ordinary request path and
+so sees team revocations only as its cached revocation list does; it counts as
+not live only on the refusals that state the grant has ended. Where a
+constructor builds its party from its arguments (`createOrg`, `revokeSelf`,
+`registerByParent`, `mintGrant`, `revokeGrant`, ...), a case naming any other
+party is refused.
+
+**Disagreements.** A case the code decides differently is filed as a task and
+listed with it in `DISAGREEMENTS`. The gate claims agreement only for the
+cases it runs: it holds each listed case out by name, in a test per case id
+that requires the task and the case's place in the disagreement run.
+`make test-trust-web-disagreements` (on a Mac only through
+`make test-server-local`, which it names) runs the listed cases with the same routes,
+readings and comparator, reports expected and observed results per case, and
+fails while any of them disagrees. A case returns to the gate when its task is
+decided and that run agrees. No case is skipped.
+
 ## Consumer-local extension fixtures
 
 Two extension fixtures currently live under
@@ -972,6 +1058,7 @@ reference duplication are mutation-tested failures.
 | `pin-store-raw-wire-v1.json` | Go shared `pin_store_raw_wire_test.go`; TypeScript channel-core `pin_store_raw_wire.test.ts` |
 | `rotation-announcements-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
 | `stable-id-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
+| `trust-web-cases-v1.json` | Python aweb `trust_web_cases.py`, run by `test_trust_web_cases.py` against a real AWID and aweb server |
 | `secrets-runner-protocol-v1.json` | secrets `test_runner_protocol_vectors.py` and production-server `test_runner_server_protocol.py` |
 | `secrets-runner-http-v1.json` | secrets `test_runner_protocol_vectors.py` |
 | `team-auth-envelope-v2.json` | Python aweb `test_team_auth_envelope.py`; naapp-lib `test_team_auth_vectors.py`; Go shared `conformance_test.go`, including its root-equality check for the managed embedded copy; TypeScript channel-core `request_auth_v2.test.ts`; Go AWID `request_envelope_as_message_test.go` and TypeScript channel-core `request_envelope_as_message.test.ts`, which present each signed request as a message |

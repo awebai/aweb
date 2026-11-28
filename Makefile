@@ -345,6 +345,20 @@ test-server-local:
 test-user-paths-local:
 	python3 scripts/test_user_paths_local.py
 
+# The trust-web cases the code decides differently from the model (filed
+# disagreements, held out of the gate). Fails while any of them disagrees. It
+# needs disposable PostgreSQL and Redis: on a Mac only inside the isolated
+# launcher (which sets AWEB_TEST_SERVICES=1), elsewhere in a gate runner.
+.PHONY: test-trust-web-disagreements
+test-trust-web-disagreements:
+	@if [ "$$(uname -s)" = Darwin ] && [ "$${AWEB_TEST_SERVICES:-}" != 1 ]; then \
+		echo "test-trust-web-disagreements refuses the host's databases on a Mac." >&2; \
+		echo "Run it through the isolated launcher: LOCAL_TEST_SUITE=server LOCAL_TEST_WORKERS=1 LOCAL_PYTEST_ARGS=tests/trust_web_disagreements.py make test-server-local" >&2; \
+		echo "or ask aweb-protocol-expert-gate-vms for a gate VM run." >&2; \
+		exit 2; \
+	fi
+	cd server && uv run --frozen pytest -q -rA tests/trust_web_disagreements.py
+
 test-server: production-awid-sync
 	cd server && uv sync --frozen
 	set -eu; cd server; build_dir=$$(mktemp -d); trap 'rm -rf "$$build_dir"' EXIT; \
