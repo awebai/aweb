@@ -523,6 +523,7 @@ def load_corpus(corpus: Any) -> list[Case]:
 # evidence_unavailable, not as a refusal.
 DISAGREEMENTS: dict[str, str] = {
     "mint-grant-after-removal-refused": "aweb-adyz.2",
+    "model-mint-grant-after-removal-refused": "aweb-adyz.2",
     "model-admit-local-member-to-second-team-refused": "aweb-adyz.1",
     "model-admit-to-admin-team-refused": "aweb-adyz.4",
     "model-register-person-in-missing-org-refused": "aweb-adyz.5",
