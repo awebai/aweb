@@ -59,7 +59,7 @@ def test_approved_database_requires_explicit_configured_migration(tmp_path):
     assert reopened.descriptor() == descriptor
     assert reopened.audit()[0]["operation"] == "human_approval_change"
     with reopened._connection() as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 6
         assert "human_issuance" not in {
             row[1] for row in db.execute("PRAGMA table_info(configuration)")
         }

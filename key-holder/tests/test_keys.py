@@ -175,7 +175,7 @@ def test_backup_only_leaves_encrypted_to_the_offline_operator_key(store):
             == "local"
         )
         assert restored.execute("SELECT seed FROM keys").fetchone()[0] == secret
-        assert restored.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert restored.execute("PRAGMA user_version").fetchone()[0] == 6
         assert restored.execute("SELECT count(*) FROM enrollments").fetchone()[0] == 0
     with pytest.raises(CryptoError):
         SealedBox(PrivateKey.generate()).decrypt(encrypted)
