@@ -365,7 +365,8 @@ The commands:
   the sending membership, so a bare alias is never looked up across the home's
   other teams. A team the home does not hold refuses; a grant home refuses an
   explicit team other than its own. Each send to a recipient starts a new
-  conversation. Answer: `message_id`, `status`, `delivered_at`; optional `conversation_id`.
+  conversation. Answer: `message_id`, `conversation_id` (always present: the
+  new conversation's id), `status`, `delivered_at`.
 - `aw --identity-home H mail show --message-id ID --json` and `mail show
   --conversation-id ID --limit N --json`. Answer: `messages` array, `has_more`
   bool, optional `next_cursor`. Each message: `message_id`, `subject`, `body`,
@@ -591,6 +592,23 @@ the keys and values the providers read:
   command. In the roster, `--registry` is the provider's currently configured
   registry origin, never a locator from a cleanup record; the retained-record
   writer prints the same command with its stored origin;
+- `aw mail send --help`, which the delivery probe reads before it sends. Its
+  stdout keeps the usage line `aw mail send [flags]`, the flag lines
+  `--to string`, `--subject string` and `--body-file string`, and the sentence
+  that a send with a recipient "starts a new thread titled by --subject"; the
+  probe allows any whitespace between "thread" and "titled". (Older `aw` met
+  the probe with a `--new-conversation` flag line instead.) The probe then
+  sends the call of section 3.7 and reads its `conversation_id`;
+- `--team T` before `whoami --json` and before both `mail show` forms of
+  section 3.7, `--message-id ID` and `--conversation-id ID --limit 500`, in
+  the delivery probe;
+- `aw mail inbox --help`, whose stdout keeps `--count-only`: the providers
+  read it before they use the unread count of section 3.7;
+- `aw status-host clear --help`, which exits 0: the providers run it before
+  turning health publishing off. From the release that removes `aw
+  status-host`, `aw status-host clear --help` still exits 0. That is a
+  condition of accepting that release, unless the provider release that drops
+  the health publisher (aweb-adzb.11) ships before it;
 - `aw heartbeat`; `aw team list --json`; `aw team invite --team-id T --json`;
   `aw team join TOKEN --name N --json`, with the token as an argument (up to
   v1.41); `aw --team T init`, and `aw init` without
