@@ -339,7 +339,7 @@ async def test_mcp_federated_chat_sends_the_envelope_the_route_sends(server):
     session_id = await server.remote_chat_session()
 
     await server.mcp_call(
-        "chat_send", session_id=session_id, message="status", plaintext=True
+        "send_chat", conversation_id=session_id, message="status", plaintext=True
     )
     await server.rest_send(
         f"/v1/chat/sessions/{session_id}/messages",

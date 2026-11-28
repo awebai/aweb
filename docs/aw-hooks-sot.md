@@ -222,9 +222,9 @@ table fires the hook.
 | MCP tool | Event | When called |
 |---|---|---|
 | `room_post` | `room.message_sent` | After a new room post commits, as `POST /v1/room/messages`. |
-| `send_mail` (and `send_message_to_contact` for mail) | `message.sent` | After a successful local, stored-route, or federated send, as `POST /v1/messages`. |
+| `send_mail` | `message.sent` | After a successful local, stored-route, or federated send, as `POST /v1/messages`. |
 | `check_mail` | `message.acknowledged` | Once for each unread message the call marks read; already-read mail does not fire again. |
-| `send_chat` (and `send_message_to_contact` for chat) | `chat.message_sent` | After a new-session or continuation message is stored/sent, including federated delivery. |
+| `send_chat` | `chat.message_sent` | After a new-session or continuation message is stored/sent, including federated delivery. |
 | `task_create` | `task.created` | As `POST /v1/tasks`. |
 | `task_update`, `task_claim`, `task_close`, `task_reopen` | `task.status_changed` or `task.updated`, and `task.assignee_changed` | As `PATCH /v1/tasks/{ref}`: `task_claim` sets `in_progress`, `task_close` sets `closed`, `task_reopen` sets `open`. |
 | `task_comment_add` | `task.comment_added` | As `POST /v1/tasks/{ref}/comments`. |
@@ -240,9 +240,9 @@ which fires `message.acknowledged` with one context for both. MCP
 has no tool that deletes a task, changes its dependencies or answers it, and
 none for reservations; those events come from the routes only.
 
-`mark_chat_read` and its `chat_read` alias publish the same chat-session
+`mark_chat_read` publishes the same chat-session
 `read_receipt` wake signal as `POST /v1/chat/sessions/{session_id}/read` when
-they mark at least one message read; like that route, they fire no mutation
+it marks at least one message read; like that route, it fires no mutation
 hook.
 
 Reads do not fire the hook. Reservation revoke does not fire it. The default

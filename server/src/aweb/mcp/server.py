@@ -23,7 +23,6 @@ from aweb.db import DatabaseInfrastructure
 from aweb.federation.transport import delivery_transport
 from aweb.internal_auth import ProxyVerificationConfig
 from aweb.mcp.auth import MCPAuthMiddleware
-from aweb.mcp.compatibility import observe_compatibility_tool_call
 from aweb.mcp.notifications import append_pending_nudge
 from aweb.mcp.registration import (
     agents,
@@ -195,7 +194,6 @@ class _NudgingFastMCP(FastMCP):
 
     async def call_tool(self, name, arguments):
         """Execute the registered tool and append the current pending-notice hint."""
-        observe_compatibility_tool_call(tool_name=name)
         result = await super().call_tool(name, arguments)
         return await append_pending_nudge(result, self._nudge_db)
 

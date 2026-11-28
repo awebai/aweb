@@ -518,7 +518,7 @@ async def test_unverified_caller_cannot_change_another_identity_policy(privacy_a
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("source_cli_binary")
-@pytest.mark.parametrize("creator", ["add_contact", "contacts_add", "rest", "cli"])
+@pytest.mark.parametrize("creator", ["add_contact", "rest", "cli"])
 @pytest.mark.parametrize("mode", ["contacts_only", "team_and_contacts"])
 async def test_contact_creation_paths_bind_identity_before_delivery(
     privacy_app, tmp_path, monkeypatch, creator, mode
@@ -585,7 +585,7 @@ async def test_contact_creation_paths_bind_identity_before_delivery(
         await send_both(403)
         mcp = None
         try:
-            if creator in ("add_contact", "contacts_add"):
+            if creator == "add_contact":
                 secret = "contacts-disposable-proxy-secret"
                 monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
                 monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", secret)
@@ -611,11 +611,7 @@ async def test_contact_creation_paths_bind_identity_before_delivery(
                         actor_id=str(bob.id),
                     ),
                 }
-                arguments = {
-                    "address"
-                    if creator == "add_contact"
-                    else "contact_address": "example.test/alice"
-                }
+                arguments = {"address": "example.test/alice"}
                 response = await env.client.post(
                     "/contact-mcp/",
                     headers=headers,

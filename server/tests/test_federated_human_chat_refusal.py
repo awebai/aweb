@@ -115,7 +115,7 @@ async def test_remote_human_refusal_keeps_typed_body_through_source(
         if adapter == "mcp":
             arguments = dict(message="hello", plaintext=True, leaving=True)
             arguments.update(
-                {"session_id": cid} if continuation else {"to_address": bob.address}
+                {"conversation_id": cid} if continuation else {"to": bob.address}
             )
             path = "/human-refusal-mcp/"
             raw = json.dumps(
@@ -123,7 +123,7 @@ async def test_remote_human_refusal_keeps_typed_body_through_source(
                     "jsonrpc": "2.0",
                     "id": 1,
                     "method": "tools/call",
-                    "params": {"name": "chat_send", "arguments": arguments},
+                    "params": {"name": "send_chat", "arguments": arguments},
                 }
             ).encode()
         else:

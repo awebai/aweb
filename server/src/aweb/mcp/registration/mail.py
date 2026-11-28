@@ -77,19 +77,3 @@ def register_tools(mcp: FastMCP, dependencies: ToolDependencies) -> None:
             limit=limit,
             include_bodies=include_bodies,
         )
-
-    @mcp.tool(
-        name="check_inbox",
-        description="Compatibility alias for check_mail. Prefer check_mail. It marks returned unread messages read before returning. The hosted service decrypts managed encrypted mail for this MCP session; it is readable by that service. Retained for cached MCP clients; removal is considered in the release after deployed native and hosted measurement shows zero calls for 30 consecutive days.",
-    )
-    async def check_inbox(
-        unread_only: bool = True, limit: int = 50, include_bodies: bool = True
-    ) -> str:
-        "Compatibility alias for check_mail. Prefer check_mail. It marks returned unread messages read before returning. The hosted service decrypts managed encrypted mail for this MCP session; it is readable by that service. Retained for cached MCP clients; removal is considered in the release after deployed native and hosted measurement shows zero calls for 30 consecutive days."
-        return await _check_inbox_impl(
-            dependencies.db_infra,
-            hosted_decryptor=dependencies.hosted_decryptor,
-            unread_only=unread_only,
-            limit=limit,
-            include_bodies=include_bodies,
-        )

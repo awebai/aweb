@@ -47,7 +47,7 @@ establishes release qualification.
 
 New active identity contacts must carry the exact DID/controller binding from
 the shared authority resolver. REST contact creation (also used by the CLI),
-MCP `add_contact` and its `contacts_add` compatibility alias use that resolver;
+and MCP `add_contact` use that resolver;
 missing or unavailable authority refuses creation. Accepted-delivery contact
 learning writes only a complete binding. Pending handle contacts are not active
 identity contacts and do not admit delivery.

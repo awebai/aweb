@@ -10,16 +10,12 @@ from uuid import UUID
 from awid.federation_errors import FederationAuthorityError
 from aweb.mcp.tools.errors import messaging_tool
 from aweb.messaging.sender_membership import sender_memberships
-from aweb.messaging.recipients import RecipientIdentityBinding
 from aweb.messaging.kinds import MessageKind
-from aweb.messaging.refusals import ContactIdentityBindingRequired
 from aweb.mcp.tools.refusals import send_refusal
 from fastapi import HTTPException
 from aweb.identity_auth_deps import participant_dids
 from aweb.mcp.auth import get_auth
-from aweb.mcp.signing import HostedMessageEncryptor, HostedMessageSigner
-from aweb.mcp.tools.chat import chat_send
-from aweb.mcp.tools.mail import mcp_mail_message_from_row, send_mail
+from aweb.mcp.tools.mail import mcp_mail_message_from_row
 from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
 from aweb.messaging.contacts import (
     add_contact,
@@ -113,94 +109,6 @@ async def add_contact_by_handle(db_infra, *, handle: str, label: str = "") -> st
 
 
 @messaging_tool
-async def add_contact_by_email(db_infra, *, email: str, label: str = "") -> str:
-    """Reserve a pending email contact request.
-
-    Email contact storage needs an explicit product contract; unlike address and
-    handle contacts, the current aweb schema has no email reference column.
-    """
-    try:
-        _normalize_email(email)
-    except ServiceError as exc:
-        return json.dumps({"error": exc.detail})
-    return json.dumps(
-        {"error": "Email contact requests are not available on this server"}
-    )
-
-
-@messaging_tool
-async def send_message_to_contact(
-    db_infra,
-    redis=None,
-    *,
-    registry_client,
-    federation_authority=None,
-    hosted_signer: HostedMessageSigner | None = None,
-    hosted_encryptor: HostedMessageEncryptor | None = None,
-    contact_id: str,
-    message: str,
-    subject: str = "",
-    channel: str = "mail",
-    priority: str = "normal",
-    wait: bool = False,
-    wait_seconds: int = 120,
-    federation_mail_transport=None,
-    federation_chat_transport=None,
-    public_origin: str | None = None,
-) -> str:
-    """Start mail or send chat to a saved contact."""
-    if not message.strip():
-        return json.dumps({"error": "message is required"})
-    try:
-        normalized_channel = _normalize_channel(channel)
-        contact = await _get_owned_contact(db_infra, contact_id=contact_id)
-        target = await _target_from_contact_reference(db_infra, contact=contact)
-        target_did = str(target.get("did_aw") or target.get("did_key") or "").strip()
-        if not target_did or (
-            contact["reference_type"] != "handle"
-            and not target_did.startswith("did:aw:")
-        ):
-            raise ContactIdentityBindingRequired()
-        binding = RecipientIdentityBinding(did=target_did)
-    except (ServiceError, HTTPException, FederationAuthorityError) as exc:
-        return send_refusal(exc)
-
-    # Pending is receiver-side policy state, not sender-side send authority:
-    # sending to a pending contact is the bilateral invite/first-contact flow.
-    if normalized_channel is MessageKind.MAIL:
-        return await send_mail(
-            db_infra,
-            registry_client=registry_client,
-            federation_authority=federation_authority,
-            hosted_signer=hosted_signer,
-            hosted_encryptor=hosted_encryptor,
-            federation_transport=federation_mail_transport,
-            public_origin=public_origin,
-            recipient_binding=binding,
-            to=target["address"],
-            subject=subject,
-            body=message,
-            priority=priority,
-        )
-
-    return await chat_send(
-        db_infra,
-        redis,
-        registry_client=registry_client,
-        federation_authority=federation_authority,
-        hosted_signer=hosted_signer,
-        hosted_encryptor=hosted_encryptor,
-        federation_transport=federation_chat_transport,
-        public_origin=public_origin,
-        recipient_binding=binding,
-        to_address=target["address"],
-        message=message,
-        wait=wait,
-        wait_seconds=wait_seconds,
-    )
-
-
-@messaging_tool
 async def read_messages_from_contact(
     db_infra,
     *,
@@ -265,13 +173,6 @@ def _parse_handle(handle: str) -> tuple[str, str | None]:
     else:
         namespace, agent_name = ref, None
     return namespace, agent_name
-
-
-def _normalize_email(email: str) -> str:
-    value = (email or "").strip()
-    if value.count("@") != 1 or value.startswith("@") or value.endswith("@"):
-        raise ValidationError("Invalid email format")
-    return value
 
 
 def _normalize_channel(channel: str) -> MessageKind:

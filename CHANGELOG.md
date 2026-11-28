@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- The MCP server drops its eleven compatibility names: `check_inbox`,
+  `chat_send`, `chat_pending`, `chat_history`, `chat_read`, `contacts_list`,
+  `contacts_add`, `contacts_remove`, `add_contact_by_email`,
+  `send_message_to_contact` and `read_messages_from_contact`. Use `check_mail`,
+  `send_chat`, `check_chats`, `read_chat`, `mark_chat_read`, `list_contacts`,
+  `add_contact`, `remove_contact` and `read_contact_messages`. To message a
+  saved contact, send to its address with `send_mail` or `send_chat`. The
+  `aweb_mcp_compatibility_tool_calls_total` counter and its
+  `mcp_compatibility_tool_call` log event go with them, and so does
+  `aweb.mcp.compatibility`. A client that cached an older tool list should
+  refresh its tools.
 - The channel, the Pi extension and `aw` drop the `work_available`,
   `claim_update` and `claim_removed` wake events. No aweb server has ever sent
   them. `aw events stream` and the wake broker no longer print or deliver them,

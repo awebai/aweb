@@ -230,7 +230,7 @@ async def test_mounted_mcp_budget_uses_authenticated_sender_regardless_of_proxy_
                 tool, arguments = {
                     "mail": ("send_mail", {"to": address, "body": "first contact"}),
                     "chat": ("send_chat", {"to": address, "message": "first contact"}),
-                    "contact": ("contacts_add", {"contact_address": address}),
+                    "contact": ("add_contact", {"address": address}),
                 }[surface]
                 body = json.dumps(
                     {

@@ -265,9 +265,9 @@ async def test_retired_human_chat_continuation_has_mail_refusal(
                 "id": 1,
                 "method": "tools/call",
                 "params": {
-                    "name": "chat_send",
+                    "name": "send_chat",
                     "arguments": {
-                        "session_id": str(first.cid),
+                        "conversation_id": str(first.cid),
                         "message": "retired continuation",
                         "plaintext": True,
                     },

@@ -116,35 +116,6 @@ MCP section of [`aweb-sot.md`](aweb-sot.md).
 | `remove_contact` | `contact_id` | Remove a saved contact. |
 | `read_contact_messages` | `contact_id`, `channel="mail"`, `limit=50` | Read hosted mail or chat messages exchanged with a saved contact. Encrypted E2E mail content is returned as metadata only; read it in a local aw client. |
 
-## Compatibility Names
-
-These names were advertised by released servers and remain callable by MCP
-clients retaining those tool lists. Use the canonical names above for fresh
-configurations. The serving call_tool entry counts attempts, including refused
-calls, in aweb_mcp_compatibility_tool_calls_total(tool). Hosts exposing MCP
-through their own wrapper call the same native observer before their checks.
-No tool arguments or identities are recorded.
-
-Removal is a separate release decision after the observation covers native and
-hosted entries and the deployed observation shows zero calls for 30 consecutive days. Source searches
-alone do not establish zero external cached-client use. See the per-name
-replacement and evidence table in [MCP compatibility](mcp-compatibility.md).
-Parameters and descriptions below come from live registration.
-
-| Tool | Parameters | Registered description |
-| --- | --- | --- |
-| `check_inbox` | `unread_only=True`, `limit=50`, `include_bodies=True` | Compatibility alias for check_mail. Prefer check_mail. It marks returned unread messages read before returning. The hosted service decrypts managed encrypted mail for this MCP session; it is readable by that service. Retained for cached MCP clients; removal is considered in the release after deployed native and hosted measurement shows zero calls for 30 consecutive days. |
-| `chat_send` | `message=""`, `to_alias=""`, `to_did=""`, `to_address=""`, `session_id=""`, `wait=False`, `wait_seconds=120`, `leaving=False`, `hang_on=False`, `plaintext=False` | Compatibility alias for send_chat. Prefer send_chat. Retained for cached MCP clients; removal is considered in the release after deployed native and hosted measurement shows zero calls for 30 consecutive days. |
-| `chat_pending` | none | Compatibility alias for check_chats. Prefer check_chats. Retained for cached MCP clients; removal is considered in the release after deployed native and hosted measurement shows zero calls for 30 consecutive days. |
-| `chat_history` | `session_id`, `unread_only=False`, `limit=50` | Compatibility alias for read_chat. Prefer read_chat. Retained for cached MCP clients; removal is considered in the release after deployed native and hosted measurement shows zero calls for 30 consecutive days. |
-| `chat_read` | `session_id`, `up_to_message_id=None`, `message_ids=None` | Compatibility alias for mark_chat_read. Accepts up_to_message_id, message_ids, or both; message_ids takes precedence. Retained for cached MCP clients; removal is considered in the release after deployed native and hosted measurement shows zero calls for 30 consecutive days. |
-| `contacts_list` | none | Compatibility alias for list_contacts. Prefer list_contacts. Retained for cached MCP clients; removal is considered in the release after deployed native and hosted measurement shows zero calls for 30 consecutive days. |
-| `contacts_add` | `contact_address`, `label=""` | Compatibility alias for add_contact. Prefer add_contact. Retained for cached MCP clients; removal is considered in the release after deployed native and hosted measurement shows zero calls for 30 consecutive days. |
-| `contacts_remove` | `contact_id` | Compatibility alias for remove_contact. Prefer remove_contact. Retained for cached MCP clients; removal is considered in the release after deployed native and hosted measurement shows zero calls for 30 consecutive days. |
-| `add_contact_by_email` | `email`, `label=""` | Compatibility alias for email contact requests. Retained for cached MCP clients; removal is considered in the release after deployed native and hosted measurement shows zero calls for 30 consecutive days. |
-| `send_message_to_contact` | `contact_id`, `message`, `subject=""`, `channel="mail"`, `priority="normal"`, `wait=False`, `wait_seconds=120` | Compatibility alias for hosted server-readable mail or chat to a saved contact. This hosted MCP tool is not E2E; use local aw clients for E2E messaging. Retained for cached MCP clients; removal is considered in the release after deployed native and hosted measurement shows zero calls for 30 consecutive days. |
-| `read_messages_from_contact` | `contact_id`, `channel="mail"`, `limit=50` | Compatibility alias for read_contact_messages. Prefer read_contact_messages. Hosted MCP cannot decrypt E2E contents. Retained for cached MCP clients; removal is considered in the release after deployed native and hosted measurement shows zero calls for 30 consecutive days. |
-
 ## Deployment-Specific Composition
 
 An operator may compose additional deployment-specific tools around the OSS MCP

@@ -82,7 +82,7 @@ async def test_normalized_history_inbox_unread_exact_read_and_incoming_ack(
         ack = await env.client.post(f"/v1/messages/{incoming}/ack", headers=headers)
         assert ack.status_code == 200, ack.text
     else:
-        inbox = await env.mcp_call("check_inbox")
+        inbox = await env.mcp_call("check_mail")
         assert {UUID(m["message_id"]) for m in inbox["messages"]} == {incoming}, inbox
     assert (
         await db.fetch_val(

@@ -609,7 +609,7 @@ async def test_same_origin_mcp_nonresident_refusal(same_origin, kind):
             dict(to=same_origin.target_address, body="Same-origin MCP", plaintext=True)
             if kind == "mail"
             else dict(
-                to_address=same_origin.target_address,
+                to=same_origin.target_address,
                 message="Same-origin MCP",
                 plaintext=True,
             )
@@ -620,7 +620,7 @@ async def test_same_origin_mcp_nonresident_refusal(same_origin, kind):
                 "id": 1,
                 "method": "tools/call",
                 "params": {
-                    "name": "send_mail" if kind == "mail" else "chat_send",
+                    "name": "send_mail" if kind == "mail" else "send_chat",
                     "arguments": arguments,
                 },
             }
@@ -1092,7 +1092,7 @@ async def _mcp_continue(
             )
             if kind == "mail"
             else dict(
-                session_id=str(first.conversation_id),
+                conversation_id=str(first.conversation_id),
                 message="MCP continuation",
                 plaintext=not encrypted,
             )
@@ -1103,7 +1103,7 @@ async def _mcp_continue(
                 "id": 1,
                 "method": "tools/call",
                 "params": {
-                    "name": "send_mail" if kind == "mail" else "chat_send",
+                    "name": "send_mail" if kind == "mail" else "send_chat",
                     "arguments": arguments,
                 },
             }

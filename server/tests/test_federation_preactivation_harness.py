@@ -27,7 +27,6 @@ from aweb.federation.envelope import FederatedDeliveryRequest
 from aweb.mcp.auth import AuthContext
 from aweb.mcp.signing import HostedMessageSigningResult, canonical_signed_payload
 from aweb.mcp.tools import chat as mcp_chat_tools
-from aweb.mcp.tools import contacts as mcp_contacts_tools
 from aweb.mcp.tools import mail as mcp_mail_tools
 from aweb.routes.federation import router as federation_router
 from awid.did import did_from_public_key
@@ -1192,7 +1191,6 @@ async def test_mcp_cross_registry_uses_production_strict_authority_not_home_regi
         )
         monkeypatch.setattr(mcp_mail_tools, "get_auth", lambda: auth)
         monkeypatch.setattr(mcp_chat_tools, "get_auth", lambda: auth)
-        monkeypatch.setattr(mcp_contacts_tools, "get_auth", lambda: auth)
 
         async def signer(**kwargs) -> HostedMessageSigningResult:
             signed_payload = canonical_signed_payload(kwargs["payload"])
@@ -1218,38 +1216,7 @@ async def test_mcp_cross_registry_uses_production_strict_authority_not_home_regi
             return httpx.Response(200, json=result)
 
         transport = httpx.MockTransport(remote_response)
-        contact_id = await receiver_db.fetch_value(
-            """
-            INSERT INTO {{tables.contacts}} (
-                owner_did, contact_address, contact_did_aw,
-                binding_controller_did, binding_accepted_at, label
-            ) VALUES (
-                'did:aw:mcp-sender', $1, 'did:aw:previous-owner',
-                'did:key:z6MkPreviousController', clock_timestamp(), 'Previous owner'
-            ) RETURNING contact_id
-            """,
-            f"{domain}/{name}",
-        )
         try:
-            reassigned = json.loads(
-                await mcp_contacts_tools.send_message_to_contact(
-                    type(
-                        "DB",
-                        (),
-                        {"get_manager": lambda _self, _name="aweb": receiver_db},
-                    )(),
-                    registry_client=home_client,
-                    federation_authority=activation,
-                    hosted_signer=signer,
-                    contact_id=str(contact_id),
-                    message="must not transfer",
-                    channel=channel,
-                )
-            )
-            assert reassigned == {
-                "error": "This address now belongs to a different identity. Check the contact and explicitly bind it again before sending.",
-                "reason": "contact_identity_binding_required",
-            }
             if channel == "mail":
                 result = json.loads(
                     await mcp_mail_tools.send_mail(
