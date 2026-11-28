@@ -54,9 +54,9 @@ This design does not reopen these decisions.
 | Term | Meaning | Defined at |
 |---|---|---|
 | Issuer | The authority that signs a person's ID certificate and their binding. This is the checked current namespace controller, or the person's actual-parent issuer. | approval-service@be53c0a `README.md:148-153` |
-| B | The issuer-signed enrollment binding. It names the person's ID, certificate digest and identity key, the awsign origin and RP, and each enrolled credential with its own grade, snapshot reference and grade-policy id. | approval-service@be53c0a `docs/protocol.md:493-494` |
-| E | Issuer-signed identity evidence: creation and later transitions. | `docs/protocol.md:498-499` |
-| Grade | `certified_hardware` or `passkey_uv`. Each credential has its own grade. | `docs/protocol.md:408-436`; `docs/human-approval-architecture.md:136-145` |
+| B | The issuer-signed enrollment binding. It names the person's ID, certificate digest and identity key, the awsign origin and RP, and each enrolled credential with its own grade, snapshot reference and grade-policy id. | [approval-service protocol, lines 493–494](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md#L493-L494) |
+| E | Issuer-signed identity evidence: creation and later transitions. | [approval-service protocol, lines 498–499](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md#L498-L499) |
+| Grade | `certified_hardware` or `passkey_uv`. Each credential has its own grade. | [approval-service protocol, lines 408–436](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md#L408-L436); `docs/human-approval-architecture.md:136-145` |
 | `check_registration` | The shared registration verifier. The service and the issuer each run it on the same raw WebAuthn create response. | approval-service@be53c0a `src/approval_service/registration.py:218-341` |
 | Snapshot | A pinned and verified FIDO MDS blob, loaded through `metadata_cache.fetch_and_pin` and `EnrollmentGrading`. | `src/approval_service/metadata.py:79-136`, `grading.py:20-146` |
 
@@ -81,7 +81,7 @@ about a person and is renewed for as long as it holds.
 | `packed` self-attestation (no `x5c`) | `passkey_uv` at most | No | Nothing ties the key to a certified model. |
 | `none` | `passkey_uv` at most | No | There is no attestation. |
 | `fido-u2f` | `passkey_uv` at most | No | U2F carries the all-zero AAGUID. The snapshot lookup by AAGUID cannot match it (`registration.py:309`, `metadata.py:228-237`). CTAP1 devices also cannot set UV, which registration requires (`registration.py:84-85`). In practice it can never reach the hardware grade. |
-| `tpm` | `certified_hardware` is possible under the shared check | **No: privacy not established** | A TPM's attestation identity key (AIK) and its certificate can be reused across credentials on one device. The certificate's SAN names the TPM manufacturer and model. An issuer that hosts several organisations' issuance (decision 1) could then link one person's separate IDs. That would break the rule that nothing links a person's separate IDs (`docs/protocol.md:41-50`; `docs/human-approval-architecture.md:303-306`). At be53c0a no test, vector or document establishes TPM privacy. The implementer confirmed the format is untested in the repository, including in its introducing commit e5d1a3c. Refused until a reviewed privacy analysis exists. |
+| `tpm` | `certified_hardware` is possible under the shared check | **No: privacy not established** | A TPM's attestation identity key (AIK) and its certificate can be reused across credentials on one device. The certificate's SAN names the TPM manufacturer and model. An issuer that hosts several organisations' issuance (decision 1) could then link one person's separate IDs. That would break the rule that nothing links a person's separate IDs ([approval-service protocol, lines 41–50](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md#L41-L50); `docs/human-approval-architecture.md:303-306`). At be53c0a no test, vector or document establishes TPM privacy. The implementer confirmed the format is untested in the repository, including in its introducing commit e5d1a3c. Refused until a reviewed privacy analysis exists. |
 | `apple` | `passkey_uv` in practice | **No: privacy not established** | Apple's anonymous attestation issues a certificate for each credential. That certificate is unique to the credential and has no MDS model entry to check. Synced Apple passkeys also report backup eligibility, which excludes them (`registration.py:310`). At be53c0a no test or document covers the format (confirmed by the implementer, as for `tpm`). Refused until reviewed. |
 
 **Batch profile, v1** (`aweb-attestation-batch-v1`). The issuer's private
@@ -122,7 +122,7 @@ the same reviewed pin.
 and its revocation is checked against pinned CRLs
 (approval-service@be53c0a `src/approval_service/data/mds-pin-v1.json`;
 the loader is `metadata.py:139-245`). The status semantics follow FIDO
-MDS 3.1.1 (`docs/protocol.md:418-424`).
+MDS 3.1.1 ([approval-service protocol, lines 418–424](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md#L418-L424)).
 
 **Eligibility policy.** `fido-mds-l1-single-device-uv-v1`
 (`src/approval_service/data/mds-policy-v1.json`):
@@ -142,17 +142,17 @@ minimum sequence. At be53c0a that is sequence 303, valid until
 the CRLs, the signature, `nextUpdate`, and the highest installed sequence, so
 there is no rollback. Vendor bytes are never committed. The cache lives
 outside the repository with mode 0700 (approval-service@be53c0a `README.md:60-78`;
-`docs/deployment.md:44-60`).
+[approval-service deployment, lines 44–60](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/deployment.md#L44-L60)).
 
 **Renewed.** `.github/workflows/metadata-pin.yml` runs daily. It verifies the
 live blob under the existing pinned root and opens a pin-only PR. It never
 merges or deploys. It stops on a root change, a new CRL route, a rollback or a
 verification failure, and it fails when the pin on main is under 72 hours from
-cutoff and a renewal PR is still open (`docs/deployment.md:24-41`).
+cutoff and a renewal PR is still open ([approval-service deployment, lines 24–41](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/deployment.md#L24-L41)).
 
 **Reviewed.** The approval-service maintainer reviews and lands each pin PR. A
 root change, a new CRL route or a change to the policy file is a deliberate,
-reviewed code change, never automation (`docs/deployment.md:16-34`).
+reviewed code change, never automation ([approval-service deployment, lines 16–34](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/deployment.md#L16-L34)).
 
 **Installed at the issuer.** The issuer's operator installs the reviewed pin
 into the issuer's own manifest file and private cache. The issuer then uses
@@ -160,11 +160,11 @@ into the issuer's own manifest file and private cache. The issuer then uses
 `watch_metadata`. The issuer **never** takes a snapshot from awsign: the shared
 verifier requires the caller's independently loaded input
 (`registration.py:228-234`). The 7-day warning and the hourly `--check`
-monitor also apply to the issuer (`docs/deployment.md:62-86`).
+monitor also apply to the issuer ([approval-service deployment, lines 62–86](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/deployment.md#L62-L86)).
 
 **On expiry.** Expiry already has one effect: attested enrollment refuses with
 `snapshot_expired`, `snapshot_validation_expired` or `snapshot_unavailable`,
-and passkeys continue (`docs/deployment.md:171-186`). For P it has a second:
+and passkeys continue ([approval-service deployment, lines 171–186](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/deployment.md#L171-L186)). For P it has a second:
 the issuer cannot renew any P without a current snapshot. Existing P therefore
 run out at their own `valid_until`, and hardware backing reads lapsed for
 every hardware-backed person. This is the honest outcome, because the issuer
@@ -200,7 +200,7 @@ snapshot cutoff.
 
 The domain and encoding follow the B and E rules: canonical JSON, a literal
 prefix ending in one newline, and an issuer signature
-(`docs/protocol.md:487-500`).
+([approval-service protocol, lines 487–500](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md#L487-L500)).
 
 `P_body`, closed:
 
@@ -243,11 +243,11 @@ The issuer signs P only when all of the following hold.
 1. **Its own assessment.** The issuer ran the shared registration verifier on
    the credential's raw registration, with its own challenge and its own
    snapshot, and the result was `certified_hardware`. This is the existing
-   precondition for signing that grade in B (`docs/protocol.md:439-446`). The
+   precondition for signing that grade in B ([approval-service protocol, lines 439–446](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md#L439-L446)). The
    same pass establishes the batch profile (§2).
 2. **The exact basis completed its own proof, in the existing pending
    ceremony.** The order is acyclic and follows the bootstrap construction
-   (`docs/protocol.md:511-533`):
+   ([approval-service protocol, lines 511–533](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md#L511-L533)):
    1. the issuer prepares the proposed certificate (or, for an existing
       person, names the committed one) and signs the pending B;
    2. the issuer checks that **the basis credential itself** made the accepted
@@ -268,7 +268,7 @@ The issuer signs P only when all of the following hold.
    the person's current certificate and identity key. After an identity-key
    change, the basis carries over only through an authenticated continuity
    transition that the issuer recorded in E, with a receipt from a credential
-   current before the change (`docs/protocol.md:535-556`). A bare rotation with
+   current before the change ([approval-service protocol, lines 535–556](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md#L535-L556)). A bare rotation with
    no such evidence goes through the existing recovery or enrollment rule
    (§7) before any credential is a basis again.
 4. **The final decision.** This step is the single compare-and-sign decision
@@ -326,7 +326,7 @@ approval-service:
 
 P travels where B and E already travel. It goes beside the ID chain, in the
 evidence a holder presents: `aw id proof` files, and the reserved `evidence`
-member of the export envelope (`docs/protocol.md:619-640`;
+member of the export envelope ([approval-service protocol, lines 619–640](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md#L619-L640);
 `docs/human-approval-architecture.md:161-162,181-182`). P is not published in
 the registry, and there is no lookup by bare ID. P is issued to the person,
 who chooses where to present it.
@@ -494,7 +494,7 @@ independent facts: `personhood`, which is the issuer's vouching, and
 `hardware_backing`, which comes from P. An agent link has neither. Its
 responsible human's link carries its own. An agent never inherits a person's
 reading, and an agent can never pass as a person. Neither fact changes the
-message or chain verdict or its exit code (`docs/protocol.md:575-578`).
+message or chain verdict or its exit code ([approval-service protocol, lines 575–578](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md#L575-L578)).
 
 ### 5.1 Personhood: the issuer's vouching, under the issuer's statement
 
@@ -614,7 +614,7 @@ The verifier separately reports `hardware_backing.enrollment_proof`. This is
 optional public evidence that the named credential really signed. Only
 **public identity receipts** count: the `enrollment_confirmation` or
 `enroll_existing_person` confirmation receipt, or a continuity-transition
-receipt (`docs/protocol.md:476-483,511-556`). Application receipts and their
+receipt ([approval-service protocol, lines 476–483](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md#L476-L483) and [lines 511–556](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md#L511-L556)). Application receipts and their
 resources stay private and are never used.
 
 `enrollment_proof` is `true` only when a presented receipt checks fully. Its
@@ -628,14 +628,14 @@ and null when no receipt is presented.
 A checked receipt shows that the credential was used **at its named event**.
 It does not show that the key was used for this presentation or at the
 evaluation time. The wording says so (§5.4). The attestation itself stays the
-issuer's assessment, as for B's grade today (`docs/protocol.md:426-436,467-473`).
+issuer's assessment, as for B's grade today ([approval-service protocol, lines 426–436](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md#L426-L436) and [lines 467–473](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md#L467-L473)).
 Two independent assessments back it: the issuer's own check, and awsign's
 refusal of any grade beyond its own (`registration.py:42-56`).
 
 ### 5.4 Result shape and default wording
 
 Each human link gets these results, added beside the existing fields in
-`docs/protocol.md:582-593`:
+[approval-service protocol, lines 582–593](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md#L582-L593):
 
 | Field | Values |
 |---|---|
@@ -665,7 +665,7 @@ then the backing phrase:
 
 Both phrases attribute their claim to the issuer. Hardware backing is not a
 person-wide maximum grade. The grade of an approval is still the grade of the
-credential that actually signed (`docs/protocol.md:558-563`).
+credential that actually signed ([approval-service protocol, lines 558–563](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md#L558-L563)).
 
 ### 5.5 Historical (as-of) reading
 
@@ -701,19 +701,19 @@ either mode.
 
 A later controller rotation, a key change, or a lapsed P does not change a
 historical reading of a window that P covered. That matches the existing rule
-not to rewrite a historical claim as failed (`docs/protocol.md:667-668`).
+not to rewrite a historical claim as failed ([approval-service protocol, lines 667–668](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md#L667-L668)).
 
 A historical reading reports what the issuer stated under the snapshot it
 named. It does not re-evaluate withdrawals that FIDO published later. The
 verifier could not do so anyway, because the AAGUID is private. WebAuthn has
 no trusted signing timestamp, so `issued_at` is the issuer's clock, and T is
-the relying party's own record (`docs/protocol.md:403-406`).
+the relying party's own record ([approval-service protocol, lines 403–406](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md#L403-L406)).
 
 ## 6. Privacy
 
 | Item | Where it lives | Why |
 |---|---|---|
-| Raw attestation object | Never retained. The issuer checks it and drops it, the same rule awsign applies (`docs/deployment.md:120-125`). | Not needed after the check. |
+| Raw attestation object | Never retained. The issuer checks it and drops it, the same rule awsign applies ([approval-service deployment, lines 120–125](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/deployment.md#L120-L125)). | Not needed after the check. |
 | The `AttestationAssessment` (§4.2a) of a batch-profile basis credential: format, AAGUID, firmware, verified chain, root, profile | **Issuer only**: private, encrypted at rest, keyed by (namespace, person, credential). Deleted when the credential leaves B or the ID is revoked. Never logged, exported, or put in P, B, E or the registry. | Needed to re-evaluate against later snapshots and certificate-scoped withdrawals (§3). Retained only for the batch profile, which identifies a model and batch, never a device (§2). Other profiles are discarded at assessment. |
 | Credential public key, selector, grade, enrollment snapshot digest | Public in B, as today | Existing |
 | Person ID, certificate digest, identity key, `H_B`, selector, basis, grade policy, `assessed_under`, dates | Public in P | The minimum needed to check P |
@@ -726,7 +726,7 @@ Further rules:
 - **No verifier contact.** P verifies offline against public Trust. There is
   no status endpoint, so the issuer never learns who checks a person.
 - **No cross-ID link.** Each of a person's IDs has fresh credentials and its
-  own B and P (`docs/protocol.md:41-50`). Retained batch-profile chains are batch
+  own B and P ([approval-service protocol, lines 41–50](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md#L41-L50)). Retained batch-profile chains are batch
   certificates, so the issuer's private store can tell "same model and batch"
   but not "same device". This is also the reason `tpm` is refused (§2).
 - **Presence is information.** Presenting P shows that this ID has certified
@@ -738,10 +738,10 @@ Further rules:
 |---|---|---|
 | Identity-key rotation (enrolled keys unchanged) | The old P binds the old identity key and certificate, so a current reading gives `not_current`. The issuer re-signs B (an existing duty). It re-signs P only when the rotation is an authenticated continuity transition recorded in E (§4.2 step 3). A bare rotation goes through recovery or enrollment first. | approval-service@be53c0a `README.md:30-37,153-157`; §4.2 |
 | Namespace-controller rotation | P signed by the superseded key no longer verifies under current Trust. That reads `signature_invalid`, or `issuer_superseded` with independently verified predecessor evidence (§5.2 step 3). The new issuer re-signs at the next renewal under §4.2. Historical readings use as-of Trust. | `README.md:30-37` |
-| Basis credential lost, replaced or withdrawn | Replacing or withdrawing an enrolled key changes the identity key (`docs/protocol.md:94-99`). The old P becomes not current. A new P needs a batch-profile `certified_hardware` credential in the new B that completed its own proof (§4.2). If only passkeys remain, hardware backing is `none` from then on. Personhood (the issuer's vouching) is unaffected. The retained reference is deleted. | §4.2 |
+| Basis credential lost, replaced or withdrawn | Replacing or withdrawing an enrolled key changes the identity key ([approval-service protocol, lines 94–99](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md#L94-L99)). The old P becomes not current. A new P needs a batch-profile `certified_hardware` credential in the new B that completed its own proof (§4.2). If only passkeys remain, hardware backing is `none` from then on. Personhood (the issuer's vouching) is unaffected. The retained reference is deleted. | §4.2 |
 | A second hardware credential is still enrolled | That credential grounds a new P only if it meets §4.2 itself: its own batch-profile assessment and its own completed issuer-built confirmation. P names it, and a basis never moves silently. | §4.2 |
-| Re-enrollment at another origin or RP | New B, new assessment, new P. Nothing carries over. | `docs/protocol.md:121-126` |
-| Recovery or recreation after losing every key | A new creation event after an explicit break. P starts over and never inherits the old basis. | `docs/deployment.md:160-167`; `docs/protocol.md:100-106` |
+| Re-enrollment at another origin or RP | New B, new assessment, new P. Nothing carries over. | [approval-service protocol, lines 121–126](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md#L121-L126) |
+| Recovery or recreation after losing every key | A new creation event after an explicit break. P starts over and never inherits the old basis. | [approval-service deployment, lines 160–167](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/deployment.md#L160-L167); [approval-service protocol, lines 100–106](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md#L100-L106) |
 | ID revoked | Current readings give `not_current`. Retained references are deleted. Historical readings of earlier windows still hold. | §5.4 |
 | Model withdrawn by FIDO | No renewal and no revocation. Backing reads `lapsed` from `valid_until`. The person can enrol a current key, which grounds a new P once it completes its own proof (§4.2). Personhood is unaffected. B's grade is untouched (see §10.4). | §3 |
 | Pin renewal lapses | No renewals. Every P reads `lapsed` after its `valid_until`. | §3 |
@@ -856,11 +856,11 @@ approval when it is implemented; the coordinator routes it.
 - `docs/human-approval-architecture.md`, "Showing that an ID belongs to a
   person", gains P and S beside B and E, and the verifier result gains
   `personhood` and `hardware_backing` (§5.4).
-- approval-service `docs/protocol.md` §8.2 and §8.4 gain the same result
+- approval-service [protocol](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md) §8.2 and §8.4 gain the same result
   fields and wording, if the P verifier lives in the shared Python and Go
   verifiers.
 
-**The "no new registry record" rule.** Approval-service `docs/protocol.md` §1
+**The "no new registry record" rule.** Approval-service [protocol](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md) §1
 says the registry "neither records nor vouches for key custody or a
 protection mode". §3 says "No new registry record is added" for requester
 admission. S is a new record in the registry, so this design settles the
@@ -904,7 +904,7 @@ mechanism next to B. Using the awsign credential reuses B and its receipts.
 ### 10.3 Rejected: reading hardware backing from B's grade alone
 
 B has no lifetime. Its currentness is anchored to the identity key
-(`docs/protocol.md:94-99`). A grade signed before a FIDO withdrawal would keep
+([approval-service protocol, lines 94–99](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md#L94-L99)). A grade signed before a FIDO withdrawal would keep
 reading "backed by certified hardware" indefinitely: an overclaim that grows
 silently. E records
 events and is not a renewable state, so it was rejected for the same reason.
@@ -971,10 +971,10 @@ mail sent by the person's agents.
 |---|---|
 | Registration check, shared by service and issuer | `registration.py:218-341` |
 | Metadata loader, snapshot and eligibility evaluation | `metadata.py`, `metadata_cache.py` |
-| Pins, policy file, daily renewal workflow, review and install duties | `mds-pin-v1.json`, `mds-policy-v1.json`, `.github/workflows/metadata-pin.yml`, `docs/deployment.md` |
+| Pins, policy file, daily renewal workflow, review and install duties | `mds-pin-v1.json`, `mds-policy-v1.json`, `.github/workflows/metadata-pin.yml`, [approval-service deployment](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/deployment.md) |
 | Grading modes, watcher, health and expiry monitor | `grading.py` |
 | Grade vocabulary | `certified_hardware`, `passkey_uv` |
-| B, E, receipts, issuer selection, as-of Trust, canonical encoding | `docs/protocol.md` §4, §8 |
+| B, E, receipts, issuer selection, as-of Trust, canonical encoding | [approval-service protocol](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md) §4, §8 |
 | Evidence carriage and no-lookup rule | `docs/human-approval-architecture.md:147-182` |
 
 | New | Why it is not a reuse |
