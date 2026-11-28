@@ -1,6 +1,7 @@
 # Owner-act delivery for app acts
 
-Status: **specified, not shipped**. Owner: the aweb OSS hooks lane
+Status: **specified; built in this repository** (see "Work this contract
+creates"). Owner: the aweb OSS hooks lane
 (aweb-acgh.16.38, with the [human-role holders](design/human-role-holders.md)
 design that Juan ruled). This document is the source of truth for how a client
 delivers an app's human-role owner act (`human-role.designate`,
@@ -326,7 +327,10 @@ whichever way the cap moves.
 
 Filed with the 16.38 follow-ups and the
 [human-role holders follow-ups](design/human-role-holders.md#work-this-changes).
-Each item is one reviewed change.
+Each item is one reviewed change. Every item in this repository is built: the
+Go interpreter (`manifest_v3.go`), `aweb_naapp` (manifest version 3 and
+`runtime/owner_act_router.py`), the server, `aw` (aw-v1.36.59), secrets and logs.
+The hosted item is outside this repository.
 
 - **Go manifest interpreter** (`cli/go/internal/appmanifest`): version 3 and
   `owner_acts`, against the version 3 vectors.

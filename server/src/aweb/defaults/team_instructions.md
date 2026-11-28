@@ -76,7 +76,7 @@ aw chat extend-wait <alias> --body-file <body-path>
 
 Never run `aw` from another workspace or worktree when doing coordination work.
 
-`aw` derives coordination context from `.aw/workspace.yaml` in the current worktree. Running `aw` from another repo or worktree can impersonate that workspace's agent, causing:
+`aw` acts as the identity selected by `--identity-home`, then `AWEB_IDENTITY_HOME`, then the current directory's `.aw`. Running `aw` from another repo or worktree without selecting your identity can act as that workspace's agent, causing:
 
 - Messages sent as the wrong agent
 - Work claimed under the wrong identity

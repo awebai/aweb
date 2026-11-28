@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/ed25519"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -38,12 +39,18 @@ type agentCreationRequest struct {
 	SelectedTeam  *apiKeyCreationTeam
 }
 
+// creationAuthorityInput holds the facts the creation decision reads. The
+// caller reads local facts only when takesAPIPath is false, and the team
+// certificate only when needsCertificate is true.
 type creationAuthorityInput struct {
 	SuppliedKey     bool
 	KeyKind         creationKeyKind
-	SourceTeam      string
+	KeyTeam         string
 	RequestedTeam   string
+	ActiveTeam      string
 	LocalController bool
+	SigningKeyDID   string
+	CertificateDID  string
 }
 
 type creationAuthority struct {
@@ -55,12 +62,33 @@ type creationAuthority struct {
 
 // Only an authoritative workspace classification changes a supplied key's
 // behavior. Missing and future kinds retain the released API path.
+func (in creationAuthorityInput) takesAPIPath() bool {
+	return in.SuppliedKey && in.KeyKind != creationKeyKindWorkspace
+}
+
+// A local controller signs with the team key; any other member signer must
+// hold the key its team certificate names.
+func (in creationAuthorityInput) needsCertificate() bool {
+	return in.ActiveTeam != "" && !in.LocalController && in.SigningKeyDID != ""
+}
+
 // Implements docs/grow-team.md:38-56 and docs/cli-identity-selection.md:43-49.
 func decideCreationAuthority(in creationAuthorityInput) (creationAuthority, error) {
-	if in.SuppliedKey && in.KeyKind != creationKeyKindWorkspace {
+	if in.takesAPIPath() {
 		return creationAuthority{Mode: creationAuthorityAPI}, nil
 	}
-	if in.SourceTeam != "" && (in.RequestedTeam == "" || in.SourceTeam == in.RequestedTeam) {
+	if in.needsCertificate() && in.CertificateDID != in.SigningKeyDID {
+		return creationAuthority{}, errors.New("workspace signing key does not match its team certificate")
+	}
+	sourceTeam := ""
+	if in.ActiveTeam != "" && (in.LocalController || in.SigningKeyDID != "") {
+		sourceTeam = in.ActiveTeam
+	}
+	requestedTeam := in.RequestedTeam
+	if in.SuppliedKey && requestedTeam == "" {
+		requestedTeam = in.KeyTeam
+	}
+	if sourceTeam != "" && (requestedTeam == "" || sourceTeam == requestedTeam) {
 		mode := creationAuthorityInvitation
 		if in.LocalController {
 			mode = creationAuthorityController
@@ -69,11 +97,11 @@ func decideCreationAuthority(in creationAuthorityInput) (creationAuthority, erro
 		if in.SuppliedKey {
 			notice = creationWorkspaceNotice
 		}
-		return creationAuthority{Mode: mode, Notice: notice, SourceTeam: in.SourceTeam}, nil
+		return creationAuthority{Mode: mode, Notice: notice, SourceTeam: sourceTeam}, nil
 	}
 	if in.SuppliedKey {
-		if in.SourceTeam != "" {
-			return creationAuthority{}, fmt.Errorf("This workspace belongs to %s, not %s. %s", in.SourceTeam, in.RequestedTeam, creationA5)
+		if sourceTeam != "" {
+			return creationAuthority{}, fmt.Errorf("This workspace belongs to %s, not %s. %s", sourceTeam, requestedTeam, creationA5)
 		}
 		return creationAuthority{}, fmt.Errorf("%s", creationA5)
 	}
@@ -96,61 +124,66 @@ func resolveAgentCreation(request agentCreationRequest) (creationAuthority, erro
 				return creationAuthority{}, err
 			}
 		}
-
 		input.KeyKind = selected.APIKeyKind
-		if input.KeyKind != creationKeyKindWorkspace {
-			decision, err := decideCreationAuthority(input)
-			decision.SelectedTeam = selected
-			return decision, err
-		}
-		if request.RequestedTeam == "" {
-			input.RequestedTeam = selected.CanonicalTeamID
-		}
+		input.KeyTeam = selected.CanonicalTeamID
 	}
-	home, err := identityHomeForDir(request.WorkingDir)
-	if err != nil {
-		return creationAuthority{}, err
-	}
-	workspace, teams, _, err := loadCurrentWorkspaceAndTeamState(request.WorkingDir, externalIdentityHomeRoot(home))
-	if err != nil && !os.IsNotExist(err) {
-		return creationAuthority{}, err
-	}
-	if err == nil {
-		membership := awconfig.ActiveMembershipFor(workspace, teams)
-		if membership != nil {
-			domain, team, err := awid.ParseTeamID(membership.TeamID)
-			if err != nil {
-				return creationAuthority{}, err
-			}
-			input.LocalController, err = awconfig.TeamKeyExists(domain, team)
-			if err != nil {
-				return creationAuthority{}, err
-			}
-			key, err := loadOptionalWorktreeSigningKey(request.WorkingDir)
-			if err != nil {
-				return creationAuthority{}, err
-			}
-			if input.LocalController {
-				input.SourceTeam = membership.TeamID
-			} else if key != nil {
-				path, err := awconfig.IdentityHomePath(home, awconfig.TeamCertificateRelativePath(membership.TeamID))
-				if err != nil {
-					return creationAuthority{}, err
-				}
-				cert, err := awid.LoadTeamCertificate(path)
-				if err != nil {
-					return creationAuthority{}, err
-				}
-				if cert.MemberDIDKey != awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)) {
-					return creationAuthority{}, fmt.Errorf("workspace signing key does not match its team certificate")
-				}
-				input.SourceTeam = membership.TeamID
-			}
+	if !input.takesAPIPath() {
+		if err := readLocalCreationFacts(request.WorkingDir, &input); err != nil {
+			return creationAuthority{}, err
 		}
 	}
 	decision, err := decideCreationAuthority(input)
 	decision.SelectedTeam = selected
 	return decision, err
+}
+
+// readLocalCreationFacts reads the working directory's active membership, its
+// team key and signing key, and the team certificate when the decision needs it.
+func readLocalCreationFacts(workingDir string, input *creationAuthorityInput) error {
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return err
+	}
+	workspace, teams, _, err := loadCurrentWorkspaceAndTeamState(workingDir, externalIdentityHomeRoot(home))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	membership := awconfig.ActiveMembershipFor(workspace, teams)
+	if membership == nil {
+		return nil
+	}
+	domain, team, err := awid.ParseTeamID(membership.TeamID)
+	if err != nil {
+		return err
+	}
+	input.ActiveTeam = membership.TeamID
+	input.LocalController, err = awconfig.TeamKeyExists(domain, team)
+	if err != nil {
+		return err
+	}
+	key, err := loadOptionalWorktreeSigningKey(workingDir)
+	if err != nil {
+		return err
+	}
+	if key != nil {
+		input.SigningKeyDID = awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))
+	}
+	if !input.needsCertificate() {
+		return nil
+	}
+	path, err := awconfig.IdentityHomePath(home, awconfig.TeamCertificateRelativePath(membership.TeamID))
+	if err != nil {
+		return err
+	}
+	cert, err := awid.LoadTeamCertificate(path)
+	if err != nil {
+		return err
+	}
+	input.CertificateDID = cert.MemberDIDKey
+	return nil
 }
 
 func printCreationAuthority(decision creationAuthority) {
