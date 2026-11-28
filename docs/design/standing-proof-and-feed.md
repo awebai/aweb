@@ -414,9 +414,9 @@ E5's native serving routes accept only the request-bound protocol in §2.
 **E5 launch scope.** On 2026-11-28 Juan decided that E5 serves
 `awebai.org` with standing and refuses cross-federation with frozen
 `aweb.ai` in both directions. The launch has no mail bridge or online
-ingress adapter. The entire `aweb.ai` serving population moves to the new
-registry in one cutover after E5 is ready (§7). Until then, the frozen
-service and `api.awid.ai` keep their released contract.
+ingress adapter. The first migration after E5 is the cohort on
+`juan.aweb.ai` and the OATS team (§7). The frozen service and
+`api.awid.ai` keep serving existing customers under the released contract.
 
 Give the initiating client a typed unsupported-peer refusal when trusted
 discovery identifies a released-only peer. An unknown or unreachable
@@ -425,7 +425,7 @@ no-effect rule at ingress. E5 fails closed with zero request-time
 authority lookups. Native federation between admitted
 standing issuers remains part of OSS conformance.
 
-## 7. First deployment and the aweb.ai migration
+## 7. First deployment and the first cohort migration
 
 On 2026-11-28 Juan authorised a second AWID registry for E5 on
 `awdid.org`. This design uses `https://api.awdid.org` as its production
@@ -496,20 +496,41 @@ team keys, certificates and revocations as historical records only. Exclude
 stale writers and issuers throughout the transition. The grant owner must
 account for its own delegation state or require new grants.
 
-### One aweb.ai cutover after E5
+### First cohort cutover after E5
 
-Move everyone served by `aweb.ai` to `https://api.awdid.org` in one
-coordinated cutover after E5 is ready. The inventory covers the full
-`aweb.ai` serving population, including the agents on `juan.aweb.ai` and
-the OATS team. The migration owner inventories canonical namespaces and
-teams, current holders, address and routing bindings, service grants,
-client homes and mail state. Each namespace or team needs the authority
-of its own controller to move. Resolve every dependency of a moving
-holder before the cutover. Prepare and verify destination state while
-the source is fenced. After source retirement is verified for the full
-migration, switch authority and open the destination in one activation.
-The migration has its own acceptance and change window immediately
-after E5 readiness.
+Move the agents on `juan.aweb.ai` and the OATS team to
+`https://api.awdid.org` in one coordinated change window after E5 readiness.
+Inventory their namespaces, teams, holders, addresses, routes, grants,
+client homes and mail. Obtain each controller's authorisation for its
+scope. A shared team or namespace can move only with its controller's
+explicit authority for every affected holder. Existing customers stay on
+frozen `aweb.ai` and `api.awid.ai` with their current addresses. The frozen
+registry retains the `juan.aweb.ai` delegation. A wider service or
+customer-address move requires a separate product decision.
+
+Before the window, collect holder migration statements and signed
+controller rosters. Each holder statement binds the migration instruction,
+the exact source head and the destination binding. Each roster binds the
+source team incarnation and key version and a digest of the exact member
+set. Verify both against the fenced source cut. A changed head or roster
+needs fresh evidence. Exclude an unresolved holder and any scope that
+cannot safely be separated from that holder from this activation. Fence the
+excluded scope at the source and keep its destination admission closed.
+Move it later through authorised recovery or admission. The ready cohort
+uses one activation after its source retirement is verified.
+
+Qualify every client path used by the ready cohort before opening the
+window. Inventory the running versions of hosted MCP, self-custodial
+homes, OATS bindings and installed apps. Each in-scope binding must have
+a tested standing-capable version ready to switch. Defer bindings that
+depend on an unqualified client path.
+
+The reversible cohort fence lasts at most 30 minutes. Rehearse the
+comparison, source retirement and activation within that budget. Before
+any irreversible retirement, abort back to the source if the ready subset
+cannot pass the gates and finish within the rehearsed budget. Reconcile
+paused effects before reopening eligible source writes. Once retirement
+starts, a discrepancy keeps the affected scope fenced for reconciliation.
 
 #### New addresses for juan.aweb.ai holders
 
@@ -524,14 +545,28 @@ and destination authorities authorise each holder's exact identity
 transfer and new address binding. Identity certificates are
 domain-bound. The move preserves the stable DID by explicitly
 re-anchoring it under the new chain, using the verified source head
-and paired holder and controller evidence. Resolve recovery or
-admission for any identity whose authority or required ancestry cannot
-be transferred before opening the migrating scope.
+and paired holder and controller evidence. Defer any identity whose
+authority or required ancestry cannot be transferred until its recovery
+or admission is verified.
 
 Retire each moved holder's old address at the source and preserve it
 as historical evidence. The frozen boundary has no automatic
 forwarding. New requests and replies use the verified destination
 binding.
+
+For a known moved binding, an old request receives a typed
+`standing_upgrade_required` refusal with the new issuer and the standing
+request contract. Check the refusal
+on the stale client entry point as well as at the destination. Any
+source-side response is scoped to exact moved bindings and grants no
+delivery or authority. The released client must display a usable upgrade
+message. Trusted issuer discovery still governs the next request.
+
+An otherwise authorised send to a known retired address receives a typed
+`address_retired` refusal. An unknown address retains the existing
+unknown-recipient response. Include a replacement address only when the
+recipient expressly opted in and the replacement binding is current and
+verified. The refusal itself never forwards or delivers.
 
 #### Common migration gates
 
@@ -554,22 +589,24 @@ binding.
    completeness nor the validity of a row.
 2. **Prove live identity continuity.** Each moving global identity signs
    a purpose-versioned migration statement with its current key,
-   binding the migration manifest, registries, stable DID, imported log
-   head and exact destination address and route, or its explicit
-   unaddressed status. At the destination require the imported head to
-   equal the independently read fenced source head, verify the log and
-   chain through that head, and verify the holder signature with the key
-   at that head. Require the applicable namespace and routing authorities
-   to sign the destination binding. A holder missing its current key
+   binding the prepared migration instruction, registries, stable DID,
+   source log head and exact destination address and route, or its
+   explicit unaddressed status. Bind the accepted instruction and
+   statement to the final manifest. Require the signed head and imported
+   head to equal the independently read fenced source head, verify the
+   log and chain through that head, and verify the holder signature with
+   the key at that head. Require the applicable namespace and routing
+   authorities to sign the destination binding. A holder missing its current key
    takes the recovery path before it can move. A team-local identity
    has no portable global DID or address. Preserve its holder binding
    only with verified continuity of the team and key, and record any
    fresh local enrolment explicitly.
 3. **Re-issue team authority.** Every moved team uses a fresh team
    key version or a new incarnation with a fresh key. The controller
-   confirms the explicit current roster, including exact holder, alias
-   and authorised role for each member, reconciled against the fenced
-   source. It signs fresh certificates for that roster. Old certificates,
+   signs the explicit roster in advance, including exact holder, alias
+   and authorised role for each member and the exact source team basis.
+   Compare it to the fenced source. The controller signs fresh
+   certificates only for the approved ready set. Old certificates,
    public verification keys and their revocation history serve audit only.
    The destination verifier can admit only the new team binding and
    key. Import terminal identity revocations and relevant cutoff state
@@ -604,11 +641,11 @@ the preserved artifacts and known keys. A missing possession proof or
 unavailable service is insufficient evidence of refusal. Check the
 source refuses each moved holder's old certificate before opening the
 destination. Require positive controls for current reissued members and
-matching identity, address, team and mail inventories. Verify that the
-destination keeps the migrating scope closed while any part of the
-migration is incomplete and that one activation opens the full migrated
-scope. Check that historical mail remains readable with its original
-verification and an exact retry yields a single receipt and effect.
+matching identity, address, team and mail inventories. Verify that one
+activation opens the ready cohort and that excluded bindings remain fenced.
+Rehearse a source-head change, an unresolved holder and a pre-retirement
+abort within the time budget. Check that historical mail remains readable
+with its original verification and an exact retry yields one receipt and effect.
 
 ## 8. Model, conformance and scale
 
@@ -680,6 +717,6 @@ extrapolating from raw signature operations.
 | AWID feed and public snapshot | Complete mutation inventory, atomic append, signed barriers, both feed reads, retention and scope-preserving resync. |
 | Verifier SDK | Local validation and shared apply logic, published conformance for both transports, and issuer selection independent of the configured default. Exercise two exact domains with different issuers, an unavailable or conflicting discovery result, and a wrong-issuer response, with zero fallback. |
 | aweb runtime and grants | Complete request inventory, local gates and typed refusal, owner-held grant/application facts, effect and stream tests. Show that the stream recheck reads registry standing only from the process's applied view, with no DB round trip for it. Show that grant revocation, app uninstall and workspace removal still end the affected stream before its next protected emission. Use event-driven local service facts or bounded DB reads, and measure and report any remaining DB recheck cost. |
-| Federation | Native interoperability between real standing issuers, exact trust bootstrap and recovery, and no request-time authority fetch. At E5, prove both directions refuse across the frozen boundary with no effect. |
-| Pilot, clients and registry deployment | Separate digest-pinned registry deploy at `https://api.awdid.org` in `servers`, named operations ownership, HA signer and feed recovery, and a first-deployment rehearsal for `awebai.org`. Verify client protocol selection, the per-process subscriber and readiness, and the exact DNS/controller bootstrap. Keep the frozen service and registry on their released contract until the full `aweb.ai` move. Hand off the full service inventory and transfer rehearsal for the migration immediately after E5. |
-| Scale and integration gate | Reproducible history, traffic, change, partition and recovery fixtures with stated hardware and measured limits. Run the E5 boundary against the real new registry and the pinned released registry and server. Test both standing and frozen serving paths with the same client and verify issuance/feed loss, discovery failure and issuer isolation. Qualify the single `aweb.ai` cutover separately with §7's independent source-cut verification, full negative inventory check, source retirement and mail controls. |
+| Federation | Native interoperability between real standing issuers, exact trust bootstrap and recovery, and no request-time authority fetch. At E5, prove both directions refuse across the frozen boundary with no effect. Check retired, unknown and current addresses, including opt-in disclosure of a verified replacement. |
+| Pilot, clients and registry deployment | Separate digest-pinned registry deploy at `https://api.awdid.org` in `servers`, named operations ownership, HA signer and feed recovery, and a first-deployment rehearsal for `awebai.org`. Verify client protocol selection, the per-process subscriber and readiness, and the exact DNS/controller bootstrap. Keep existing customers on the frozen service and registry. Verify cohort client readiness and a typed upgrade refusal with a discoverable upgrade path from the pinned released client. |
+| Scale and integration gate | Reproducible history, traffic, change, partition and recovery fixtures with stated hardware and measured limits. Run the E5 boundary against the real new registry and the pinned released registry and server. Test both standing and frozen serving paths with the same client and verify issuance/feed loss, discovery failure and issuer isolation. Qualify the first cohort cutover separately with §7's independent source-cut verification, exclusion and abort controls, full negative inventory check, source retirement and mail controls. |
