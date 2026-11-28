@@ -453,10 +453,16 @@ The registry's operational proof, barrier and recovery keys have separate
 custody and access policy. The domain controller selects the issuer.
 The registry authority publishes and rotates its purpose keys.
 They confer no controller or membership
-authority. The pilot's custody plan keeps the `awebai.org` root and team
-controller keys outside the hosted service. Bootstrap the first chain at
+authority. Under Juan's 2026-11-28 decision, the background worker alone
+holds the `awebai.org` namespace controller key in its environment. The
+coordinator's pilot plan places the admin and open team keys in that same
+worker environment, pending Juan's review. Bootstrap the first chain at
 the new registry with those authorities, using the exact staged admin
-identity and team binding. Private reads retain their existing authorization.
+identity and team binding. The operator watches the public feed for
+unexpected changes to the namespace controller and both team keys and
+retains DNS recovery authority as described in
+[the issuer custody design](hardware-backed-personhood.md#81-settled).
+Private reads retain their existing authorization.
 The native pilot verifier needs no same-operator token for revocation or
 certificate status. Any other permitted use keeps its exact-origin scope.
 
