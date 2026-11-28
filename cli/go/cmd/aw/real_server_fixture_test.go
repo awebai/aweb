@@ -121,6 +121,14 @@ func newRealCommandWorldWithRecipientFault(t *testing.T, recipientHome string, l
 			t.Fatal(err)
 		}
 	}
+	// Registered before the stack so it runs after the stack stops: this
+	// process forgets the server's request compression, so a later test server
+	// given the same loopback port is probed afresh.
+	t.Cleanup(func() {
+		if world.Stack.ServerURL != "" {
+			awid.ForgetRequestCompression(world.Stack.ServerURL)
+		}
+	})
 	world.Stack = realCommandStack(t, ctx, authority)
 	world.Registry = trustedClient(t, world.Stack.RegistryURL, nil)
 	if _, err := world.Registry.RegisterNamespaceAt(ctx, world.Stack.RegistryURL, world.Domain, didOf(world.NamespaceKey), world.NamespaceKey); err != nil {
