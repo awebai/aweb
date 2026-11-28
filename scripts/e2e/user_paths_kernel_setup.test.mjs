@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync, symlinkSync, readFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
+import { setTimeout as sleep } from "node:timers/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
@@ -33,25 +35,33 @@ test("passive terminal cleanup retains its socket root on child failure", () => 
   }
 });
 
-test("passive terminal cleanup waits for the panes the stopped server leaves running", () => {
+test("passive terminal cleanup waits for the panes the stopped server leaves running", async () => {
   // kill-server returns before the panes exit. A pane's shell that writes its
   // history as it exits must not race the root's removal.
   const scratch = mkdtempSync("/tmp/kpw-");
-  const root = join(scratch, "root"), marker = join(scratch, "pane-last-write"), ready = join(scratch, "pane-ready");
+  const root = join(scratch, "root"), marker = join(scratch, "pane-last-write"), ready = join(scratch, "pane-ready"), pidFile = join(scratch, "pane-pid");
   mkdirSync(root);
-  let pid = 0;
+  // The pane is not the test's child, as a real pane is the server's: a
+  // supervisor, the test's own child, starts it and waits for it, so its pid
+  // stays the pane's until the supervisor reaps it. The pane says it is ready
+  // only once its SIGHUP handler is installed, so the signal cannot arrive
+  // first. On failure the test stops the supervisor, which ends its pane
+  // through the child handle; a reaped pane is never signalled.
+  const paneScript = `process.on("SIGHUP", () => setTimeout(() => { require("fs").writeFileSync(${JSON.stringify(marker)}, "history"); process.exit(0); }, 300));require("fs").writeFileSync(${JSON.stringify(ready)}, "");setInterval(() => {}, 1000)`;
+  const supervisor = spawn(process.execPath, ["-e", `
+const { spawn } = require("node:child_process");
+const pane = spawn(process.execPath, ["-e", ${JSON.stringify(paneScript)}], { stdio: "ignore" });
+require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(pane.pid));
+pane.on("exit", () => process.exit(0));
+process.on("SIGTERM", () => pane.kill("SIGKILL"));
+`], { stdio: "ignore" });
+  const supervised = once(supervisor, "exit");
   try {
-    // The pane is not the test's child, as a real pane is the server's. It
-    // says it is ready only once its SIGHUP handler is installed, so the
-    // signal cannot arrive first.
-    const pane = spawnSync("/bin/sh", ["-c", `nohup ${JSON.stringify(process.execPath)} -e ${JSON.stringify(
-      `process.on("SIGHUP", () => setTimeout(() => { require("fs").writeFileSync(${JSON.stringify(marker)}, "history"); process.exit(0); }, 300));require("fs").writeFileSync(${JSON.stringify(ready)}, "");setInterval(() => {}, 1000)`,
-    )} >/dev/null 2>&1 & echo $!`], { encoding: "utf8" });
-    pid = Number(pane.stdout.trim());
-    assert.ok(Number.isInteger(pid) && pid > 0, "the pane started");
     const readyBy = Date.now() + 10000;
-    while (!existsSync(ready) && Date.now() < readyBy) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+    while (!(existsSync(ready) && existsSync(pidFile)) && Date.now() < readyBy) await sleep(20);
     assert.equal(existsSync(ready), true, "the pane installed its SIGHUP handler");
+    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    assert.ok(Number.isInteger(pid) && pid > 0, "the pane started");
     const tmuxBinary = join(scratch, "tmux.mjs");
     writeFileSync(tmuxBinary, `#!${process.execPath}
 const args = process.argv.slice(2).join(" ");
@@ -62,8 +72,14 @@ process.exit(1);
     cleanupPassiveTerminal({ root, tmuxBinary, env: { PATH: process.env.PATH } });
     assert.equal(existsSync(marker), true, "cleanup returns only after the pane's last write");
     assert.equal(existsSync(root), false, "the root is removed after the pane exits");
+    // The pane exited on its own: its supervisor reaps it and ends.
+    const [code] = await Promise.race([supervised, sleep(10000).then(() => ["timeout"])]);
+    assert.equal(code, 0, "the supervisor saw its pane exit");
   } finally {
-    if (pid > 0) { try { process.kill(pid, "SIGKILL"); } catch {} }
+    if (supervisor.exitCode === null && supervisor.signalCode === null) {
+      supervisor.kill("SIGTERM");
+      await supervised;
+    }
     rmSync(scratch, { recursive: true, force: true });
   }
 });
