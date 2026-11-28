@@ -21,9 +21,10 @@
     `team.server.selected_role_matches_local` checks.
   - New requests carry no role. An API-key init that a released aw saved part
     way resumes with the role it saved, since the hosted init binds it.
-  - The Go library drops its team roles API (`ActiveTeamRoles`, the other
+  - The Go library keeps its team roles API (`ActiveTeamRoles`, the other
     `*TeamRoles` calls and their types) and the role fields of
-    `PatchCurrentWorkspaceRequest` and `PatchCurrentWorkspaceResponse`.
+    `PatchCurrentWorkspaceRequest` and `PatchCurrentWorkspaceResponse`, since
+    the server routes stay. aw no longer calls or fills them.
   - `roles` and `role-name` stay reserved app ids, since released aw carries
     those commands.
   - The resource packs drop their role playbooks. The server's `/v1/roles`
