@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-27
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-release-flakes (server-v1.27.56 gate flakes).
+* **Creation**: lessons [reproduce an ordering flake by stress, not a gate](/aweb-expert/lessons/reproduce-an-ordering-flake-by-stress-not-a-gate.md) and [a refusal test runs only the setup its refusal reads](/aweb-expert/lessons/a-refusal-test-runs-only-the-setup-its-refusal-reads.md).
+* **Update**: [elapsed time is a test input](/aweb-expert/lessons/elapsed-time-is-a-test-input.md) gains its limit for ordering bugs, where injected delay cannot pass a correct fix.
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
