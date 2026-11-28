@@ -1706,6 +1706,11 @@ func reservedRootCommandNames() map[string]bool {
 	rootCmd.InitDefaultCompletionCmd()
 	reserved := map[string]bool{
 		"help": true,
+		// Released aw binaries still carry these commands, so an app with one
+		// of these ids would collide with that command for their users.
+		"agent":     true,
+		"blueprint": true,
+		"run":       true,
 	}
 	for _, cmd := range rootCmd.Commands() {
 		if cmd == nil {

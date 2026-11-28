@@ -43,6 +43,17 @@ func TestReservedAppIDsArtifactMatchesLiveCobraReservedNames(t *testing.T) {
 	}
 }
 
+// Released aw binaries still carry `aw agent`, `aw blueprint` and `aw run`, so
+// an app with one of those ids would collide with that command for their users.
+func TestReservedAppIDsKeepTheCommandNamesOfReleasedAw(t *testing.T) {
+	reserved := reservedRootCommandNames()
+	for _, name := range []string{"agent", "blueprint", "run"} {
+		if !reserved[name] {
+			t.Errorf("app id %q is not reserved", name)
+		}
+	}
+}
+
 func TestPluginReservedNamesCommandJSON(t *testing.T) {
 	t.Parallel()
 

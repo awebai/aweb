@@ -285,8 +285,9 @@ and its `/state`/`/edit`/`/preview`, `/llms.txt`, `/skills/`, `/health`) are
 - The dispatcher derives `aud`+`path` from the absolute target *it* constructs
   from the granted origin; a manifest cannot override host/scheme.
 - Reserved root command **names and aliases** cannot be an `app.id`
-  (install-time rejection). Tools live inside that app namespace: root names
-  such as `run` or `introspect` are valid tool names. Only commands and aliases
+  (install-time rejection). `agent`, `blueprint` and `run` are reserved too,
+  because released `aw` binaries still carry them as commands. Tools live
+  inside that app namespace: root names such as `run` or `introspect` are valid tool names. Only commands and aliases
   owned by the app dispatcher are reserved there: currently `help`, `--help`
   and `-h`. Version 2 also rejects duplicate tool names within an app.
 

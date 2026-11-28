@@ -12,8 +12,9 @@
   `profile_source` fields of its JSON output. `aw plugin library materialize`
   no longer writes the returned profile into a local home; like every other
   plugin verb, it prints the Library's answer. aw no longer installs
-  `~/.config/aw/guard-bin/tmux`. The reserved app ids lose `agent`, `blueprint`
-  and `run`. Two exports leave the documented Go library: the package
+  `~/.config/aw/guard-bin/tmux`. The app ids `agent`, `blueprint` and `run`
+  stay reserved, since released `aw` binaries still carry those commands. Two
+  exports leave the documented Go library: the package
   `github.com/awebai/aw/run` and `awconfig.DefaultRunConfigPath` (the path of
   `aw run`'s defaults file). The documented library is now `aw`, `awid`,
   `awconfig` and `chat`, and no other export changes. Before removing them we
