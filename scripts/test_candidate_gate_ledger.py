@@ -59,7 +59,9 @@ def source_checks() -> list[str]:
     suite = (ROOT / "scripts" / "candidate-suite.sh").read_text(encoding="utf-8")
     targets = re.findall(r"^\s*run ([A-Za-z0-9_.-]+)\s*$", suite, flags=re.MULTILINE)
     # The unit suites the suite lists by name, besides each Naapp package.
-    for names in re.findall(r"^\s*printf '%s\\n' ([A-Za-z0-9_. -]+)$", suite, flags=re.MULTILINE):
+    for names in re.findall(
+        r"^\s*printf '%s\\n' ([A-Za-z0-9_. -]+)$", suite, flags=re.MULTILINE
+    ):
         targets += names.split()
     return [target for target in dict.fromkeys(targets) if target not in REAL_RECIPES]
 
@@ -92,8 +94,13 @@ class CompleteGateVerdictTests(unittest.TestCase):
             else:
                 env.pop("CANDIDATE_HOST_PORT_STATUS", None)
             result = run(
-                ROOT, "bash", "scripts/candidate-suite.sh", *selection.split(" ", 1)
-                if selection.startswith("--") else (selection,), env=env
+                ROOT,
+                "bash",
+                "scripts/candidate-suite.sh",
+                *selection.split(" ", 1)
+                if selection.startswith("--")
+                else (selection,),
+                env=env,
             )
             summary = root / "summary.tsv"
             rows = {}
@@ -168,7 +175,7 @@ class CompleteGateVerdictTests(unittest.TestCase):
             make.write_text(
                 "#!/bin/sh\n"
                 'if [ "$1" = check-product-table-writes ]; then\n'
-                f'  CANDIDATE_LOG_DIR={nested} bash {ROOT}/scripts/candidate-suite.sh static\n'
+                f"  CANDIDATE_LOG_DIR={nested} bash {ROOT}/scripts/candidate-suite.sh static\n"
                 "fi\n"
             )
             make.chmod(0o700)
@@ -188,7 +195,10 @@ class CompleteGateVerdictTests(unittest.TestCase):
                 env=env,
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            stages = {line.split("\t")[0].split("/")[0] for line in lane.read_text().splitlines()}
+            stages = {
+                line.split("\t")[0].split("/")[0]
+                for line in lane.read_text().splitlines()
+            }
             self.assertEqual(stages, {"checks"})
             self.assertIn("static\tPASSED", (nested / "summary.tsv").read_text())
 
@@ -209,7 +219,9 @@ class CompleteGateVerdictTests(unittest.TestCase):
                 CANDIDATE_LOG_DIR=str(root),
                 BUILDX_BUILDER="the-run-builder",
             )
-            result = run(ROOT, "bash", "scripts/candidate-suite.sh", "artifacts", env=env)
+            result = run(
+                ROOT, "bash", "scripts/candidate-suite.sh", "artifacts", env=env
+            )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertNotIn("prune", calls.read_text() if calls.exists() else "")
             self.assertNotIn("prune-builder", (root / "summary.tsv").read_text())
@@ -276,7 +288,7 @@ def verify_same_tree_commit_cache(
     # same: the product-table check has a different input, so every stage runs.
     candidate = checked(repo, "git", "rev-parse", "HEAD")
     checked(repo, "git", "checkout", "-q", "--detach")
-    ceilings = repo / "tools/product-table-write-ceilings.json"
+    ceilings = repo / "scripts/product-table-write-ceilings.json"
     ceilings.parent.mkdir(exist_ok=True)
     ceilings.write_text('{"schema_version":1,"nonliteral_files":{},"files":{}}\n')
     checked(repo, "git", "add", str(ceilings.relative_to(repo)))
@@ -479,8 +491,14 @@ candidate-gate:
             for line in (run_logs / "owned-resources.tsv").read_text().splitlines()
             if line.startswith("builder\t")
         ]
-        if len(builders) != 1 or len(owned) != 1 or owned[0].split("\t")[1] not in builders:
-            raise AssertionError(f"lanes must share the run's one builder: {builders} {owned}")
+        if (
+            len(builders) != 1
+            or len(owned) != 1
+            or owned[0].split("\t")[1] not in builders
+        ):
+            raise AssertionError(
+                f"lanes must share the run's one builder: {builders} {owned}"
+            )
         rows = ledger.read_text().splitlines()
         assert {row[1] for row in stage_rows(rows)} == set(STAGES.split())
         assert all(row[2] == "passed" for row in stage_rows(rows))
@@ -552,9 +570,15 @@ candidate-gate:
             AWEB_CANDIDATE_STAGES="checks user-paths unit",
         )
         small_run = run(repo, *gate, env=small)
-        (evidence / "small-budget-lanes.log").write_text(small_run.stdout + small_run.stderr)
-        assert small_run.returncode == 0, f"small-budget-lanes: see {evidence}/small-budget-lanes.log"
-        small_logs = Path(re.findall(r"logs: (\S+)", small_run.stdout + small_run.stderr)[-1])
+        (evidence / "small-budget-lanes.log").write_text(
+            small_run.stdout + small_run.stderr
+        )
+        assert small_run.returncode == 0, (
+            f"small-budget-lanes: see {evidence}/small-budget-lanes.log"
+        )
+        small_logs = Path(
+            re.findall(r"logs: (\S+)", small_run.stdout + small_run.stderr)[-1]
+        )
         budget_rows = (small_logs / "budget.tsv").read_text()
         assert "lanes_concurrent" not in budget_rows, budget_rows
         recorded = {}
@@ -611,17 +635,26 @@ candidate-gate:
             raise AssertionError(f"static must pass: {verdicts}")
         if verdicts.get("user-paths", "passed") != "passed":
             raise AssertionError(f"user-paths has no failure: {verdicts}")
-        failed_stages = {s for s, v in verdicts.items() if "/" not in s and v == "failed"}
+        failed_stages = {
+            s for s, v in verdicts.items() if "/" not in s and v == "failed"
+        }
         if not failed_stages or not failed_stages <= set(failing_target):
             raise AssertionError(f"failed stages {failed_stages}: {verdicts}")
         for stage in failed_stages:
             if verdicts.get(failing_target[stage]) != "failed":
                 raise AssertionError(f"{stage} lacks its failed target: {verdicts}")
         for stage in STAGES.split()[1:]:
-            if stage not in verdicts and f"candidate: {stage} STOPPED" not in failed_output:
-                raise AssertionError(f"{stage} neither recorded nor STOPPED: {failed_output}")
+            if (
+                stage not in verdicts
+                and f"candidate: {stage} STOPPED" not in failed_output
+            ):
+                raise AssertionError(
+                    f"{stage} neither recorded nor STOPPED: {failed_output}"
+                )
         if "integration" in failed_stages:
-            skipped = next(row for row in failed_rows if row[1] == "integration/e2e-naapp")
+            skipped = next(
+                row for row in failed_rows if row[1] == "integration/e2e-naapp"
+            )
             if skipped[2] != "skipped" or "build FAILED" not in skipped[9]:
                 raise AssertionError(f"skip has no build failure detail: {skipped}")
         refused = invoke("refused-tree", *gate, stages="integration", success=False)
