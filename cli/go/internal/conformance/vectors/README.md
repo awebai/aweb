@@ -2,8 +2,9 @@
 
 These vectors define byte-level contracts shared by independent aweb consumers.
 
-Existing AWID/trust vectors cover signing, stable IDs, rotation announcements,
-and team-auth envelopes.
+`team-auth-envelope-v2.json` is the embedded copy of the AWID team-auth vector;
+the signing, stable-ID and rotation-announcement vectors live in
+[`docs/vectors/`](../../../../../docs/vectors/).
 
 ## `app-emit-credential-v1.json`
 

@@ -121,9 +121,8 @@ ceiling:
   monotonic resume cursor. This is a claim about clients handling the list,
   not about the list staying small.
 - **Session grants fit only pure messaging workers — and this is the
-  resident-identities design, not an accident.** The prior product design
-  (strategy/product/2026-08-12-resident-identities-and-session-grants.md)
-  defines the model: one durable resident identity per role is rostered and
+  resident-identities design, not an accident.** The resident-identities
+  product design defines the model: one durable resident identity per role is rostered and
   (under this design) AWID-anchored; concurrent session grants act *as* it;
   external parties see one principal and worker provenance stays private;
   grants make no fencing claim — fencing belongs to the managed-mode

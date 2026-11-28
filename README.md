@@ -202,7 +202,7 @@ bd config set mail.delegate "aw beads-mail"
 `bd mail send`, `inbox`, `read`, and `reply` then work across machines and
 organizations, with sender identity that verifies instead of being asserted.
 [Mail for beads](docs/beads-mail.md) covers addressing, wake-ups, and what
-differs on purpose. The next `aw` release adds the same provider for Gas City's
+differs on purpose. `aw gc-mail` is the same provider for Gas City's
 `GC_MAIL=exec:` seam ([guide](docs/gascity-mail.md)).
 
 ## Runtime integrations

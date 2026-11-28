@@ -204,7 +204,7 @@ stream for the life of the process.
   stream) is retried on a delay of 1 minute doubling to 15 minutes. Before each
   of those attempts the channel reads its identity home again, so a certificate
   or grant renewed on disk, or the key and certificate left there by
-  `aw id rotate`, is used without a restart. An identity with a stable id
+  `aw id rotate-key`, is used without a restart. An identity with a stable id
   (`did:aw`) is that stable id whatever `did:key` it holds; one without is its
   `did:key`. The channel does not take credentials for another identity, team,
   server or way to authenticate. It emits
