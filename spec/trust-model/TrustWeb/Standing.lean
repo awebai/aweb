@@ -89,22 +89,25 @@ structure Verifier where
   now : Nat
   consumed : List Nat
 
-/-- A request: who signed it, the fact it relies on, and its digest. -/
+/-- A request: who signed it, the fact it relies on, its digest, and whether
+it creates authority (a grant mint, a connect, an app install, an approval). -/
 structure Request where
   signer : Key
   fact : Fact
   digest : Nat
+  creates : Bool
 
 /-- An entry the verifier has applied, after the statement's cut, retires one
 of the statement's handles. -/
 def Defeated (R : Registry) (v : Verifier) (st : Statement) : Prop :=
   ∃ j, st.cut < j ∧ j ≤ v.applied ∧ ∃ x, x ∈ R.feed j ∧ x ∈ st.deps
 
-/-- An ordinary statement fits any request; current evidence fits only the
-request with its digest, and only while its nonce is unused. -/
+/-- An ordinary statement fits only a request that creates no authority;
+current evidence fits only a request that creates authority, with the
+evidence's digest, while its nonce is unused. -/
 def Purpose.Fits (v : Verifier) (r : Request) : Purpose → Prop
-  | .ordinary => True
-  | .current d n => d = r.digest ∧ n ∉ v.consumed
+  | .ordinary => r.creates = false
+  | .current d n => r.creates = true ∧ d = r.digest ∧ n ∉ v.consumed
 
 /-- The verifier admits `r` on `st`: the statement is for the request's fact,
 the request is signed by the fact's subject, the verifier has applied the
@@ -131,6 +134,11 @@ def FeedComplete (R : Registry) : Prop :=
 /-- The time premise: a later cut never committed at an earlier time. -/
 def TimeMonotone (R : Registry) : Prop :=
   ∀ i j, i ≤ j → R.time i ≤ R.time j
+
+/-- The registry issued current evidence `st` fresh, at its head `head`: it
+issued `st`, `st` is current evidence, and `st`'s cut is `head`. -/
+def IssuedAtHead (R : Registry) (b : Bounds) (head : Nat) (st : Statement) : Prop :=
+  Issued R b st ∧ (∃ d n, st.purpose = .current d n) ∧ st.cut = head
 
 /-- The barrier premise: the verifier's last applied barrier was observed no
 later than the change after its applied cut committed. -/
@@ -211,14 +219,16 @@ theorem removal_bound {R : Registry} {b : Bounds} {v : Verifier} {r : Request}
     have h2 := htime _ _ h1
     exact stale_feed_not_admitted (by unfold BarrierBefore at hbar; omega)
 
-/-- Current evidence is bound to one exact request: it is admitted only for the
-request with its digest. -/
-theorem current_needs_its_request {R : Registry} {b : Bounds} {v : Verifier}
-    {r : Request} {st : Statement} {d n : Nat} (hp : st.purpose = .current d n)
-    (ha : Admits R b v r st) : r.digest = d := by
+/-- Authority creation needs current evidence: a request that creates authority
+is admitted only on current evidence with the request's digest, and never on
+ordinary standing. -/
+theorem creation_needs_current_evidence {R : Registry} {b : Bounds} {v : Verifier}
+    {r : Request} {st : Statement} (hc : r.creates = true) (ha : Admits R b v r st) :
+    ∃ d n, st.purpose = .current d n ∧ r.digest = d := by
   have h := ha.2.2.2.2.2.2
-  rw [hp] at h
-  exact h.1.symm
+  cases hp : st.purpose with
+  | ordinary => rw [hp] at h; simp [Purpose.Fits, hc] at h
+  | current d n => rw [hp] at h; exact ⟨d, n, rfl, h.2.1.symm⟩
 
 /-- Current evidence is used once: after the effect it admitted, the same
 evidence is admitted for no request. -/
@@ -228,21 +238,36 @@ theorem current_used_once {R : Registry} {b : Bounds} {v : Verifier} {r' : Reque
   intro ha
   have h := ha.2.2.2.2.2.2
   rw [hp] at h
-  exact h.2 (by simp [Purpose.consume])
+  exact h.2.2 (by simp [Purpose.consume])
 
-/-- Authority creation checks fresh: current evidence issued at the registry's
-cut `head` needs its fact to hold there, so a change at or before `head` that
-ended the fact (and nothing after it restored) leaves no evidence to issue. -/
-theorem current_not_issued_where_fact_fails {R : Registry} {b : Bounds} {st : Statement}
-    {head : Nat} (hcut : st.cut = head) (hend : ¬ st.fact.Holds (R.record head)) :
-    ¬ Issued R b st :=
-  fun h => hend (hcut ▸ h.1)
+/-- Authority creation checks fresh: a request that creates authority, admitted
+on evidence the registry issued at its head, relies on a fact that held at that
+head, and is admitted only before the head's time plus the evidence lifetime. -/
+theorem creation_admitted_fresh {R : Registry} {b : Bounds} {v : Verifier}
+    {r : Request} {st : Statement} {head : Nat} (hi : IssuedAtHead R b head st)
+    (ha : Admits R b v r st) :
+    r.fact.Holds (R.record head) ∧ v.now < R.time head + b.current := by
+  obtain ⟨⟨hh, -, hexp⟩, ⟨d, n, hp⟩, hcut⟩ := hi
+  refine ⟨ha.1 ▸ hcut ▸ hh, ?_⟩
+  have := ha.2.2.2.1
+  rw [hp] at hexp
+  simp only [Purpose.life] at hexp
+  rw [← hcut]
+  omega
+
+/-- A fresh request at a head where its fact does not hold gets no evidence. -/
+theorem no_evidence_at_failed_head {R : Registry} {b : Bounds} {st : Statement}
+    {head : Nat} (hend : ¬ st.fact.Holds (R.record head)) : ¬ IssuedAtHead R b head st :=
+  fun ⟨h, _, hcut⟩ => hend (hcut ▸ h.1)
 
 /-! ## Paired cases
 
-One registry where identity 7 is in team 1 of organisation 0 at cut 0, is
-removed at cut 1, and is back at cut 2 under a new handle. Each refused case
-below has an admitted neighbour one change away. -/
+One registry. Identity 7 is in team 1 of organisation 0 at cut 0 (time 0). It
+is removed at cut 1 (time 4), which retires handle 100, and is back at cut 2
+(time 6) under handle 101. Cut 3 (time 10003) changes something else and
+retires handle 555. Every removal falls inside the lifetimes, so the refused
+cases are unexpired and refused by the feed. Each refused case has an
+admitted neighbour one change away. -/
 
 /-- The record with nothing in it. -/
 def emptyRecord : State := ⟨[], [], [], [], [], [], [], [], [], []⟩
@@ -272,14 +297,14 @@ theorem exampleFact_holds : exampleFact.Holds memberRecord := by
   refine ⟨by simp [HasTeamCert, memberRecord], Or.inl ?_⟩
   simp [Registered, memberRecord, emptyRecord]
 
-/-- The example registry: identity 7 is a member at cut 0, removed at cut 1
-(which retires handle 100) and back at cut 2 under handle 101. Cut 0 committed
-at time 0, and every later cut at time 2000. -/
+/-- The example registry: cut 1 is the record with nothing in it, every other
+cut is `memberRecord`; times 0, 4, 6, then `n + 10000`; handle 100 before
+cut 2 and 101 from it; the feed retires 100 at cut 1 and 555 at cut 3. -/
 def exampleRegistry : Registry where
   record := fun n => if n = 1 then emptyRecord else memberRecord
-  time := fun n => if n = 0 then 0 else 2000
+  time := fun n => if n = 0 then 0 else if n = 1 then 4 else if n = 2 then 6 else n + 10000
   handles := fun n _ => if n < 2 then [100] else [101]
-  feed := fun j => if j = 1 then [100] else []
+  feed := fun j => if j = 1 then [100] else if j = 3 then [555] else []
 
 /-- The example's bounds: 1800 for a statement, 10 for current evidence, 30
 for the feed. -/
@@ -302,16 +327,20 @@ theorem exampleRegistry_feedComplete : FeedComplete exampleRegistry := by
 theorem exampleRegistry_timeMonotone : TimeMonotone exampleRegistry := by
   intro i j hij
   simp only [exampleRegistry]
-  split <;> split <;> omega
+  split <;> split <;> (try split) <;> (try split) <;> (try split) <;> (try split) <;> omega
 
 /-- The example's statement: identity 7's team standing at cut 0, until 1800. -/
 def exampleStatement : Statement := ⟨exampleFact, 0, 1800, [100], .ordinary⟩
 
-/-- The statement issued again after identity 7 is back, at cut 2. -/
-def exampleStatementAgain : Statement := ⟨exampleFact, 2, 3800, [101], .ordinary⟩
+/-- The statement issued again after identity 7 is back, at cut 2, until 1806. -/
+def exampleStatementAgain : Statement := ⟨exampleFact, 2, 1806, [101], .ordinary⟩
 
-/-- A request signed by 7 that relies on the example's fact. -/
-def exampleRequest : Request := ⟨7, exampleFact, 42⟩
+/-- A request signed by 7 that relies on the example's fact and creates no
+authority. -/
+def exampleRequest : Request := ⟨7, exampleFact, 42, false⟩
+
+/-- The same request, creating authority. -/
+def exampleCreation : Request := ⟨7, exampleFact, 42, true⟩
 
 theorem exampleStatement_issued : Issued exampleRegistry exampleBounds exampleStatement :=
   ⟨by simpa [exampleRegistry, exampleStatement] using exampleFact_holds,
@@ -324,114 +353,151 @@ theorem exampleStatementAgain_issued :
    by simp [exampleRegistry, exampleStatementAgain],
    by simp [exampleRegistry, exampleStatementAgain, exampleBounds, Purpose.life]⟩
 
-/-- Before the removal reaches it: a verifier that has applied only cut 0
-admits the statement, although 7 was removed at cut 1. This is the window the
-Design allows; it closes by `removal_bound`. -/
-theorem admitted_before_removal_reaches_verifier :
-    Admits exampleRegistry exampleBounds ⟨0, 0, 5, []⟩ exampleRequest exampleStatement := by
-  refine ⟨rfl, rfl, by decide, by decide, by decide, ?_, trivial⟩
-  rintro ⟨j, hj1, hj2, -⟩
-  simp [exampleStatement] at hj1 hj2
-  omega
+/-- A statement is not defeated if no feed entry after its cut, up to the
+verifier's applied cut, retires one of its handles. -/
+theorem example_not_defeated {v : Verifier} {st : Statement}
+    (h : ∀ j, st.cut < j → j ≤ v.applied → ∀ x, x ∈ exampleRegistry.feed j → x ∉ st.deps) :
+    ¬ Defeated exampleRegistry v st :=
+  fun ⟨j, hj1, hj2, x, hx, hd⟩ => h j hj1 hj2 x hx hd
 
-/-- After the verifier applies the removal, the same statement is refused,
-on its first presentation there as on any other. -/
+/-- After the removal committed, before it reaches the verifier: a verifier at
+cut 0 admits the unexpired statement at time 7, although 7 was removed at cut
+1, at time 4. This is the window the Design allows, and the removal bound
+closes it. -/
+theorem admitted_before_removal_reaches_verifier :
+    Admits exampleRegistry exampleBounds ⟨0, 4, 7, []⟩ exampleRequest exampleStatement :=
+  ⟨rfl, rfl, by decide, by decide, by decide,
+    example_not_defeated (fun j h1 h2 => by simp [exampleStatement] at h1 h2; omega), rfl⟩
+
+/-- At the same time, a verifier that has applied the removal refuses the same
+statement, unexpired and with a fresh barrier, on its first presentation there
+as on any other. -/
 theorem refused_after_removal_applied :
-    ¬ Admits exampleRegistry exampleBounds ⟨1, 2000, 2001, []⟩ exampleRequest exampleStatement :=
+    ¬ Admits exampleRegistry exampleBounds ⟨1, 4, 7, []⟩ exampleRequest exampleStatement :=
   defeated_not_admitted ⟨1, by decide, by decide, 100, by simp [exampleRegistry],
     by simp [exampleStatement]⟩
 
-/-- A verifier that has not applied the removal refuses once the feed bound
-has passed since it committed. -/
+/-- The removal bound: a verifier still at cut 0, with the latest barrier the
+premise allows, admits at time 33 and refuses at time 34, the feed bound after
+the removal, while the statement is unexpired. -/
+theorem admitted_just_before_removal_bound :
+    Admits exampleRegistry exampleBounds ⟨0, 4, 33, []⟩ exampleRequest exampleStatement :=
+  ⟨rfl, rfl, by decide, by decide, by decide,
+    example_not_defeated (fun j h1 h2 => by simp [exampleStatement] at h1 h2; omega), rfl⟩
+
 theorem refused_at_removal_bound :
-    ¬ Admits exampleRegistry exampleBounds ⟨0, 0, 2030, []⟩ exampleRequest exampleStatement :=
+    ¬ Admits exampleRegistry exampleBounds ⟨0, 4, 34, []⟩ exampleRequest exampleStatement :=
   removal_bound (m := 1) exampleRegistry_feedComplete exampleRegistry_timeMonotone
     (by simp [BarrierBefore, exampleRegistry]) exampleStatement_issued (by decide)
     (by simpa [exampleRegistry, exampleStatement] using Fact.not_holds_empty exampleFact)
     (by simp [exampleRegistry, exampleBounds])
 
-/-- A lost feed: with its last barrier 30 old, the verifier refuses the
-statement it admitted at 5. -/
+/-- A lost feed: with its last barrier at time 0, the verifier refuses at time
+30 the unexpired statement it admits at time 7 with a barrier at time 4. -/
 theorem refused_on_stale_feed :
     ¬ Admits exampleRegistry exampleBounds ⟨0, 0, 30, []⟩ exampleRequest exampleStatement :=
   stale_feed_not_admitted (by simp [exampleBounds])
 
-/-- The expiry boundary: admitted at 1799, refused at 1800. -/
+/-- The expiry boundary: the statement from cut 2, with expiry 1806, is admitted
+at time 1805 and refused at time 1806. -/
 theorem admitted_just_before_expiry :
-    Admits exampleRegistry exampleBounds ⟨0, 1790, 1799, []⟩ exampleRequest exampleStatement := by
-  refine ⟨rfl, rfl, by decide, by decide, by decide, ?_, trivial⟩
-  rintro ⟨j, hj1, hj2, -⟩
-  simp [exampleStatement] at hj1 hj2
-  omega
+    Admits exampleRegistry exampleBounds ⟨2, 1790, 1805, []⟩ exampleRequest exampleStatementAgain :=
+  ⟨rfl, rfl, by decide, by decide, by decide,
+    example_not_defeated (fun j h1 h2 => by simp [exampleStatementAgain] at h1 h2; omega), rfl⟩
 
 theorem refused_at_expiry :
-    ¬ Admits exampleRegistry exampleBounds ⟨0, 1790, 1800, []⟩ exampleRequest exampleStatement :=
-  not_admitted_at_expiry (by simp [exampleStatement])
+    ¬ Admits exampleRegistry exampleBounds ⟨2, 1790, 1806, []⟩ exampleRequest exampleStatementAgain :=
+  not_admitted_at_expiry (by simp [exampleStatementAgain])
 
-/-- A proof ahead of the verifier: the statement from cut 2 is refused by a
-verifier at cut 1. -/
+/-- A statement ahead of the verifier: the statement from cut 2 is refused by a
+verifier at cut 1, and admitted at cut 2. -/
 theorem refused_when_ahead :
-    ¬ Admits exampleRegistry exampleBounds ⟨1, 2000, 2001, []⟩ exampleRequest exampleStatementAgain :=
+    ¬ Admits exampleRegistry exampleBounds ⟨1, 4, 7, []⟩ exampleRequest exampleStatementAgain :=
   ahead_not_admitted (by simp [exampleStatementAgain])
 
-/-- After re-admission: a statement issued at cut 2 is admitted by a verifier at
-cut 2, while the one from cut 0 stays refused there. -/
+/-- Re-admission: at cut 2 and time 8, the statement issued at cut 2 is
+admitted, and the one from cut 0, unexpired, is refused by its retired
+handle. -/
 theorem readmitted_statement_admitted_old_refused :
-    Admits exampleRegistry exampleBounds ⟨2, 2000, 2001, []⟩ exampleRequest exampleStatementAgain ∧
-      ¬ Admits exampleRegistry exampleBounds ⟨2, 2000, 2001, []⟩ exampleRequest exampleStatement := by
-  refine ⟨⟨rfl, rfl, by decide, by decide, by decide, ?_, trivial⟩,
-    defeated_not_admitted ⟨1, by decide, by decide, 100, by simp [exampleRegistry],
+    Admits exampleRegistry exampleBounds ⟨2, 6, 8, []⟩ exampleRequest exampleStatementAgain ∧
+      ¬ Admits exampleRegistry exampleBounds ⟨2, 6, 8, []⟩ exampleRequest exampleStatement :=
+  ⟨⟨rfl, rfl, by decide, by decide, by decide,
+    example_not_defeated (fun j h1 h2 => by simp [exampleStatementAgain] at h1 h2; omega), rfl⟩,
+   defeated_not_admitted ⟨1, by decide, by decide, 100, by simp [exampleRegistry],
       by simp [exampleStatement]⟩⟩
-  rintro ⟨j, hj1, hj2, -⟩
-  simp [exampleStatementAgain] at hj1 hj2
-  omega
+
+/-- Continuity: cut 3 changes something else and retires another handle; the
+statement from cut 2 stays admitted by a verifier that has applied cut 3. -/
+theorem continuity_keeps_statement :
+    Admits exampleRegistry exampleBounds ⟨3, 10003, 10, []⟩ exampleRequest exampleStatementAgain :=
+  ⟨rfl, rfl, by decide, by decide, by decide,
+    example_not_defeated (fun j h1 h2 x hx => by
+      simp [exampleStatementAgain] at h1 h2
+      have : j = 3 := by omega
+      subst this
+      simp [exampleRegistry] at hx
+      simp [hx, exampleStatementAgain]), rfl⟩
 
 /-- The example's current evidence: for the request with digest 42, nonce 9,
 issued at cut 0 with lifetime 10. -/
 def exampleEvidence : Statement := ⟨exampleFact, 0, 10, [100], .current 42 9⟩
 
-theorem exampleEvidence_issued : Issued exampleRegistry exampleBounds exampleEvidence :=
-  ⟨by simpa [exampleRegistry, exampleEvidence] using exampleFact_holds,
-   by simp [exampleRegistry, exampleEvidence],
-   by simp [exampleRegistry, exampleEvidence, exampleBounds, Purpose.life]⟩
+theorem exampleEvidence_issued_at_head :
+    IssuedAtHead exampleRegistry exampleBounds 0 exampleEvidence :=
+  ⟨⟨by simpa [exampleRegistry, exampleEvidence] using exampleFact_holds,
+    by simp [exampleRegistry, exampleEvidence],
+    by simp [exampleRegistry, exampleEvidence, exampleBounds, Purpose.life]⟩,
+   ⟨42, 9, rfl⟩, rfl⟩
 
-/-- Evidence issued before the removal is admitted for its exact request, once,
-before the removal reaches the verifier and within its lifetime. -/
+/-- Evidence issued at head 0, before the removal: at time 7, after the removal
+committed and before it reaches the verifier, it is admitted once for its exact
+creating request, and refused after its nonce is used. -/
 theorem evidence_admitted_once :
-    Admits exampleRegistry exampleBounds ⟨0, 0, 5, []⟩ exampleRequest exampleEvidence ∧
+    Admits exampleRegistry exampleBounds ⟨0, 4, 7, []⟩ exampleCreation exampleEvidence ∧
       ¬ Admits exampleRegistry exampleBounds
-        (exampleEvidence.purpose.consume ⟨0, 0, 5, []⟩) exampleRequest exampleEvidence := by
-  refine ⟨⟨rfl, rfl, by decide, by decide, by decide, ?_, by simp [exampleEvidence, Purpose.Fits, exampleRequest]⟩,
-    current_used_once (d := 42) (n := 9) rfl⟩
-  rintro ⟨j, hj1, hj2, -⟩
-  simp [exampleEvidence] at hj1 hj2
-  omega
+        (exampleEvidence.purpose.consume ⟨0, 4, 7, []⟩) exampleCreation exampleEvidence :=
+  ⟨⟨rfl, rfl, by decide, by decide, by decide,
+    example_not_defeated (fun j h1 h2 => by simp [exampleEvidence] at h1 h2; omega),
+    by simp [exampleEvidence, Purpose.Fits, exampleCreation]⟩,
+   current_used_once (d := 42) (n := 9) rfl⟩
 
-/-- The same evidence for a different request is refused. -/
+/-- At the same time, a verifier that has applied the removal refuses it. -/
+theorem evidence_refused_after_removal_applied :
+    ¬ Admits exampleRegistry exampleBounds ⟨1, 4, 7, []⟩ exampleCreation exampleEvidence :=
+  defeated_not_admitted ⟨1, by decide, by decide, 100, by simp [exampleRegistry],
+    by simp [exampleEvidence]⟩
+
+/-- The same evidence for a creating request with another digest is refused,
+and ordinary standing is refused for the creating request. -/
 theorem evidence_refused_for_other_request :
-    ¬ Admits exampleRegistry exampleBounds ⟨0, 0, 5, []⟩ ⟨7, exampleFact, 43⟩ exampleEvidence :=
-  fun ha => by
-    have := current_needs_its_request (d := 42) (n := 9) rfl ha
-    simp at this
+    ¬ Admits exampleRegistry exampleBounds ⟨0, 4, 7, []⟩ ⟨7, exampleFact, 43, true⟩ exampleEvidence ∧
+      ¬ Admits exampleRegistry exampleBounds ⟨0, 4, 7, []⟩ exampleCreation exampleStatement := by
+  refine ⟨fun ha => ?_, fun ha => ?_⟩
+  · obtain ⟨d, n, hp, hd⟩ := creation_needs_current_evidence rfl ha
+    simp [exampleEvidence] at hp
+    obtain ⟨rfl, -⟩ := hp
+    simp at hd
+  · obtain ⟨d, n, hp, -⟩ := creation_needs_current_evidence rfl ha
+    simp [exampleStatement] at hp
 
-/-- After the removal, the registry issues no evidence at cut 1. -/
-theorem evidence_not_issued_after_removal :
-    ¬ Issued exampleRegistry exampleBounds { exampleEvidence with cut := 1 } :=
-  current_not_issued_where_fact_fails rfl
+/-- At head 1, after the removal, a fresh request gets no evidence; at head 0
+it does (`exampleEvidence_issued_at_head`). -/
+theorem no_evidence_after_removal :
+    ¬ IssuedAtHead exampleRegistry exampleBounds 1 { exampleEvidence with cut := 1 } :=
+  no_evidence_at_failed_head
     (by simpa [exampleRegistry, exampleEvidence] using Fact.not_holds_empty exampleFact)
 
-/-- A statement for another team does not help: the request's fact must be the
-statement's. -/
+/-- A statement for another team, or a request signed by another key, does not
+help. -/
 theorem refused_for_other_fact :
-    ¬ Admits exampleRegistry exampleBounds ⟨0, 0, 5, []⟩
-      ⟨7, .team 0 (.named 2) 7, 42⟩ exampleStatement :=
+    ¬ Admits exampleRegistry exampleBounds ⟨0, 4, 7, []⟩
+      ⟨7, .team 0 (.named 2) 7, 42, false⟩ exampleStatement :=
   fun ha => by
     have := ha.1
     simp [exampleStatement, exampleFact] at this
 
-/-- A request signed by another key does not help. -/
 theorem refused_for_other_signer :
-    ¬ Admits exampleRegistry exampleBounds ⟨0, 0, 5, []⟩ ⟨8, exampleFact, 42⟩ exampleStatement :=
+    ¬ Admits exampleRegistry exampleBounds ⟨0, 4, 7, []⟩ ⟨8, exampleFact, 42, false⟩ exampleStatement :=
   fun ha => by
     have := ha.2.1
     simp [exampleStatement, exampleFact, Fact.subject] at this
