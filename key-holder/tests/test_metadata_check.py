@@ -7,15 +7,58 @@ from base64 import b64encode
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
+import httpx
 import pytest
 from approval_service.encoding import encode
 from approval_service.grading import EnrollmentGrading
+from attestation_inventory_migration import corrupt_inventory_assessment
 from authenticator import packed_device
 from aweb_key_holder import cli
+from aweb_key_holder.http import create_app
 from metadata_fixtures import signed_cache
-from test_enrollment import creation
+from test_native_holder import (
+    call,
+    commit_identity,
+    creation_receipt,
+    material_for,
+    register_identity,
+    register_namespace,
+)
 
 
+async def hardware_enrollment(native_holder, *, activate):
+    holder, registry = native_holder.holder, native_holder.registry
+    await register_namespace(holder, registry)
+    seed, key, person = await register_identity(registry)
+    device, snapshot, attestation = packed_device(holder.approval_origin, holder.rp_id)
+    holder.grading = EnrollmentGrading("hardware", snapshot)
+    intent = (await holder.bootstrap(person, key))["intent"]
+    _, material = material_for(holder, intent, device=device)
+    requester = dict(seed=seed, key=key, identity=person, chain=[])
+    path = f"/v1/enrollments/{person}"
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(holder)), base_url=holder.origin
+    ) as client:
+        bound = await call(
+            client,
+            path + "/binding",
+            {"material": material, "registration_count": 1},
+            **requester,
+        )
+        assert bound.status_code == 200, bound.text
+        receipt = creation_receipt(bound.json(), device)
+        if activate:
+            finished = await call(client, path + "/finish", receipt, **requester)
+            assert finished.status_code == 200, finished.text
+            activation = finished.json()
+            await commit_identity(registry, activation, seed, key)
+            requester["chain"] = activation["id_chain"]
+            activated = await call(client, path + "/activate", {}, **requester)
+            assert activated.status_code == 200, activated.text
+    return person, receipt, snapshot, attestation
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("status", "exit_code"),
     [
@@ -32,36 +75,29 @@ from test_enrollment import creation
         ("invalid_inventory_numeric_aaguid", 1),
     ],
 )
-def test_metadata_check_matches_effective_withdrawals_for_active_credentials(
-    holder, tmp_path, monkeypatch, capsys, status, exit_code
+async def test_metadata_check_matches_effective_withdrawals_for_active_credentials(
+    native_holder, tmp_path, monkeypatch, capsys, status, exit_code
 ):
-    device, snapshot, (aaguid, leaf, root) = packed_device(
-        holder.approval_origin, holder.rp_id
+    holder = native_holder.holder
+    person, receipt, snapshot, (aaguid, leaf, root) = await hardware_enrollment(
+        native_holder, activate=status != "pending"
     )
-    holder.grading = EnrollmentGrading("hardware", snapshot)
-    person, receipt = creation(holder, device=device)
     credential = receipt["assertion"]["id"]
-    with holder.store._connection() as db, db:
-        # Activation itself is covered by the native enrollment journey.
-        if status != "pending":
-            db.execute("UPDATE enrollments SET active=1 WHERE person=?", (person,))
-        if status.startswith("invalid_inventory"):
+    if status.startswith("invalid_inventory"):
+        with holder.store._connection() as db:
             assessment = json.loads(
                 db.execute(
-                    "SELECT assessment FROM attestation_inventory WHERE person=?",
-                    (person,),
+                    "SELECT assessment FROM attestation_inventory WHERE person=? AND credential=?",
+                    (person, credential),
                 ).fetchone()["assessment"]
             )
-            if status == "invalid_inventory":
-                assessment = [aaguid]
-            elif status == "invalid_inventory_null_aaguid":
-                assessment["aaguid"] = None
-            else:
-                assessment["aaguid"] = 42
-            db.execute(
-                "UPDATE attestation_inventory SET assessment=? WHERE person=?",
-                (json.dumps(assessment), person),
-            )
+        if status == "invalid_inventory":
+            assessment = [aaguid]
+        elif status == "invalid_inventory_null_aaguid":
+            assessment["aaguid"] = None
+        else:
+            assessment["aaguid"] = 42
+        corrupt_inventory_assessment(holder.store, person, credential, assessment)
     if status == "retired":
         holder.store.retire_person(person)
 
@@ -138,19 +174,17 @@ def run_monitor(holder, cache, manifest, monkeypatch, capsys):
     return exited.value.code, capsys.readouterr()
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "expired", [False, True], ids=["valid_then_corrupt", "expired"]
 )
-def test_metadata_check_verifies_real_signed_cache(
-    holder, tmp_path, monkeypatch, capsys, expired
+async def test_metadata_check_verifies_real_signed_cache(
+    native_holder, tmp_path, monkeypatch, capsys, expired
 ):
-    device, snapshot, (aaguid, leaf, root) = packed_device(
-        holder.approval_origin, holder.rp_id
+    holder = native_holder.holder
+    person, receipt, snapshot, (aaguid, leaf, root) = await hardware_enrollment(
+        native_holder, activate=True
     )
-    holder.grading = EnrollmentGrading("hardware", snapshot)
-    person, receipt = creation(holder, device=device)
-    with holder.store._connection() as db, db:
-        db.execute("UPDATE enrollments SET active=1 WHERE person=?", (person,))
     entry = snapshot.by_aaguid[aaguid]
     entry["statusReports"].append(
         {
