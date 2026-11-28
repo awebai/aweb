@@ -2480,7 +2480,8 @@
   "released_oats_not_promised": [
     "aw workspace delete ALIAS_OR_ID --json (plain): receipt keeps alias_released, identity_deleted, alias_released_reason and its values",
     "aw workspace delete through an external identity home, team not hosted: exit 2 and its exact whole trimmed stderr line, principal P = first nonempty of identity.yaml stable_id, address, did, else the identity-home path (reason: team_not_hosted); outside the v1 rules",
-    "aw workspace status --limit N --json (roster: selected_team, team entries, team_has_more, workspace)",
+    "aw workspace status --limit N --json (roster: selected_team, team entries, team_has_more, workspace; role present in team entries and workspace, always the empty string)",
+    "aw workspace connect --service=S --team=T [--role=R] without --json (retained-seat spawn and rollback, also printed for the operator): --role accepted and ignored, marked so in --help",
     "aw id team members --team NAME --json",
     "aw init --do-not-touch-agents-md without --json, AWEB_URL and AWEB_API_KEY set",
     "aw init --join-from R --join-team T --name N --json --do-not-touch-agents-md",

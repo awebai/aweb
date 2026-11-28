@@ -564,7 +564,15 @@ the keys and values the providers read:
 - `aw workspace status --limit N --json`, for the roster: `selected_team`,
   `team` (each entry's `alias`, `status`, `last_seen`, `hostname`, `role`,
   `workspace_path`, `context_kind`, `agent_identity_scope`), `team_has_more`
-  and `workspace`;
+  and `workspace`. `role` stays present in each `team` entry and in
+  `workspace`, and is always the empty string: aw has no roles. The roster
+  prints `role R` only for a nonempty value, so an empty string prints
+  nothing;
+- `aw workspace connect --service=S --team=T [--role=R]`, without `--json`,
+  which the retained-seat spawn and its rollback send, and print as a command
+  for the operator. `--role` is accepted and ignored: nothing is stored and
+  no output is set from it. `aw workspace connect --help` says so. The version
+  1 form in section 3.3 does not list it, and the framework never sends it;
 - `aw id team members --team NAME --json`, for the roster when the team id
   has no colon, with the answer of section 3.6;
 - `aw init --do-not-touch-agents-md`, without `--json`, with `AWEB_URL` and
