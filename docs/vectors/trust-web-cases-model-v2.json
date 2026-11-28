@@ -2,7 +2,7 @@
  "model":
  {"path": "spec/trust-model",
   "emitter": "lake exe trust-web-cases",
-  "commit": "33caabdd29d2bb0560e487220302f1e714411833"},
+  "commit": "35ecb39369687fd13ca62991cdfadc99f7e7e9a5"},
  "format": "aweb.trust-web-cases/2",
  "description":
  "Cases emitted from the trust-web model (spec/trust-model) by lake exe trust-web-cases. Every verdict and every refusal's premise is computed by the model's executable step, which the model proves equal to its Step relation (step_iff_run, run_error_premise).",
