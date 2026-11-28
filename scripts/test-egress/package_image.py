@@ -125,11 +125,11 @@ def read_package_receipts(root, evidence, image):
                     )
             continue
         rows = receipt.get("projects")
-        covered = (
-            [row.get("project") for row in rows]
-            if isinstance(rows, list) and all(isinstance(row, dict) for row in rows)
-            else rows
-        )
+        if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+            raise PackageReceiptError(
+                f"the {name} receipt field projects is {rows!r}, expected a list of project rows"
+            )
+        covered = [row.get("project") for row in rows]
         if covered != projects:
             raise PackageReceiptError(
                 f"the {name} receipt field projects covers {covered!r}, expected {projects!r}"

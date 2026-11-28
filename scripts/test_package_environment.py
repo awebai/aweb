@@ -668,9 +668,10 @@ class PackageReceipts(unittest.TestCase):
                 lambda receipt: dict(receipt, projects="server"),
                 "verified",
             ),
-            "project row not an object": (
+            # The complete ordered names, so only the row shape is wrong.
+            "project rows not objects": (
                 prepared,
-                lambda receipt: dict(receipt, projects=["server"]),
+                lambda receipt: dict(receipt, projects=["naapp/folio", "server"]),
                 "prepared",
             ),
             "parents not an object": (
