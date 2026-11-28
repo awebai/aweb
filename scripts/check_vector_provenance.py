@@ -615,6 +615,10 @@ ROOT_CONSUMERS = {
         "egress-address-v1.json",
         'AWEB_ROOT / "docs" / "vectors" / "egress-address-v1.json"',
     ),
+    PurePosixPath("scripts/vm-gate/tests/test_merak.py"): _consumer(
+        "egress-address-v1.json",
+        '/ "docs/vectors/egress-address-v1.json"',
+    ),
     PurePosixPath("naapp-lib/tests/hooks/test_envelope_vector_payloads.py"): _consumer(
         {"hook-catalog-v1.json", "hook-event-envelope-v1.json"},
         '(AWEB_ROOT / "docs" / "vectors" / "hook-event-envelope-v1.json")',
