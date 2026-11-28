@@ -2,6 +2,7 @@
 
 import json
 import os
+import shlex
 import signal
 import subprocess
 import sys
@@ -183,11 +184,27 @@ class SupervisorTests(unittest.TestCase):
             command = next(
                 c for c in remote.transport.commands if "vm_gate.supervisor run" in c
             )
-            self.assertLess(
-                command.index("runuser"), command.index("timeout --signal=TERM")
+            argv = shlex.split(command)
+            # The gate user's process runs under the timeout, and the timeout
+            # leaves the supervisor its kill grace before SIGKILL.
+            user = argv.index("runuser")
+            self.assertEqual(argv[user : user + 4], ["runuser", "-u", "gateuser", "--"])
+            limit = argv.index("timeout")
+            self.assertGreater(limit, user)
+            self.assertEqual(
+                argv[limit : limit + 8],
+                [
+                    "timeout",
+                    "--signal=TERM",
+                    f"--kill-after={supervisor.TIMEOUT_KILL_GRACE}s",
+                    "60",
+                    "python3",
+                    "-m",
+                    "vm_gate.supervisor",
+                    "run",
+                ],
             )
-            self.assertIn("vm_gate.supervisor run", command)
-            self.assertIn("--kill-after=130s", command)
+            self.assertGreater(supervisor.TIMEOUT_KILL_GRACE, supervisor.GRACE)
 
 
 class StopOrderingTests(unittest.TestCase):
