@@ -527,7 +527,7 @@ stale writers and issuers throughout the transition. The grant owner must
 account for its own delegation state or require new grants.
 
 The first deployment follows the onboarding path above. The approved
-registry-only move of the `aweb.ai` hosting tree follows the
+registry transfer of the `aweb.ai` hosting tree follows the
 [single-window procedure below](#transfer-the-hosting-tree-in-one-window).
 A customer move that changes service authority requires its own product
 decision. For such a move, collect
@@ -744,10 +744,38 @@ child inheriting the same parent record.
 
 On 2026-11-28 Juan approved moving the parent and all 449 live `aweb.ai`
 child namespaces together from `https://api.awid.ai` to
-`https://api.awdid.org`. The window moves registry authority. Every
+`https://api.awdid.org`. For the registry transfer, every
 namespace keeps its name, addresses and keys from the verified post-step-0
 source cut. Include all live children regardless of activity. Any decision
 about retiring dormant namespaces belongs to a separate operation.
+
+**Open decision for Juan — customer service and client at the switch.**
+Approval of the registry transfer leaves two ways to serve the customers.
+Set the service contract before rehearsing the live cut.
+
+1. **Move service authority at frozen-app sunset.** Time the registry
+   transfer to the move to the new hosted service at `dashboard.aweb.ai`.
+   Customers then use the standing contract and their agents need the
+   standing-only `aweb` client. Apply the service-authority migration gates
+   above in addition to the registry transfer. Rehearse the client and
+   service change, including the typed upgrade refusal from the released
+   client and a working journey with the standing client.
+2. **Keep the frozen service through sunset.** Move registry authority
+   first. Through the inherited `_awid.aweb.ai` record, frozen Cloud and
+   released `aw` would discover `api.awdid.org`. That registry would serve
+   the exact released read and write contract these clients use until
+   sunset. Inventory the routes and match their auth, request and response
+   behavior against the pinned frozen Cloud build and released `aw`.
+   Include namespace and delegation, address, identity-log, team and team
+   certificate, certificate status and revocation, and member-lookup
+   operations. Rehearse frozen Cloud and released `aw` against the
+   destination through inherited discovery. Exercise sign-up, mail,
+   team join and leave, and certificate status.
+
+The coordinator recommends the sunset move so the destination can use the
+standing contract without a temporary released-contract bridge. That option
+changes every customer's client. Juan's decision and the corresponding
+end-to-end rehearsal are required before the live switch.
 
 0. **Separate shared controllers (`aweb-adyx.14`).** Before either
    parent-controller key removal or the parent transfer, build the live child
@@ -810,6 +838,19 @@ about retiring dormant namespaces belongs to a separate operation.
    registry and issuer to the exact preserved facts. Keep destination
    writes and issuance fenced pending activation.
 
+   **Full negative inventory.** The independent verifier enumerates from
+   the fenced source every historically revoked certificate in every moved
+   team, every rotated-away identity key, and every cut-off epoch or
+   withdrawn delegation. Reconcile the exact entries at the destination
+   with the source, including equal per-team counts and counts for
+   namespace-scoped entries. Prove that the destination's authority checks
+   refuse each exact old binding for the applicable reason. Use preserved
+   signed artifacts and test a current binding alongside the refusals.
+   A migration fence, missing possession proof or unavailable service
+   cannot substitute for a refusal by the destination authority check.
+   The verifier records each result against the fenced cut and the exact
+   destination build and inventory used for activation.
+
 2. **Flip the parent and verify.** Change only the registry endpoint in
    `_awid.aweb.ai`, keeping the parent controller in that record. Check the
    operator-designated customer namespace first, then verify the parent and
@@ -827,8 +868,10 @@ about retiring dormant namespaces belongs to a separate operation.
    cannot finish in the remaining budget. Restore the parent DNS record to
    the source, reconcile pins and paused effects, and verify source
    authority before resuming source writes. Keep the destination fenced.
-   Once the whole cut verifies and the budget permits completion, retire
-   the source's serving authority for the entire tree and verify that old
+   Proceed only when the independent full negative inventory has passed
+   for every entry with matching per-team counts, the selected service
+   contract has qualified, and the whole cut and remaining budget verify.
+   Retire the source's serving authority for the entire tree and verify that old
    authority is refused, including with warmed caches. Preserve historical
    source evidence. Only then enable destination writes and issuance for
    the whole tree. If retirement has begun and cannot finish, keep effects
@@ -839,9 +882,12 @@ window. Exercise a stale parent answer on a warm verifier, a child with
 unresolved source evidence, the first customer check failing, and the
 pre-retirement abort back to verified source. On a successful run, verify
 all original addresses, current keys and delegation witnesses at the
-destination and refusal of retired source authority. Use released clients
-for the source checks and the applicable destination clients for the new
-authority checks.
+destination and refusal of retired source authority. Run the independent
+negative inventory against the full rehearsal cut and compare per-team
+counts and exact refusal outcomes. Exercise a missing deny entry and show
+that activation is held. Use released clients for the source checks and
+qualify the selected service contract and each of its clients at the
+destination.
 
 Separately qualify the registration-only lane with a fresh child and
 refusals for existing, deleted, migrated and reserved names. Race grant
@@ -922,5 +968,5 @@ extrapolating from raw signature operations.
 | Verifier SDK | Local validation and shared apply logic, published conformance for both transports, and issuer selection independent of the configured default. Exercise two exact domains with different issuers, an unavailable or conflicting discovery result, and a wrong-issuer response, with zero fallback. |
 | aweb runtime and grants | Complete request inventory, local gates and typed refusal, owner-held grant/application facts, effect and stream tests. Show that the stream recheck reads registry standing only from the process's applied view, with no DB round trip for it. Show that grant revocation, app uninstall and workspace removal still end the affected stream before its next protected emission. Use event-driven local service facts or bounded DB reads, and measure and report any remaining DB recheck cost. Jitter each stream's first periodic authority recheck deadline independently across one recheck interval, within the existing freshness bounds. Test that streams opened together perform their first rechecks at different times within that interval. |
 | Federation | Native interoperability between real standing issuers, exact trust bootstrap and recovery, and no request-time authority fetch. At E5, prove both directions refuse across the frozen boundary with no effect. For a later customer move, check retired, unknown and current addresses, including opt-in disclosure of a verified replacement. |
-| Pilot, clients and registry deployment | Separate digest-pinned registry deploy at `https://api.awdid.org` in `servers`, named operations ownership, HA signer and feed recovery, and a first-deployment rehearsal for `awebai.org`. Verify client protocol selection, the per-process subscriber and readiness, and the exact DNS/controller bootstrap. Keep existing customers on the frozen service and registry. Verify side-by-side client and home isolation, fresh cohort admission, explicit use of the unchanged frozen identity, and old mail access. For a later customer move, verify the typed refusal and discoverable upgrade path from the pinned released client. |
+| Pilot, clients and registry deployment | Separate digest-pinned registry deploy at `https://api.awdid.org` in `servers`, named operations ownership, HA signer and feed recovery, and a first-deployment rehearsal for `awebai.org`. Verify client protocol selection, the per-process subscriber and readiness, and the exact DNS/controller bootstrap. Existing customers use the frozen service and source registry during E5. Verify side-by-side client and home isolation, fresh cohort admission, explicit use of the unchanged frozen identity, and old mail access. For the hosting-tree switch, qualify the service and client contract Juan selects in §7 before activation. |
 | Scale and integration gate | Reproducible history, traffic, change, partition and recovery fixtures with stated hardware and measured limits. Run the E5 boundary against the real new registry and the pinned released registry and server. Test standing with the new client and frozen service with the released client. Verify issuance/feed loss, discovery failure and issuer isolation. Exercise fresh cohort onboarding, independent old and new sessions, and refusal of crossed client bindings. For a future customer move, apply §7's independent source-cut verification, exclusion and abort controls, full negative inventory check, source retirement and mail controls. |
