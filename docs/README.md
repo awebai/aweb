@@ -216,8 +216,6 @@ presented as shipped.
   emit auth, subscription, SSE, and channel-core consumer contract.
 - [Support contract v1](support-contract-v1.md) — current registry-read envelope
   and doctor compatibility boundary; other producers remain experimental.
-- [Hermes gateway integration memo](hermes-aweb-gateway-integration.md) —
-  prototype integration evidence.
 - [Session admission leases](session-admission-leases.md) — shipped experimental
   session primitive with explicit non-fencing limits.
 
