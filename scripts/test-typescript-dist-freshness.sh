@@ -25,38 +25,14 @@ build() {
   fi
 }
 
-# Run a command in its own process group under a hard limit of SECONDS. At the
-# limit the whole group is killed, its absence is observed, and the exit status
-# is 124. The test process's runtime, not its harness, owns the cleanup.
+# Run a command under scripts/lib/bounded_group.py: its own process group, one
+# deadline of SECONDS, and the group killed and observed empty on every exit
+# path. $TMP/verdict says how it ended: "exit N", "timeout" or "interrupted".
 bounded() {
-  python3 - "$@" <<'PY'
-import os
-import signal
-import subprocess
-import sys
-import time
-
-seconds, *argv = sys.argv[1:]
-child = subprocess.Popen(argv, start_new_session=True)
-try:
-    sys.exit(child.wait(timeout=float(seconds)))
-except subprocess.TimeoutExpired:
-    os.killpg(child.pid, signal.SIGKILL)
-    child.wait()
-    # A killed grandchild stays in the group until its new parent reaps it;
-    # macOS answers EPERM for such a group. Absence is ESRCH.
-    until = time.monotonic() + 10
-    while time.monotonic() < until:
-        try:
-            os.killpg(child.pid, 0)
-        except ProcessLookupError:
-            print(f"bounded: {argv[0]} outlived {seconds} s; its process group was killed", file=sys.stderr)
-            sys.exit(124)
-        except PermissionError:
-            pass
-        time.sleep(0.05)
-    sys.exit(f"bounded: the process group of {argv[0]} survived SIGKILL")
-PY
+  local seconds="$1"
+  shift
+  rm -f "$TMP/verdict"
+  python3 "$ROOT/scripts/lib/bounded_group.py" --seconds "$seconds" --verdict "$TMP/verdict" -- "$@"
 }
 
 # Run behaviour tests with the TypeScript loader the Pi package uses, bounded.
@@ -82,9 +58,9 @@ out="$(cd "$ROOT/pi-extension" && AWEB_PI_DIST="$ROOT/pi-extension/dist/index.js
   bounded 20 node --import tsx --test --test-reporter=tap "$TESTS/pi_hung_shutdown.test.mts" 2>&1)"
 status=$?
 set -e
-if [ "$status" -ne 124 ] || [ ! -f "$marker" ]; then
-  printf 'SELF-TEST FAIL: the hung-shutdown control was not held until its bound (exit %s, marker %s):\n%s\n' \
-    "$status" "$([ -f "$marker" ] && echo written || echo absent)" "$out" >&2
+if [ "$status" -ne 254 ] || [ "$(cat "$TMP/verdict")" != timeout ] || [ ! -f "$marker" ]; then
+  printf 'SELF-TEST FAIL: the hung-shutdown control was not held until its bound (exit %s, verdict %s, marker %s):\n%s\n' \
+    "$status" "$(cat "$TMP/verdict")" "$([ -f "$marker" ] && echo written || echo absent)" "$out" >&2
   exit 1
 fi
 
@@ -148,7 +124,7 @@ expect_assertion_failure() {
     behaviour_test --test-name-pattern="$name" "$TESTS/$test_file" 2>&1)"
   status=$?
   set -e
-  if [ "$status" -eq 124 ]; then
+  if [ "$(cat "$TMP/verdict")" = timeout ]; then
     printf 'SELF-TEST INCONCLUSIVE: %s "%s" hung instead of failing:\n%s\n' "$package" "$name" "$out" >&2
     return 1
   fi
