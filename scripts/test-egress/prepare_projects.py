@@ -140,6 +140,13 @@ def go_build_cache(*, root: Path, mode: PreparationMode, env: dict[str, str]):
     }
 
 
+# Launches the project's locked Chromium through its own Playwright.
+BROWSER_LAUNCH_CHECK = (
+    "from playwright.sync_api import sync_playwright; "
+    "p=sync_playwright().start(); b=p.chromium.launch(); b.close(); p.stop()"
+)
+
+
 def provision(root, sha, names, mode, receipt):
     root = root.resolve()
     if (
@@ -212,10 +219,7 @@ def provision(root, sha, names, mode, receipt):
                     *base,
                     "python",
                     "-c",
-                    (
-                        "from playwright.sync_api import sync_playwright; "
-                        "p=sync_playwright().start(); b=p.chromium.launch(); b.close(); p.stop()"
-                    ),
+                    BROWSER_LAUNCH_CHECK,
                 ],
                 root=root,
                 env=env,

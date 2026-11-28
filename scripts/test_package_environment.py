@@ -78,9 +78,10 @@ class ProjectPreparation(unittest.TestCase):
         # as root; preparation runs as UID 1000 and only syncs.
         self.invoke("prepare")
         syncs = [args for args, _ in self.commands if args[:2] == ["uv", "sync"]]
+        # Each selected project's lock is synced once, in any order.
         self.assertEqual(
-            [args[-1] for args in syncs],
-            [str(self.root / name) for name in ("server", "naapp/folio")],
+            sorted(args[-1] for args in syncs),
+            sorted(str(self.root / name) for name in ("server", "naapp/folio")),
         )
         self.assertEqual([args for args, _ in self.commands if "install" in args], [])
         self.assertTrue(
@@ -97,15 +98,20 @@ class ProjectPreparation(unittest.TestCase):
             for args, kwargs in self.commands
             if args[:2] == ["uv", "sync"]
         ]
-        self.assertEqual(len(syncs), 2)
+        projects = sorted(str(self.root / name) for name in ("server", "naapp/folio"))
+        self.assertEqual(
+            sorted(args[args.index("--project") + 1] for args, _ in syncs), projects
+        )
         self.assertTrue(all("--offline" in args for args, _ in syncs))
         paths = [Path(kwargs["env"]["UV_PROJECT_ENVIRONMENT"]) for _, kwargs in syncs]
-        self.assertEqual(len(set(paths)), 2)
+        self.assertEqual(len(set(paths)), len(syncs))
         self.assertTrue(all(not path.exists() for path in paths))
-        self.assertEqual(
-            sum("b=p.chromium.launch()" in " ".join(args) for args, _ in self.commands),
-            2,
-        )
+        launches = [
+            args[args.index("--project") + 1]
+            for args, _ in self.commands
+            if preparation.BROWSER_LAUNCH_CHECK in args
+        ]
+        self.assertEqual(sorted(launches), projects)
         self.assertTrue(
             all(kwargs["env"]["UV_OFFLINE"] == "1" for _, kwargs in self.commands)
         )
@@ -123,7 +129,7 @@ class ProjectPreparation(unittest.TestCase):
             preparation.SetupFailure, r"PACKAGE_BROWSER_UNAVAILABLE\[server\]"
         ):
             self.invoke(
-                "verify", fail=lambda args: "b=p.chromium.launch()" in " ".join(args)
+                "verify", fail=lambda args: preparation.BROWSER_LAUNCH_CHECK in args
             )
         self.assertFalse(self.receipt.exists())
 
@@ -443,7 +449,9 @@ class SourceImagePreparation(unittest.TestCase):
                 "COPY --chmod=0644 package-environment.py /opt/package-environment.py",
                 builds[0],
             )
-            self.assertIn("USER 1000:1000\nRUN python3 /opt/package-environment.py", builds[0])
+            self.assertIn(
+                "USER 1000:1000\nRUN python3 /opt/package-environment.py", builds[0]
+            )
             self.assertIn("RUN python3 -c", builds[0])
             # Preparation runs as UID 1000, so nothing changes owner afterwards.
             self.assertNotIn("chown", builds[0])
@@ -477,7 +485,9 @@ class SourceImagePreparation(unittest.TestCase):
                 return invoke(args, **kwargs)
 
             gate_env = dict(
-                os.environ, BUILDX_BUILDER="run-builder", AWEB_CANDIDATE_RESOURCE_LABEL="run-label"
+                os.environ,
+                BUILDX_BUILDER="run-builder",
+                AWEB_CANDIDATE_RESOURCE_LABEL="run-label",
             )
             with (
                 patch.object(images.subprocess, "run", side_effect=recorded),
@@ -485,12 +495,18 @@ class SourceImagePreparation(unittest.TestCase):
                 patch.dict(os.environ, gate_env, clear=True),
             ):
                 (evidence / "gate").mkdir()
-                images.prepare_image(root, evidence / "gate", "owned-image", base="gate-image:run")
-            self.assertTrue(builds[0].startswith("FROM gate-image:run\n"), builds[0][:80])
+                images.prepare_image(
+                    root, evidence / "gate", "owned-image", base="gate-image:run"
+                )
+            self.assertTrue(
+                builds[0].startswith("FROM gate-image:run\n"), builds[0][:80]
+            )
             self.assertNotIn("FROM python:3.12", builds[0])
             args, kwargs = next(c for c in calls if c[0][:2] == ["docker", "build"])
             self.assertNotIn("BUILDX_BUILDER", kwargs["env"])
-            self.assertEqual(args[args.index("--label") + 1], "aweb.candidate-gate=run-label")
+            self.assertEqual(
+                args[args.index("--label") + 1], "aweb.candidate-gate=run-label"
+            )
 
 
 if __name__ == "__main__":
