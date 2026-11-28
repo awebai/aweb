@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-28
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-gate-dispatch.
+* **Creation**: decision [a reviewed docs-only move of the target branch does not force a regate](/aweb-expert/decisions/docs-only-target-moves-do-not-force-a-regate.md), a standing coordinator ruling (source-reported).
+* **Creation**: decision [vm-gate guests keep their per-run Postgres containers](/aweb-expert/decisions/vm-gate-guests-keep-per-run-postgres.md), the coordinator's scope for the operator's host-PostgreSQL rule (source-reported).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
