@@ -866,6 +866,12 @@ canonical JSON and the identity; the refused cases have no identity. The
 and principal. No implementation consumes it until the shared
 `HumanRoleHandoffAuthority` exists.
 
+## Experimental trust-model cases
+
+### `trust-web-cases-model-v2.json` — experimental, generated
+
+Cases emitted by the trust-web model in `spec/trust-model` (`lake exe trust-web-cases`), format `aweb.trust-web-cases/2`. The model's build fails unless this file is the generator's current output; regenerate it, never edit it. The trust-web case runner in the server's tests is its consumer.
+
 ## Experimental and compatibility A2A fixtures
 
 A2A is shipped but experimental and optional. These fixtures are release gates
