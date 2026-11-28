@@ -1,9 +1,9 @@
 """Lock-driven package preparation controls; no Docker or dependency downloads."""
 
+import hashlib
 import importlib.util
 import json
 import os
-import shlex
 import subprocess
 import sys
 import tempfile
@@ -387,7 +387,7 @@ class SourceImagePreparation(unittest.TestCase):
                     )
             self.assertTrue(child_checks)
 
-    def test_real_source_bundle_and_recipe_bind_the_selected_locks_and_uid_verification(
+    def test_real_source_bundle_and_build_inputs(
         self,
     ):
         with tempfile.TemporaryDirectory() as temporary:
@@ -444,36 +444,6 @@ class SourceImagePreparation(unittest.TestCase):
             ):
                 images.prepare_image(root, evidence, "owned-image")
             self.assertEqual(len(builds), 1)
-            self.assertIn("--project naapp/folio --mode prepare", builds[0])
-            self.assertIn(
-                "COPY --chmod=0644 package-environment.py /opt/package-environment.py",
-                builds[0],
-            )
-            self.assertIn(
-                "USER 1000:1000\nRUN python3 /opt/package-environment.py", builds[0]
-            )
-            self.assertIn("RUN python3 -c", builds[0])
-            # Preparation runs as UID 1000, so nothing changes owner afterwards.
-            self.assertNotIn("chown", builds[0])
-            self.assertNotIn("chmod -R", builds[0])
-            self.assertIn("package-helper-readable.json", builds[0])
-            # The Dockerfile instruction stays one physical line despite Python's multiline code.
-            verify_line = next(
-                line
-                for line in builds[0].splitlines()
-                if line.startswith("RUN python3 -c ")
-            )
-            read_argv = shlex.split(
-                verify_line.removeprefix("RUN ").split(" && ", 1)[0]
-            )
-            compile(read_argv[2], "image-helper-readability", "exec")
-            self.assertIn("os.getuid()==os.getgid()==1000", read_argv[2])
-            self.assertLess(
-                builds[0].index("package-helper-readable.json"),
-                builds[0].index("--mode verify"),
-            )
-            self.assertNotIn("1243", builds[0])
-            self.assertNotIn("2.41.5", builds[0])
             self.assertTrue((evidence / "package-preparation-tool.sha256").is_file())
             # In a gate run the image starts from the gate's image, which is
             # already in the engine, and the engine's own builder builds it.
@@ -507,6 +477,148 @@ class SourceImagePreparation(unittest.TestCase):
             self.assertEqual(
                 args[args.index("--label") + 1], "aweb.candidate-gate=run-label"
             )
+
+
+REAL_RUN = subprocess.run
+
+
+class PackageReceipts(unittest.TestCase):
+    """The gate reads back what the image build proved, from the built image."""
+
+    SOURCE = "c" * 40
+    HELPER = b"package helper bytes"
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name) / "source"
+        (self.root / "naapp/folio").mkdir(parents=True)
+        (self.root / "naapp/folio/uv.lock").write_text("version=1\n")
+        for args in (
+            ["init", "-q"],
+            ["add", "."],
+            [
+                "-c",
+                "user.name=f",
+                "-c",
+                "user.email=f@example.test",
+                "commit",
+                "-qm",
+                "s",
+            ],
+        ):
+            subprocess.run(["git", *args], cwd=self.root, check=True)
+        self.source = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=self.root, text=True
+        ).strip()
+        self.evidence = Path(self.temporary.name) / "evidence"
+        self.evidence.mkdir()
+        digest = hashlib.sha256(self.HELPER).hexdigest()
+        (self.evidence / "package-preparation-tool.sha256").write_text(digest + "\n")
+        self.receipts = {
+            images.RECEIPTS["helper"]: dict(
+                status="PASS",
+                uid=1000,
+                gid=1000,
+                path="/opt/package-environment.py",
+                mode="0644",
+                bytes=len(self.HELPER),
+                sha256=digest,
+                parents={
+                    "/opt": dict(mode="0755", traversable=True),
+                    "/": dict(mode="0755", traversable=True),
+                },
+            ),
+            images.RECEIPTS["prepared"]: dict(
+                status="PASS", uid=1000, gid=1000, mode="prepare", source=self.source
+            ),
+            images.RECEIPTS["verified"]: dict(
+                status="PASS", uid=1000, gid=1000, mode="verify", source=self.source
+            ),
+        }
+        self.reads = []
+
+    def docker(self, args, **kwargs):
+        if args[0] != "docker":
+            return REAL_RUN(args, **kwargs)
+        # docker run --rm --network none --user 1000:1000 --entrypoint cat IMAGE PATH
+        self.assertEqual(
+            args[:9],
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                "none",
+                "--user",
+                "1000:1000",
+                "--entrypoint",
+                "cat",
+            ],
+        )
+        self.reads.append(args[-1])
+        if args[-1] not in self.receipts:
+            return subprocess.CompletedProcess(
+                args, 1, "", f"cat: {args[-1]}: No such file\n"
+            )
+        return subprocess.CompletedProcess(
+            args, 0, json.dumps(self.receipts[args[-1]]), ""
+        )
+
+    def read(self):
+        with patch.object(images.subprocess, "run", side_effect=self.docker):
+            images.read_package_receipts(self.root, self.evidence, "owned-image")
+
+    def test_receipts_proving_uid_1000_pass_and_are_kept_as_evidence(self):
+        self.read()
+        self.assertEqual(self.reads, list(images.RECEIPTS.values()))
+        for name in images.RECEIPTS:
+            self.assertTrue((self.evidence / f"receipt-{name}.json").is_file())
+
+    def test_every_broken_receipt_is_refused_naming_it(self):
+        helper, prepared, verified = (
+            images.RECEIPTS[k] for k in ("helper", "prepared", "verified")
+        )
+        cases = {
+            "wrong uid": (verified, "uid", 0),
+            "missing gid": (prepared, "gid", None),
+            "not passed": (helper, "status", "FAIL"),
+            "swapped modes": (prepared, "mode", "verify"),
+            "another source": (verified, "source", "d" * 40),
+            "another helper": (helper, "sha256", "e" * 64),
+            "wrong helper mode": (helper, "mode", "0600"),
+        }
+        for name, (path, field, value) in cases.items():
+            with self.subTest(case=name):
+                original = dict(self.receipts[path])
+                if value is None:
+                    del self.receipts[path][field]
+                else:
+                    self.receipts[path][field] = value
+                with self.assertRaisesRegex(images.PackageReceiptError, field):
+                    self.read()
+                self.receipts[path] = original
+        with self.subTest(case="missing parent"):
+            del self.receipts[helper]["parents"]["/opt"]
+            with self.assertRaisesRegex(images.PackageReceiptError, "/opt"):
+                self.read()
+
+    def test_a_receipt_the_image_lacks_is_refused(self):
+        del self.receipts[images.RECEIPTS["verified"]]
+        with self.assertRaisesRegex(images.PackageReceiptError, "verified"):
+            self.read()
+
+    def test_a_build_with_projects_needs_the_helper_digest(self):
+        (self.evidence / "package-preparation-tool.sha256").unlink()
+        with self.assertRaisesRegex(images.PackageReceiptError, "digest"):
+            self.read()
+
+    def test_a_build_without_projects_reads_nothing(self):
+        subprocess.run(
+            ["git", "rm", "-q", "naapp/folio/uv.lock"], cwd=self.root, check=True
+        )
+        self.read()
+        self.assertEqual(self.reads, [])
 
 
 if __name__ == "__main__":

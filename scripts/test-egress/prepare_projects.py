@@ -238,6 +238,7 @@ def provision(root, sha, names, mode, receipt):
                 "source": sha,
                 "mode": mode,
                 "uid": os.getuid(),
+                "gid": os.getgid(),
                 "locks": after,
                 "projects": rows,
                 "go_cache": go_cache,
