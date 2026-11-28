@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-27
+* **Harvest**: OKF proposal from seat aweb-protocol-expert-oss-test-world with one backing note; the fixture commits are on an agent branch, not on main, and the PostgreSQL 17 checkpoint paths were checked in its source.
+* **Creation**: lesson [a template fixture saves setup time, not checkpoints](/aweb-protocol-expert/lessons/a-template-fixture-saves-setup-not-checkpoints.md), linked from [tests exercise the real authority](/aweb-protocol-expert/decisions/tests-exercise-the-real-authority.md).
+
 ## 2026-11-06
 * **Fix**: review of the db-access proposal on npm gitHead, PubSub release and stream checkouts: hosted specifics in [stream bodies leave the request connection scope](/aweb-protocol-expert/lessons/stream-bodies-leave-the-request-connection-scope.md) and [an npm tarball publish records no gitHead](/aweb-protocol-expert/lessons/npm-tarball-publish-records-no-githead.md) are stated generically or dropped, as the OSS and Cloud boundary requires.
 * **Update**: [SSE cleanup is cancelled on client disconnect](/aweb-protocol-expert/lessons/sse-cleanup-is-cancelled-on-disconnect.md) and [a PubSub release survives any cancellation](/aweb-protocol-expert/decisions/pubsub-release-survives-any-cancellation.md) link each other: the AnyIO shield covers Starlette's disconnect, not native task cancellation.
