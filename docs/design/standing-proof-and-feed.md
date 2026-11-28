@@ -460,11 +460,12 @@ For E5, `api.awid.ai` and its frozen clients keep their released contract.
 
 ## 7. First deployment and later origin moves
 
-On 2026-11-28 Juan authorised a second AWID registry for E5, at its own
-origin, with `_awid.awebai.org` pointing there and `api.awid.ai` unchanged
-for frozen `aweb.ai`. Use the normal landing and deploy gates. The operator
-records the approved production origin and change window before deployment
-and DNS changes.
+On 2026-11-28 Juan authorised a second AWID registry for E5 on
+`awdid.org`. This design uses `https://api.awdid.org` as its production
+origin. The `_awid.awebai.org` record binds the namespace controller and
+`registry=https://api.awdid.org`. The frozen `aweb.ai` service keeps
+`https://api.awid.ai`. Use the normal landing and deploy gates. The
+operator records the change window before deployment and DNS changes.
 
 ### Registry operation and bootstrap
 
@@ -652,5 +653,5 @@ extrapolating from raw signature operations.
 | Verifier SDK | Local validation and shared apply logic, published conformance for both transports, and issuer selection independent of the configured default. Exercise two exact domains with different issuers, an unavailable or conflicting discovery result, and a wrong-issuer response, with zero fallback. |
 | aweb runtime and grants | Complete request inventory, local gates and typed refusal, owner-held grant/application facts, effect and stream tests. |
 | Federation | Native interoperability between real standing issuers, exact trust bootstrap and recovery, and no request-time authority fetch. At E5, prove both directions refuse across the frozen boundary with no effect. A separately approved legacy path would require the exact frozen binary, compatible read surface and isolated delivery adapter, including tests for private-read restrictions, signature purpose, exact retry settlement and outages scoped to that path. |
-| Pilot, clients and registry deployment | Separate digest-pinned registry deploy in `servers`, named operations ownership, HA signer and feed recovery, and a first-deployment rehearsal for `awebai.org`. Verify client protocol selection, the per-process subscriber and readiness, and the exact DNS/controller bootstrap. Keep the frozen service and registry on their released contract. Hand off the first-cohort inventory and transfer rehearsal for the migration immediately after E5. |
+| Pilot, clients and registry deployment | Separate digest-pinned registry deploy at `https://api.awdid.org` in `servers`, named operations ownership, HA signer and feed recovery, and a first-deployment rehearsal for `awebai.org`. Verify client protocol selection, the per-process subscriber and readiness, and the exact DNS/controller bootstrap. Keep the frozen service and registry on their released contract. Hand off the first-cohort inventory and transfer rehearsal for the migration immediately after E5. |
 | Scale and integration gate | Reproducible history, traffic, change, partition and recovery fixtures with stated hardware and measured limits. Run the E5 boundary against the real new registry and the pinned released registry and server. Test both standing and frozen serving paths with the same client and verify issuance/feed loss, discovery failure and issuer isolation. Qualify the first migration separately with the identity, address, team and mail controls in §7. |
