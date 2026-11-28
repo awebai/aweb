@@ -18,7 +18,7 @@ One line for every sentence that says something about the model, apart from a th
 
 | Sentence | Kind | What makes it true |
 |---|---|---|
-| Experimental; proofs checked by Lean; comparison with running implementations pending | process | No checker or emitter exists (see "Not done") |
+| Experimental; proofs checked by Lean; comparison with running implementations pending | process | The generated cases have not yet been run against the code (see "Not done") |
 | A formal model, in Lean 4, of who may do what in aweb | process | The files in `TrustWeb/` |
 | Lean checks that each result follows from the definitions | process | `lake build`; see "How to check it yourself" |
 | The definitions were checked against aweb by reading the source; not yet run against the code | process | The source readings; "Not done" |
@@ -244,7 +244,7 @@ Each item pairs a sentence about the model with one about the real system.
 
 | Sentence | Kind | What makes it true |
 |---|---|---|
-| It does not run yet | process | No checker functions exist |
+| It is not yet run against the code; the model runs and generates its first batch | process | `run` and the generator exist (rows 91 to 93); the runner has not run the file |
 | Several definitions were corrected after the last source check | process | The list given there |
 
 ## TrustWeb/Model.lean
@@ -415,6 +415,30 @@ Each item pairs a sentence about the model with one about the real system.
 | README, limits | One registry and no grants | definition | `Admits` takes one `Registry`; `Fact` has no grant |
 | README, limits | A decision is one `Admits`; a later emission or queued decision is another | definition | `Admits` is one decision; nothing in the layer carries a decision forward |
 | README, limits | Clock error is folded into the clock premise | definition | `Verifier.now` is read as an upper bound on the issuer's time; `removal_bound` takes it as such |
+
+## TrustWeb/Decide.lean, Run.lean, Emit.lean and the README's running section
+
+| Where | Sentence | Kind | What makes it true |
+|---|---|---|---|
+| README, module docs | `Decide.lean` decides every condition the acts check, each proved to agree with its definition | result | Each decision is a `Decidable` instance built by `decidable_of_iff` from a proved equivalence, or derived from instances that are |
+| README, `CertChain`, `chainB` | Chains of certificates, and the search over them | definition | Their bodies |
+| README, `Act`, `Act.checks`, `Act.effect`, `run`, `Check`, `firstFailing` | A request, its named checks in the constructor's order, its effect, and what `run` returns | definition | Their bodies; each act's checks list the premises of its `Step` constructor in order |
+| `AskedByIssuer`, `IssuerValid`, `ByMember`, `rootCut`, `AskDecidable`, `Act.Accepted` | Their meaning | definition | Their bodies |
+| README | `lake exe trust-web-cases` followed by the model commit prints the cases, written to the vectors file | process | The entry point at the end of `Emit.lean`, and the lakefile's executable entry |
+| README | The first batch: the acts, no held key, an allowed case per act and a refusal per premise the batch can make fail | definition | `Emit.cases` |
+| README | Each refusal fails exactly one premise, the one it names, so it agrees with the code in any check order | definition | The count of false checks in `Emit.Case.json` |
+| README | Each refusal's neighbour is allowed and differs in exactly one of setup, party and arguments; a party the arguments fix in both changes with them | definition | `Emit.changes`, `Emit.followingParty`, `Emit.partyFollows`, `Emit.checkNeighbours`, called by `Emit.document` |
+| README | Checks that depend on another premise hold vacuously when it fails; all the checks together are the constructor's premises, and each fails alone | definition, result | `ByMember`, `AskedByIssuer`, `IssuerValid` and the MayIssue check's form in `Act.checks`; `step_iff_run` |
+| README | A refusal is written only if no act on its route allows the same request; which acts share a route | definition, source | `Emit.routeMates` and its use in `Emit.Case.json`; AWID's one identity-revocation route names the subject and the signer, not the constructor |
+| README | `remove`'s last-admin premise can fail only when the team's key is held | act | The premise of `remove` |
+| README | Every request goes through `run`; the generator refuses on a refused setup request, an unintended outcome, a refusal not failing exactly its named premise, a bad neighbour or a route mate that allows the request | definition | `Emit.Case.json`, `Emit.checkNeighbours` |
+| README | So every verdict and premise in the file is the model's by rows 92 and 93 | result | `step_iff_run`, `run_error_premise` |
+| README | What the cases observe | definition | `Emit.Obs`, `Emit.Obs.json` |
+| README | Propagation: after an identity or team-certificate revocation, except a refused grant mint for a subject not in the team, judged at once because creating authority reads revocation fresh under the planned E7 rule; revoking a grant has no wait, since the server reads its own grant record directly | definition, source | `Emit.revokes` and `Emit.Case.json`; the runner invalidates the server's cached team revocations and reads identity status uncached; the planned E7 fresh read at grant mint, which the runner's seeds pin as immediate |
+| README, `CasesCheck.lean` | The build fails unless the committed file's format, emitter and cases are the generator's output | process | `#cases_file_current` in the `DocCheck` library, which the default build runs |
+| README | The cases are not proved to cover every premise; the code passing them shows agreement on these cases only | definition | No theorem is about coverage |
+| README | Running them against the code is the runner's | source | The runner in the aweb server's tests |
+| `Emit.keyName`, `Emit.orgName` and the other renderers | The runner's names and forms | source | The runner's seed cases |
 
 ## TrustWeb/DocNames.lean
 
