@@ -314,3 +314,45 @@ aweb id namespace incarnation-read-grant revoke --domain D --registry ORIGIN --g
   commitment. Refuse auto-promotion on a changed commitment or takeover.
   Verify the new controller can read the retained recovery target
   without the old team key.
+
+### Credential-free sentinel
+
+The operator supplies the sentinel with the expected controller and epoch,
+head and issuer pins, and one known certificate ID for each watched team.
+The watch list and approval record live outside worker custody. The
+sentinel verifies public DNS and registry evidence and polls on a bounded
+schedule, including when the feed is idle. Feed handles alone do not
+identify a namespace or team.
+
+The E5 issuer retains the [anonymous exact certificate status
+read](../awid-sot.md#teams), including for private teams. Given the
+known team and certificate ID, its response names that team's current key.
+An unexpected key or certificate-status change, or loss of the known
+status read, alerts. The public
+organisation head continues to hide the team and the opening. The worker's
+incarnation read still uses its own scoped grant under §4.
+
+Run these cases against the real registry without a sentinel credential.
+Include the expected unchanged and operator-approved neighbours.
+
+- An unapproved controller rotation changes the observed controller or
+  epoch. A planned head revision that remains unpublished at its approved
+  deadline, and a published revision the operator did not approve, each
+  produce an alert.
+- An issuer key-set change is detected through the authenticated issuer DNS
+  commitment and the digest-bound key set. A planned rollover is checked
+  against the operator's record.
+- Re-key a watched private team without changing its namespace epoch or
+  head. The exact anonymous certificate status read changes its current
+  key and the sentinel alerts. A watched certificate changing from
+  active to revoked also alerts. Delete and recreate the team without
+  the watched certificate. Its 404 also alerts. Private team
+  enumeration remains restricted.
+- An unexplained feed gap, or an era change without a verified resync,
+  alerts as lost feed coverage. A verified resync and contiguous tail
+  restore coverage.
+
+Previously unknown private teams and new grants can appear without a
+matching negative handle. The separate namespace inventory work (D4)
+addresses registry-visible additions. A root certificate for a local agent
+is holder-carried. Issuing it alone leaves no registry record to inventory.
