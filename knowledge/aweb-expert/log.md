@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-27
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-apps-repo (survey of the naapp trees' removal).
+* **Creation**: lesson [a tree leaving the repository breaks more than its imports](/aweb-expert/lessons/a-tree-leaving-the-repository-breaks-more-than-imports.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
