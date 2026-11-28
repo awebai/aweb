@@ -1,8 +1,11 @@
 """Real gate recording/TERM behavior with a small child, without Docker."""
 
+import io
 import os
 import signal
 import subprocess
+import sys
+import tarfile
 import tempfile
 import time
 import unittest
@@ -311,7 +314,7 @@ run_candidate() {
             ["bash", "-ec", lookup + "\nprintf '%s\\n' \"$pending\"; exit 99"],
             env=dict(
                 os.environ,
-                TREE="tree",
+                TREE="b" * 40,
                 KEY="tree-inputs",
                 LEDGER=str(logs.parent / "ledger.tsv"),
                 CANDIDATE_STAGES="static checks user-paths unit artifacts integration",
@@ -324,6 +327,31 @@ run_candidate() {
         self.assertIn("already passed checks", result.stdout)
         self.assertTrue(
             result.stdout.endswith("artifacts integration\n"), result.stdout
+        )
+        # The VM gate's evidence reader takes the reused stage from this exact
+        # output: an explicit REUSED row with the recorded log and no duration.
+        sys.path.insert(0, str(ROOT / "scripts/vm-gate"))
+        from vm_gate.evidence import collect_archive
+
+        evidence = logs.parent / "vm-evidence"
+        archive = logs.parent / "vm-evidence.tar"
+        with tarfile.open(archive, "w") as handle:
+            data = result.stdout.encode()
+            item = tarfile.TarInfo("var/log/vm-gate/gate-output.log")
+            item.size = len(data)
+            handle.addfile(item, io.BytesIO(data))
+        stages = collect_archive(archive, "a" * 40, evidence)["stages"]
+        reused = [row for row in stages if row["status"] == "REUSED"]
+        self.assertEqual(
+            reused,
+            [
+                {
+                    "stage": "checks",
+                    "status": "REUSED",
+                    "seconds": None,
+                    "original_log": rows[1][5],
+                }
+            ],
         )
 
     def test_stages_recorded_as_they_pass_are_recorded_once(self):
@@ -415,7 +443,9 @@ run_candidate() {
                 code, _, logs, output = self.invoke(status=status)
                 self.assertEqual(code, status, output)
                 retained = logs.parent / "ledger-logs/tree-inputs-evidence-test-run"
-                self.assertTrue((retained / "test-egress/test-server/suite.log").is_file())
+                self.assertTrue(
+                    (retained / "test-egress/test-server/suite.log").is_file()
+                )
                 self.assertTrue((retained / "summary.tsv").is_file())
                 self.assertEqual(
                     (retained / "test-egress/test-server/suite.log").read_bytes(),

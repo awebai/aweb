@@ -91,14 +91,6 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(stopped[0]["status"], "STOPPED")
         self.assertEqual(stopped[0]["seconds"], 42.0)
 
-    def test_reused_stage_is_explicit_with_no_fabricated_duration(self):
-        output = f"gate: tree {'b' * 40} already passed checks; original log /retained/checks.log\n"
-        archive = self.archive({"var/log/vm-gate/gate-output.log": output})
-        result = collect_archive(archive, SHA, Path(self.tmp.name) / "out")
-        self.assertEqual(result["stages"][0]["status"], "REUSED")
-        self.assertIsNone(result["stages"][0]["seconds"])
-        self.assertEqual(result["stages"][0]["original_log"], "/retained/checks.log")
-
     def test_archive_cannot_write_outside_evidence_directory(self):
         archive = self.archive({"../escaped": "wrong"})
         with self.assertRaisesRegex(Infrastructure, "unsafe archive"):
