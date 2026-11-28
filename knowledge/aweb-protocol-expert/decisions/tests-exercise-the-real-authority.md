@@ -36,7 +36,7 @@ Only a request through the actually mounted app reproduced it. The scope of
 that green stays narrow: one origin and no federation transport, so it is not
 evidence of cross-origin delivery.
 
-Related: [acceptance must exercise the claimed operation](/coordinator/acceptance-must-exercise-the-claimed-operation.md).
+Related: [acceptance must exercise the claimed operation](/coordinator/acceptance-must-exercise-the-claimed-operation.md); [a template fixture saves setup time, not checkpoints](/aweb-protocol-expert/lessons/a-template-fixture-saves-setup-not-checkpoints.md), on measuring per-fixture database cost.
 
 # Provenance
 
