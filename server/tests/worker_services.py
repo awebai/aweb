@@ -39,6 +39,17 @@ def service_memory_mib(workers: int) -> int:
     )
 
 
+def xdist_worker_index(worker: str, count: int) -> int:
+    """The index of xdist worker gw<N> in a run of count workers.
+
+    Raises ValueError unless worker names one of them, 0 <= N < count.
+    """
+    match = re.fullmatch(r"gw([0-9]+)", worker)
+    if match is None or int(match.group(1)) >= count:
+        raise ValueError(f"{worker!r} is not one of {count} xdist workers")
+    return int(match.group(1))
+
+
 def configure_worker_environment(environ: MutableMapping[str, str]) -> None:
     """Run before fixture/plugin imports which capture service environment."""
     worker = environ.get("PYTEST_XDIST_WORKER")
@@ -49,19 +60,21 @@ def configure_worker_environment(environ: MutableMapping[str, str]) -> None:
         bind_service_environment(environ=environ, services=services)
         return
     planned = environ.get("AWEB_SERVER_TEST_WORKERS", "")
-    match = re.fullmatch(r"gw([0-9]+)", worker)
+    refusal = RuntimeError(
+        "parallel server tests require the owned worker service plan"
+    )
     if (
         not re.fullmatch(r"[1-9][0-9]*", planned)
         or int(planned) < 2
         or int(planned) > MAX_WORKERS
         or environ.get("PYTEST_XDIST_WORKER_COUNT") != planned
-        or match is None
-        or int(match.group(1)) >= int(planned)
     ):
-        raise RuntimeError(
-            "parallel server tests require the owned worker service plan"
-        )
-    services = service_plan(int(planned))[int(match.group(1))]
+        raise refusal
+    try:
+        index = xdist_worker_index(worker, int(planned))
+    except ValueError:
+        raise refusal from None
+    services = service_plan(int(planned))[index]
     bind_service_environment(environ=environ, services=services)
 
 
@@ -74,8 +87,7 @@ def local_worker_service(environ: MutableMapping[str, str]) -> dict[str, int]:
         worker = environ["PYTEST_XDIST_WORKER"]
         if not isinstance(plan, list) or not 1 <= count <= 4 or len(plan) != count:
             raise ValueError("worker count differs from the service plan")
-        if re.fullmatch(r"gw[0-3]", worker) is None or int(worker[2:]) >= count:
-            raise ValueError("unknown local worker")
+        xdist_worker_index(worker, count)
         ports = set()
         for row in plan:
             if not isinstance(row, dict) or set(row) != {"postgres_port", "redis_port"}:

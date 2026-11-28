@@ -4,10 +4,17 @@ from __future__ import annotations
 
 import os
 import re
+import runpy
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+
+# worker_services.py is loaded by path wherever it is used, never imported as
+# a package module.
+xdist_worker_index = runpy.run_path(
+    str(Path(__file__).with_name("worker_services.py"))
+)["xdist_worker_index"]
 
 PACKAGES = ("channel-core", "channel", "pi-extension")
 FILES = (
@@ -23,15 +30,17 @@ def runtime_repo(source: Path) -> Path:
         return source
     uid = os.environ.get("PYTEST_XDIST_TESTRUNUID", "")
     count = os.environ.get("PYTEST_XDIST_WORKER_COUNT", "")
-    index = re.fullmatch(r"gw([0-9]+)", worker)
+    refusal = RuntimeError("parallel runtime tree requires the owned xdist identity")
     # One tree per worker of the run's plan, whatever its size.
     if (
-        index is None
-        or re.fullmatch(r"[1-9][0-9]*", count) is None
-        or int(index.group(1)) >= int(count)
+        re.fullmatch(r"[1-9][0-9]*", count) is None
         or re.fullmatch(r"[0-9a-f]{32}", uid) is None
     ):
-        raise RuntimeError("parallel runtime tree requires the owned xdist identity")
+        raise refusal
+    try:
+        xdist_worker_index(worker, int(count))
+    except ValueError:
+        raise refusal from None
     return Path(tempfile.gettempdir()) / f"aweb-server-runtime-{uid}-{worker}"
 
 
