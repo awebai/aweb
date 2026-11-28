@@ -12,6 +12,7 @@ from aweb_key_holder.http import create_app
 from aweb_key_holder.keys import KeyStore, Refused
 from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
 from awid.id_certificates import verify_id_certificate
+from legacy_schema import remove_attestation_inventory
 from policy_inputs import policy_file
 
 
@@ -114,7 +115,8 @@ def test_existing_store_migrates_with_keys_and_audit_unchanged(tmp_path):
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
     descriptor = store.descriptor()
     with store._connection() as db, db:
-        # Restore the actual v2 schema before running both ordered migrations.
+        # Restore the v2 schema before running the ordered migrations.
+        remove_attestation_inventory(db)
         db.execute("ALTER TABLE enrollments DROP COLUMN retired_at")
         db.execute("DROP TABLE person_revisions")
         db.execute(

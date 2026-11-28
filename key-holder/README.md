@@ -21,6 +21,8 @@ generated inside the holder. Use `descriptor` to read a descriptor and
 <hex>` writes only ciphertext encrypted to the operator's offline X25519 key.
 `migrate` explicitly applies ordered holder-store migrations; serving never
 applies them. Mount the private state only into the holder, under its own UID.
+Keep that state on storage encrypted at rest. It includes the issuer's private
+attestation inventory.
 
 Approval is off by default. Start without an approval service:
 
@@ -85,6 +87,11 @@ This ordered migration preserves the keys, enrollments and signature history.
 It cannot turn an old approved store into approval off. An old operator store
 can run `migrate` without a requirement. Serving never migrates automatically.
 
+If activation returns `attestation_assessment_unavailable`, the pending
+hardware enrolment predates the attestation inventory. Let it expire or remove
+it and start the enrolment again. Existing activated bindings keep working
+after the upgrade.
+
 Production operators can instead select `--grading hardware --mds-cache <path>`.
 Set `--mds-manifest FILE` to the operator-installed reviewed pin and
 `--mds-cache DIR` to its private artifact cache. The shared watcher checks the
@@ -96,6 +103,24 @@ watcher continues after a bad replacement; the policy remains hardware grading. 
 deadline. Operators install the maintainer-reviewed renewal before that date;
 the running holder observes the new file without restarting. The first gate's fixed minimum is
 passkey UV. There is no runtime rule-lowering command.
+
+For a self-hosted issuer, schedule the private holder check with the same
+reviewed pin and cache used by the running holder:
+
+```sh
+aweb-key-holder --state /private/holder/state \
+  --mds-manifest /etc/approval/mds-pin-v1.json \
+  --mds-cache /var/lib/approval/mds-cache metadata-check
+```
+
+The command exits 0 for a clean check, 1 when it cannot check, 2 when the
+verified metadata is nearing expiry, and 3 when an effective FIDO withdrawal
+matches an active inventoried credential. The withdrawal signal takes
+precedence over expiry warnings and stays active while the match remains.
+Future-dated reports start matching on their effective date. The JSON
+reports metadata health and operator guidance without identifying any
+credential, person, model, or certificate. On exit 3, pause affected
+hardware-required effects and review the issuer's inventory privately.
 
 The enrollment and approval interfaces are:
 
