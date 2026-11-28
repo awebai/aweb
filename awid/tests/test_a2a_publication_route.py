@@ -54,7 +54,7 @@ def _valid_route_times() -> dict[str, str]:
     }
 
 
-def test_a2a_publication_vector_canonical_bytes_and_conflict_codes():
+def test_a2a_publication_vector_canonical_bytes():
     vector = json.loads(
         (_ROOT / "docs" / "vectors" / "a2a-awid-publication-v1.json").read_text(
             encoding="utf-8",

@@ -1,6 +1,5 @@
 """Only live private commands remain; enrollment completion is person-signed."""
 
-import inspect
 import subprocess
 import sys
 
@@ -47,18 +46,24 @@ def test_live_private_issuance_commands_remain_available(command, tmp_path):
     assert result.returncode == 0
 
 
-def test_controller_authorizer_and_privileged_completion_defaults_are_gone():
-    assert not hasattr(Holder, "authorize_bootstrap")
-    for operation in [
-        Holder.bind_registration,
-        Holder.finish_creation,
-        Holder.finish,
-        Holder.activate,
-    ]:
-        assert (
-            inspect.signature(operation).parameters["caller"].default
-            is inspect.Parameter.empty
-        )
+def test_privileged_enrollment_steps_cannot_be_called_without_a_caller(tmp_path):
+    from aweb_key_holder.keys import KeyStore
+
+    store = KeyStore.create(tmp_path / "private", organisation="example.test")
+    holder = Holder(store, registry=None, origin="https://holder.example")
+    audit = store.audit()
+    calls = [
+        lambda: holder.bind_registration("person", {}, registration_count=1),
+        lambda: holder.finish_creation("person", {}, issuer=None),
+        lambda: holder.finish("person", {}, chain=[]),
+        lambda: holder.activate("person", chain=[]),
+    ]
+    # A required keyword is checked when the call is made, before any
+    # coroutine exists or any state is read.
+    for call in calls:
+        with pytest.raises(TypeError, match="caller"):
+            call()
+    assert store.audit() == audit
 
 
 def test_hardware_manifest_flag_keeps_unattested_enrollment_available(tmp_path):
