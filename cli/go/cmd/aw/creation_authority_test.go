@@ -18,23 +18,42 @@ import (
 func TestCreationAuthorityDecision(t *testing.T) {
 	const notice = "Using this workspace's signed invitation; the supplied agent API key is not creating the child."
 	const a5 = "This is an agent's workspace key. Run creation from that agent's workspace, or use a setup key from the dashboard. To create here from another workspace, use aw init --join-from <workspace>."
+	const mismatch = "workspace signing key does not match its team certificate"
+	const dev, ops = "dev:example.com", "ops:example.com"
+	const key, other = "did:key:z6MkCreator", "did:key:z6MkOther"
+	workspaceKey := func(in creationAuthorityInput) creationAuthorityInput {
+		in.SuppliedKey, in.KeyKind = true, creationKeyKindWorkspace
+		return in
+	}
 	for _, tc := range []struct {
 		name    string
 		input   creationAuthorityInput
 		mode    creationAuthorityMode
+		source  string
 		notice  string
 		refusal string
 	}{
-		{"stored key is not an input", creationAuthorityInput{SourceTeam: "dev:example.com"}, creationAuthorityInvitation, "", ""},
-		{"no key with signer", creationAuthorityInput{SourceTeam: "dev:example.com", RequestedTeam: "dev:example.com"}, creationAuthorityInvitation, "", ""},
-		{"workspace key with signer", creationAuthorityInput{SuppliedKey: true, KeyKind: creationKeyKindWorkspace, SourceTeam: "dev:example.com", RequestedTeam: "dev:example.com"}, creationAuthorityInvitation, notice, ""},
-		{"workspace key without signer", creationAuthorityInput{SuppliedKey: true, KeyKind: creationKeyKindWorkspace}, creationAuthorityUnselected, "", a5},
-		{"workspace key wrong team", creationAuthorityInput{SuppliedKey: true, KeyKind: creationKeyKindWorkspace, SourceTeam: "dev:example.com", RequestedTeam: "ops:example.com"}, creationAuthorityUnselected, "", "This workspace belongs to dev:example.com, not ops:example.com. " + a5},
-		{"person key wins", creationAuthorityInput{SuppliedKey: true, KeyKind: creationKeyKindPerson, SourceTeam: "dev:example.com"}, creationAuthorityAPI, "", ""},
-		{"absent field older server", creationAuthorityInput{SuppliedKey: true, SourceTeam: "dev:example.com"}, creationAuthorityAPI, "", ""},
-		{"unknown field older behavior", creationAuthorityInput{SuppliedKey: true, KeyKind: "future", SourceTeam: "dev:example.com"}, creationAuthorityAPI, "", ""},
-		{"stale team kind is unknown", creationAuthorityInput{SuppliedKey: true, KeyKind: "team", SourceTeam: "dev:example.com"}, creationAuthorityAPI, "", ""},
-		{"local controller", creationAuthorityInput{SourceTeam: "dev:example.com", LocalController: true}, creationAuthorityController, "", ""},
+		{"no key and no membership selects nothing", creationAuthorityInput{}, creationAuthorityUnselected, "", "", ""},
+		{"no key, member signer", creationAuthorityInput{ActiveTeam: dev, SigningKeyDID: key, CertificateDID: key}, creationAuthorityInvitation, dev, "", ""},
+		{"no key, member signer for the requested team", creationAuthorityInput{RequestedTeam: dev, ActiveTeam: dev, SigningKeyDID: key, CertificateDID: key}, creationAuthorityInvitation, dev, "", ""},
+		{"no key, member signer for another team selects nothing", creationAuthorityInput{RequestedTeam: ops, ActiveTeam: dev, SigningKeyDID: key, CertificateDID: key}, creationAuthorityUnselected, "", "", ""},
+		{"no key, local controller", creationAuthorityInput{ActiveTeam: dev, LocalController: true}, creationAuthorityController, dev, "", ""},
+		{"local controller never reads the certificate", creationAuthorityInput{ActiveTeam: dev, LocalController: true, SigningKeyDID: key, CertificateDID: other}, creationAuthorityController, dev, "", ""},
+		{"membership without signing key is not a signer", creationAuthorityInput{ActiveTeam: dev}, creationAuthorityUnselected, "", "", ""},
+		{"signing key without membership is not a signer", creationAuthorityInput{SigningKeyDID: key}, creationAuthorityUnselected, "", "", ""},
+		{"signing key differs from certificate", creationAuthorityInput{ActiveTeam: dev, SigningKeyDID: key, CertificateDID: other}, creationAuthorityUnselected, "", "", mismatch},
+		{"certificate without member key", creationAuthorityInput{ActiveTeam: dev, SigningKeyDID: key}, creationAuthorityUnselected, "", "", mismatch},
+		{"workspace key with signer", workspaceKey(creationAuthorityInput{RequestedTeam: dev, ActiveTeam: dev, SigningKeyDID: key, CertificateDID: key}), creationAuthorityInvitation, dev, notice, ""},
+		{"workspace key requests its own team", workspaceKey(creationAuthorityInput{KeyTeam: dev, ActiveTeam: dev, SigningKeyDID: key, CertificateDID: key}), creationAuthorityInvitation, dev, notice, ""},
+		{"workspace key with local controller", workspaceKey(creationAuthorityInput{KeyTeam: dev, ActiveTeam: dev, LocalController: true}), creationAuthorityController, dev, notice, ""},
+		{"workspace key without signer", workspaceKey(creationAuthorityInput{KeyTeam: dev}), creationAuthorityUnselected, "", "", a5},
+		{"workspace key wrong team", workspaceKey(creationAuthorityInput{RequestedTeam: ops, ActiveTeam: dev, SigningKeyDID: key, CertificateDID: key}), creationAuthorityUnselected, "", "", "This workspace belongs to dev:example.com, not ops:example.com. " + a5},
+		{"workspace key's own team differs from signer", workspaceKey(creationAuthorityInput{KeyTeam: ops, ActiveTeam: dev, SigningKeyDID: key, CertificateDID: key}), creationAuthorityUnselected, "", "", "This workspace belongs to dev:example.com, not ops:example.com. " + a5},
+		{"workspace key with mismatched signer", workspaceKey(creationAuthorityInput{KeyTeam: dev, ActiveTeam: dev, SigningKeyDID: key, CertificateDID: other}), creationAuthorityUnselected, "", "", mismatch},
+		{"person key wins", creationAuthorityInput{SuppliedKey: true, KeyKind: creationKeyKindPerson, ActiveTeam: dev, SigningKeyDID: key, CertificateDID: other}, creationAuthorityAPI, "", "", ""},
+		{"absent field older server", creationAuthorityInput{SuppliedKey: true, ActiveTeam: dev, LocalController: true}, creationAuthorityAPI, "", "", ""},
+		{"unknown field older behavior", creationAuthorityInput{SuppliedKey: true, KeyKind: "future", ActiveTeam: dev, LocalController: true}, creationAuthorityAPI, "", "", ""},
+		{"stale team kind is unknown", creationAuthorityInput{SuppliedKey: true, KeyKind: "team", ActiveTeam: dev, LocalController: true}, creationAuthorityAPI, "", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := decideCreationAuthority(tc.input)
@@ -44,8 +63,38 @@ func TestCreationAuthorityDecision(t *testing.T) {
 				}
 				return
 			}
-			if err != nil || got.Mode != tc.mode || got.Notice != tc.notice {
+			if err != nil || got.Mode != tc.mode || got.SourceTeam != tc.source || got.Notice != tc.notice {
 				t.Fatalf("decision=%+v err=%v", got, err)
+			}
+		})
+	}
+}
+
+// The caller reads local facts only when the decision can use them: the API
+// path reads nothing local, and only a non-controller member signer reads its
+// certificate.
+func TestCreationAuthorityFactsRead(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		input       creationAuthorityInput
+		local       bool
+		certificate bool
+	}{
+		{"no key", creationAuthorityInput{}, true, false},
+		{"person key", creationAuthorityInput{SuppliedKey: true, KeyKind: creationKeyKindPerson}, false, false},
+		{"unknown key kind", creationAuthorityInput{SuppliedKey: true}, false, false},
+		{"workspace key", creationAuthorityInput{SuppliedKey: true, KeyKind: creationKeyKindWorkspace}, true, false},
+		{"member signer", creationAuthorityInput{ActiveTeam: "dev:example.com", SigningKeyDID: "did:key:z6MkCreator"}, true, true},
+		{"member controller", creationAuthorityInput{ActiveTeam: "dev:example.com", LocalController: true, SigningKeyDID: "did:key:z6MkCreator"}, true, false},
+		{"member without key", creationAuthorityInput{ActiveTeam: "dev:example.com"}, true, false},
+		{"key without membership", creationAuthorityInput{SigningKeyDID: "did:key:z6MkCreator"}, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := !tc.input.takesAPIPath(); got != tc.local {
+				t.Fatalf("reads local facts=%t, want %t", got, tc.local)
+			}
+			if got := tc.input.needsCertificate(); got != tc.certificate {
+				t.Fatalf("reads certificate=%t, want %t", got, tc.certificate)
 			}
 		})
 	}
