@@ -172,17 +172,6 @@ func (c *Client) DecryptE2EEEnvelopeWithContext(ctx context.Context, envelope *E
 	if c == nil {
 		return nil, fmt.Errorf("missing client")
 	}
-	identity := c.e2eeDecryptIdentity()
-	// The wrap names the key it was sealed to. A message from before a
-	// rotation names a key this identity keeps in its local archive.
-	if keyID, ok := E2EEWrapKeyID(envelope, identity); ok && keyID != "" && keyID != identity.EncryptionKeyID && c.e2eeArchivedKey != nil {
-		archived, err := c.e2eeArchivedKey(keyID)
-		if err != nil {
-			return nil, &DecryptionError{Code: "encryption_key_missing", err: fmt.Errorf("encrypted message is wrapped to archived encryption key %s, which this identity cannot load (%w); restore it from the .aw/encryption-keys backup", keyID, err)}
-		}
-		identity.EncryptionKeyID, identity.PrivateKey = keyID, archived
-		return DecryptE2EEMessage(envelope, identity)
-	}
 	if c.e2eePrivateKey == nil {
 		if custody := c.e2eeCustody(); custody != nil {
 			audience, err := c.custodyAudience(ctx)
@@ -195,16 +184,90 @@ func (c *Client) DecryptE2EEEnvelopeWithContext(ctx context.Context, envelope *E
 			}
 			out, err := custody.UnwrapE2EEMessage(ctx, req)
 			if err != nil {
-				return nil, err
+				return nil, custodyDecryptionError(err)
 			}
 			if out == nil {
 				return nil, fmt.Errorf("custody returned no plaintext")
 			}
 			return &E2EEInnerPayload{InnerVersion: E2EEMessageVersion, Kind: out.Kind, MessageID: out.MessageID, ConversationID: out.ConversationID, CreatedAt: out.CreatedAt, From: out.From, Recipients: out.Recipients, Subject: out.Subject, Body: out.Body, Attachments: out.Attachments}, nil
 		}
-		return nil, &DecryptionError{Code: "encryption_key_missing", err: errors.New("encrypted message requires local encryption private key; restore .aw/encryption-keys or run `aw id encryption-key setup` for future messages")}
+	}
+	identity, err := ResolveE2EEDecryptIdentity(envelope, c.e2eeDecryptIdentity(), c.e2eeArchivedKey)
+	if err != nil {
+		return nil, err
 	}
 	return DecryptE2EEMessage(envelope, identity)
+}
+
+// custodyRowLocalCodes are the custody refusals that concern one message's
+// keys or contents after the grant was admitted. Every other refusal is about
+// authority, the request or the custody host, and fails the command.
+var custodyRowLocalCodes = map[string]string{
+	"archived_key_unavailable":  "encryption_key_missing",
+	"recipient_key_unavailable": "encryption_key_missing",
+	"not_a_recipient":           "decrypt_failed",
+	"decrypt_failed":            "decrypt_failed",
+}
+
+func custodyDecryptionError(err error) error {
+	var refusal *CustodyError
+	if errors.As(err, &refusal) {
+		if code, ok := custodyRowLocalCodes[refusal.Code]; ok {
+			return &DecryptionError{Code: code, err: err}
+		}
+	}
+	return err
+}
+
+// ErrE2EENotARecipient is the refusal for an envelope with no key wrap
+// addressed to the reading identity.
+var ErrE2EENotARecipient = errors.New("not a recipient")
+
+// ResolveE2EEDecryptIdentity verifies envelope's evidence and returns identity
+// with the private key that opens it (docs/e2e-messaging-contract.md "Key
+// Wraps"): the active key when a wrap addressed to identity names it,
+// otherwise the archived key named by the first such wrap that archived can
+// load. Keys are found by the key id a wrap names, never by trial.
+func ResolveE2EEDecryptIdentity(envelope *E2EEMessageEnvelope, identity E2EEDecryptIdentity, archived E2EEArchivedKeyLoader) (E2EEDecryptIdentity, error) {
+	if err := verifyE2EEMessageEnvelope(envelope); err != nil {
+		return E2EEDecryptIdentity{}, &DecryptionError{Code: "decrypt_failed", err: err}
+	}
+	if identity.PrivateKey == nil && archived == nil {
+		return E2EEDecryptIdentity{}, &DecryptionError{Code: "encryption_key_missing", err: errors.New("encrypted message requires local encryption private key; restore .aw/encryption-keys or run `aw id encryption-key setup` for future messages")}
+	}
+	activeKeyID := strings.TrimSpace(identity.EncryptionKeyID)
+	if activeKeyID == "" && identity.PrivateKey != nil {
+		var err error
+		if activeKeyID, err = ComputeEncryptionKeyID(identity.PrivateKey.PublicKey().Bytes()); err != nil {
+			return E2EEDecryptIdentity{}, &DecryptionError{Code: "decrypt_failed", err: err}
+		}
+		identity.EncryptionKeyID = activeKeyID
+	}
+	var archivedKeyIDs []string
+	for _, keyID := range e2eeWrapKeyIDs(envelope, identity) {
+		if identity.PrivateKey != nil && keyID == activeKeyID {
+			return identity, nil
+		}
+		if keyID != activeKeyID {
+			archivedKeyIDs = append(archivedKeyIDs, keyID)
+		}
+	}
+	if len(archivedKeyIDs) == 0 {
+		return E2EEDecryptIdentity{}, &DecryptionError{Code: "decrypt_failed", err: ErrE2EENotARecipient}
+	}
+	failures := []error{errMissingEncryptionPrivateKey}
+	if archived != nil {
+		failures = failures[:0]
+		for _, keyID := range archivedKeyIDs {
+			key, err := archived(keyID)
+			if err == nil {
+				identity.EncryptionKeyID, identity.PrivateKey = keyID, key
+				return identity, nil
+			}
+			failures = append(failures, err)
+		}
+	}
+	return E2EEDecryptIdentity{}, &DecryptionError{Code: "encryption_key_missing", err: fmt.Errorf("encrypted message is wrapped to encryption key %s, which this identity cannot load (%w); restore it from the .aw/encryption-keys backup", strings.Join(archivedKeyIDs, ", "), errors.Join(failures...))}
 }
 
 // e2eeDecryptIdentity is this client's local reading identity with its active
@@ -654,22 +717,22 @@ func buildE2EEKeyWrap(cek []byte, messageID, conversationID string, sender E2EEI
 	}, nil
 }
 
-// E2EEWrapKeyID returns the recipient encryption key id of the first key wrap
-// whose recipient identity fields match identity, ignoring identity's own key
-// id. ok is false when no wrap is addressed to identity.
-func E2EEWrapKeyID(envelope *E2EEMessageEnvelope, identity E2EEDecryptIdentity) (keyID string, ok bool) {
-	if envelope == nil {
-		return "", false
-	}
+// e2eeWrapKeyIDs returns, in envelope order, the recipient encryption key ids
+// of the key wraps whose recipient identity fields match identity, ignoring
+// identity's own key id and wraps that name no key.
+func e2eeWrapKeyIDs(envelope *E2EEMessageEnvelope, identity E2EEDecryptIdentity) []string {
+	var keyIDs []string
 	for i := range envelope.KeyWraps {
 		wrap := &envelope.KeyWraps[i]
-		if identityFieldMatches(wrap.RecipientDID, identity.DID) &&
+		keyID := strings.TrimSpace(wrap.RecipientEncryptionKeyID)
+		if keyID != "" &&
+			identityFieldMatches(wrap.RecipientDID, identity.DID) &&
 			identityFieldMatches(wrap.RecipientStableID, identity.StableID) &&
 			identityFieldMatches(wrap.RecipientAddress, identity.Address) {
-			return strings.TrimSpace(wrap.RecipientEncryptionKeyID), true
+			keyIDs = append(keyIDs, keyID)
 		}
 	}
-	return "", false
+	return keyIDs
 }
 
 func selectE2EEKeyWrap(envelope *E2EEMessageEnvelope, identity E2EEDecryptIdentity) (*E2EEKeyWrap, error) {

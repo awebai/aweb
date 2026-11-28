@@ -149,13 +149,16 @@ func TestRealServerRotationInPredecessorSecondIsStrictlyNewer(t *testing.T) {
 	for round := 0; round < 24 && !oldKeyOrderedFirst; round++ {
 		_, predecessor := activeEncryptionAssertion(t, bob)
 		tied := mustParseAssertionTime(t, predecessor.CreatedAt)
-		readings := 0
+		// Rotation's comparator is the only reader of this clock: its first
+		// reading is the predecessor's second, so it must wait and read again.
+		var readings []time.Time
 		setEncryptionKeyClock(t, func() time.Time {
-			readings++
-			if readings == 1 {
-				return tied
+			reading := time.Now()
+			if len(readings) == 0 {
+				reading = tied
 			}
-			return time.Now()
+			readings = append(readings, reading)
+			return reading
 		})
 		rotated, err := setupOrRotateIdentityEncryptionKeyForDir(world.Context, filepath.Dir(bob.Home), true, explicitEncryptionKeyIdentityHome(bob.Home))
 		if err != nil {
@@ -166,6 +169,9 @@ func TestRealServerRotationInPredecessorSecondIsStrictlyNewer(t *testing.T) {
 			t.Fatalf("rotation lost its predecessor link: %+v", successor)
 		}
 		createdAt, notBefore := mustParseAssertionTime(t, successor.CreatedAt), mustParseAssertionTime(t, successor.NotBefore)
+		if len(readings) < 2 || !readings[0].Equal(tied) || !createdAt.Equal(readings[len(readings)-1].UTC().Truncate(time.Second)) {
+			t.Fatalf("round %d: the comparator did not wait past the tie: readings=%v created_at=%s", round, readings, successor.CreatedAt)
+		}
 		if !createdAt.After(tied) || !notBefore.Equal(createdAt) || createdAt.After(time.Now()) {
 			t.Fatalf("rotated assertion created_at=%s not_before=%s, want a real second after %s", successor.CreatedAt, successor.NotBefore, predecessor.CreatedAt)
 		}
@@ -199,15 +205,23 @@ func TestRealServerRotationRefusesWhenClockCannotAdvance(t *testing.T) {
 
 	cancelled, cancel := context.WithCancel(world.Context)
 	time.AfterFunc(200*time.Millisecond, cancel)
-	for name, ctx := range map[string]context.Context{"cancelled": cancelled, "bounded": world.Context} {
+	for _, attempt := range []struct {
+		name    string
+		ctx     context.Context
+		refused func(error, time.Duration) bool
+	}{
+		{"cancelled", cancelled, func(err error, elapsed time.Duration) bool {
+			return errors.Is(err, context.Canceled) && elapsed < rotationClockBudget
+		}},
+		{"bounded", world.Context, func(err error, elapsed time.Duration) bool {
+			return err != nil && strings.Contains(err.Error(), "cannot rotate: the clock reads") && elapsed >= rotationClockBudget && world.Context.Err() == nil
+		}},
+	} {
+		name := attempt.name
 		started := time.Now()
-		if _, err := setupOrRotateIdentityEncryptionKeyForDir(ctx, filepath.Dir(bob.Home), true, explicitEncryptionKeyIdentityHome(bob.Home)); err == nil {
-			t.Fatalf("%s: rotate succeeded on a clock stuck in the predecessor's second", name)
-		} else {
-			t.Logf("%s refusal after %s: %v", name, time.Since(started).Round(time.Millisecond), err)
-		}
-		if name == "cancelled" && !errors.Is(cancelled.Err(), context.Canceled) {
-			t.Fatal("cancelled context did not cancel")
+		_, err := setupOrRotateIdentityEncryptionKeyForDir(attempt.ctx, filepath.Dir(bob.Home), true, explicitEncryptionKeyIdentityHome(bob.Home))
+		if elapsed := time.Since(started); !attempt.refused(err, elapsed) {
+			t.Fatalf("%s: want its own refusal on a clock stuck in the predecessor's second, got err=%v after %s", name, err, elapsed)
 		}
 		stateAfter, current := activeEncryptionAssertion(t, bob)
 		keysAfter, err := filepath.Glob(filepath.Join(bob.Home, "encryption-keys", "*"))

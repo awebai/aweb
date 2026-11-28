@@ -147,6 +147,7 @@ func (c *Client) receivedDisplayMatches(r *receivedMessage) bool {
 func (r *receivedMessage) keepAsUndecryptable(code string) {
 	r.subject, r.body = "", ""
 	r.attachments, r.attachmentsAvailable = nil, false
+	r.isContact = nil
 	r.status = Failed
 	r.decryptError = code
 }

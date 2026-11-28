@@ -252,6 +252,19 @@ func (s *custodyService) admit(ctx context.Context) context.Context {
 }
 
 // admitted wraps a credential-using handler so its request is admitted once.
+// routes is the custody socket's HTTP surface.
+func (s *custodyService) routes() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ping", s.handlePing)
+	mux.HandleFunc("/status", s.handleStatus)
+	mux.HandleFunc("/sign_plain_message", s.admitted(s.handleSignPlainMessage))
+	mux.HandleFunc("/create_e2ee_envelope", s.admitted(s.handleCreateE2EEEnvelope))
+	mux.HandleFunc("/unwrap_e2ee_message", s.admitted(s.handleUnwrapE2EEMessage))
+	mux.HandleFunc("/sign_app_request", s.admitted(s.handleSignAppRequest))
+	mux.HandleFunc("/stop", s.handleStop)
+	return mux
+}
+
 func (s *custodyService) admitted(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		handler(w, r.WithContext(s.admit(r.Context())))
@@ -716,14 +729,7 @@ func (s *custodyService) serve(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("/ping", s.handlePing)
-	mux.HandleFunc("/status", s.handleStatus)
-	mux.HandleFunc("/sign_plain_message", s.admitted(s.handleSignPlainMessage))
-	mux.HandleFunc("/create_e2ee_envelope", s.admitted(s.handleCreateE2EEEnvelope))
-	mux.HandleFunc("/unwrap_e2ee_message", s.admitted(s.handleUnwrapE2EEMessage))
-	mux.HandleFunc("/sign_app_request", s.admitted(s.handleSignAppRequest))
-	mux.HandleFunc("/stop", s.handleStop)
+	mux := s.routes()
 
 	renewalCtx, stopRenewal := context.WithCancel(ctx)
 	defer stopRenewal()
@@ -1406,32 +1412,27 @@ func (s *custodyService) decryptIdentityForE2EEEnvelope(envelope *awid.E2EEMessa
 		return awid.E2EEDecryptIdentity{}, fmt.Errorf("bad_request")
 	}
 	identity := awid.E2EEDecryptIdentity{Address: s.identity.Address, DID: s.identity.DID, StableID: s.identity.StableID}
-	keyID, ok := awid.E2EEWrapKeyID(envelope, identity)
-	if !ok {
+	if s.e2eeAssertion != nil && s.e2eePrivateKey != nil {
+		identity.EncryptionKeyID, identity.PrivateKey = strings.TrimSpace(s.e2eeAssertion.EncryptionKeyID), s.e2eePrivateKey
+	}
+	resolved, err := awid.ResolveE2EEDecryptIdentity(envelope, identity, func(keyID string) (*ecdh.PrivateKey, error) {
+		statePath, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: s.residentHome}, "encryption.yaml")
+		if err != nil {
+			return nil, err
+		}
+		return loadEncryptionPrivateKeyForKeyID(statePath, "", s.residentHome, keyID)
+	})
+	var decryption *awid.DecryptionError
+	switch {
+	case err == nil:
+		return resolved, nil
+	case errors.Is(err, awid.ErrE2EENotARecipient):
 		return awid.E2EEDecryptIdentity{}, fmt.Errorf("not_a_recipient")
-	}
-	if keyID == "" {
-		return awid.E2EEDecryptIdentity{}, fmt.Errorf("recipient_key_unavailable")
-	}
-	identity.EncryptionKeyID = keyID
-	activeKeyID := ""
-	if s.e2eeAssertion != nil {
-		activeKeyID = strings.TrimSpace(s.e2eeAssertion.EncryptionKeyID)
-	}
-	if keyID == activeKeyID && s.e2eePrivateKey != nil {
-		identity.PrivateKey = s.e2eePrivateKey
-		return identity, nil
-	}
-	statePath, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: s.residentHome}, "encryption.yaml")
-	if err != nil {
+	case errors.As(err, &decryption) && decryption.Code == "encryption_key_missing":
 		return awid.E2EEDecryptIdentity{}, fmt.Errorf("archived_key_unavailable")
+	default:
+		return awid.E2EEDecryptIdentity{}, fmt.Errorf("decrypt_failed")
 	}
-	privateKey, err := loadEncryptionPrivateKeyForKeyID(statePath, "", s.residentHome, keyID)
-	if err != nil {
-		return awid.E2EEDecryptIdentity{}, fmt.Errorf("archived_key_unavailable")
-	}
-	identity.PrivateKey = privateKey
-	return identity, nil
 }
 
 func (s *custodyService) unwrapE2EEMessage(ctx context.Context, req *awid.E2EEUnwrapRequest) (*awid.E2EEUnwrapResponse, error) {

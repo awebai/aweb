@@ -184,3 +184,95 @@ func TestListingCustodyFailureStillFailsTheListing(t *testing.T) {
 		t.Fatalf("custody failure in a listing: err=%v, want grant_revoked", err)
 	}
 }
+
+func rotatedRecipientClient(t *testing.T, recipient rotatedRecipient, baseURL string) *Client {
+	t.Helper()
+	client, err := NewWithIdentity(baseURL, recipient.signingKey, recipient.did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.SetStableID(recipient.stableID)
+	client.SetAddress("receiver.example/bob")
+	client.SetE2EEKey(recipient.active, recipient.activeKey)
+	client.SetE2EEArchivedKeyLoader(func(keyID string) (*ecdh.PrivateKey, error) {
+		return nil, errors.New("not in the archive")
+	})
+	return client
+}
+
+// docs/e2e-messaging-contract.md:577-595: the reader chooses the wrap whose key
+// id matches a local private key. A self-addressed message sealed after the
+// sender rotated carries a sender copy to the active key and a delivery wrap
+// to the older, still-valid key; the active key opens it even when that older
+// key's archive is gone.
+func TestDecryptPrefersTheWrapForTheActiveKey(t *testing.T) {
+	recipient := newRotatedRecipient(t)
+	envelope, err := EncryptE2EEMail(E2EEEncryptMailParams{
+		Sender:         E2EESenderKey{Address: "receiver.example/bob", DID: recipient.did, StableID: recipient.stableID, EncryptionKey: recipient.active, SigningKey: recipient.signingKey},
+		Recipients:     []E2EERecipientKey{{Address: "receiver.example/bob", DID: recipient.did, StableID: recipient.stableID, EncryptionKey: recipient.archived}},
+		Subject:        "note to self",
+		Body:           "sender copy",
+		MessageID:      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+		ConversationID: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+		CreatedAt:      time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(envelope.KeyWraps) != 2 || envelope.KeyWraps[0].RecipientEncryptionKeyID != recipient.archived.EncryptionKeyID {
+		t.Fatalf("fixture: want the delivery wrap to the archived key first, got %+v", envelope.KeyWraps)
+	}
+	plain, err := rotatedRecipientClient(t, recipient, "http://127.0.0.1:1").DecryptE2EEEnvelope(envelope)
+	if err != nil || plain.Body != "sender copy" {
+		t.Fatalf("self-addressed message with an active sender copy: body=%v err=%v", plain, err)
+	}
+}
+
+// Envelope evidence is checked before any key is chosen, so a tampered
+// envelope is decrypt_failed even when its wrap names a key that is missing.
+func TestDecryptRejectsInvalidEvidenceBeforeKeyLookup(t *testing.T) {
+	recipient := newRotatedRecipient(t)
+	client := rotatedRecipientClient(t, recipient, "http://127.0.0.1:1")
+	tampered := sealedMailTo(t, recipient, recipient.archived, "tampered")
+	tampered.KeyWraps[0].WrappedCEK = tampered.KeyWraps[0].EncapsulatedKey
+	_, err := client.DecryptE2EEEnvelope(tampered)
+	var decryption *DecryptionError
+	if !errors.As(err, &decryption) || decryption.Code != "decrypt_failed" {
+		t.Fatalf("tampered envelope wrapped to a missing key: err=%v, want decrypt_failed", err)
+	}
+}
+
+// A placeholder keeps no sender assertion from the server: it is not a
+// verified sender, so it is not a contact either.
+func TestListingPlaceholderKeepsNoContactAssertion(t *testing.T) {
+	recipient := newRotatedRecipient(t)
+	envelope := sealedMailTo(t, recipient, recipient.archived, "unreadable")
+	contact := true
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/messages/inbox" {
+			_ = json.NewEncoder(w).Encode(InboxResponse{Messages: []InboxMessage{{MessageID: envelope.MessageID, ConversationID: envelope.ConversationID, ContentMode: ContentModeEncryptedV2, MessageVersion: E2EEMessageVersion, Encrypted: envelope, IsContact: &contact}}})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(server.Close)
+	inbox, err := rotatedRecipientClient(t, recipient, server.URL).Inbox(context.Background(), InboxParams{KeepUndecryptable: true})
+	if err != nil || len(inbox.Messages) != 1 {
+		t.Fatalf("inbox: %+v err=%v", inbox, err)
+	}
+	row := inbox.Messages[0]
+	if row.DecryptError != "encryption_key_missing" || row.IsContact != nil {
+		t.Fatalf("placeholder: decrypt_error=%q is_contact=%v, want encryption_key_missing and no contact assertion", row.DecryptError, row.IsContact)
+	}
+	raw, err := json.Marshal(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := fields["is_contact"]; present {
+		t.Fatalf("placeholder JSON kept is_contact: %s", raw)
+	}
+}

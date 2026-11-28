@@ -244,12 +244,14 @@ func prepareIdentityEncryptionKeyForDir(ctx context.Context, workingDir string, 
 	assertion := (*awid.EncryptionKeyAssertion)(nil)
 	status := "published"
 	if record == nil || rotate {
-		createdAt := encryptionKeyClock().UTC()
+		var createdAt time.Time
 		if rotate {
 			createdAt, err = rotationCreatedAt(ctx, identity, record)
 			if err != nil {
 				return idEncryptionKeyOutput{}, err
 			}
+		} else {
+			createdAt = encryptionKeyClock().UTC()
 		}
 		record, assertion, err = createLocalEncryptionKeyRecordAt(identity, signingKey, previousKeyID, createdAt)
 		if err != nil {
@@ -624,6 +626,9 @@ func rotationCreatedAt(ctx context.Context, identity *awconfig.ResolvedIdentity,
 	defer deadline.Stop()
 	for {
 		now := encryptionKeyClock().UTC()
+		if err := ctx.Err(); err != nil {
+			return time.Time{}, err
+		}
 		if now.Truncate(time.Second).After(after) {
 			return now, nil
 		}
