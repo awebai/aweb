@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-28
+* **Harvest**: one proposal from the `approval-service` coordinator seat.
+* **Creation**: lessons [review the operator's worst-case sentence like a contract](review-the-operators-worst-case-sentence.md) and [reach a cross-namespace reviewer through its thread holder](reach-a-cross-namespace-reviewer-through-its-thread-holder.md).
+* **Update**: [ask the operator self-contained questions](ask-the-operator-self-contained-questions.md) and [review requests carry their content](review-requests-carry-their-content.md) link the lessons that refine them.
+
 ## 2026-11-10
 * **Update**: [operating-continuity](operating-continuity.md) and index — the historical coordinator record (decisions, docs and memory) is named at its location in the private ac repository, under `aweb-team-records/agents/coordinator/`, moved from this repository at `07b554c1f`.
 

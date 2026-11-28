@@ -30,6 +30,9 @@ explanation of the same question then got an immediate ruling.
 This sharpens the escalation rule in [drive coordination to done](../aweb-expert/lessons/drive-coordination-to-done.md):
 that concept says which questions to escalate; this says how to ask them.
 
+A custody or risk question also needs its worst-case sentence reviewed before
+it goes out: [review the operator's worst-case sentence like a contract](review-the-operators-worst-case-sentence.md).
+
 ## Provenance
 
 Harvested 2026-10-25 from the `naapps` coordinator seat (Claude memory
