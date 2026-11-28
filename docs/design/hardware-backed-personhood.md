@@ -284,7 +284,9 @@ snapshot and changing the person's binding also take, the issuer:
 
 1. reads the installed snapshot S and the person's current `H_B`;
 2. fixes `issued_at` to its clock and computes
-   `valid_until = min(S.valid_until, issued_at + 31 days)`;
+   `valid_until = min(S.valid_until, issued_at + 31 days)`. For a delegated P
+   it also takes the minimum with the grant's `not_after`, and requires
+   `issued_at` to fall inside the grant's in-force interval (§4.5);
 3. evaluates eligibility with `Snapshot.model(aaguid, now=issued_at, …)` under
    S (§3), and refuses if `issued_at >= S.valid_until`, or if any applicable
    withdrawal in S has an `effectiveDate` at or before `valid_until`;
@@ -357,7 +359,7 @@ fields follow the D2 encoding (`standing-organisation-records.md:25-44`):
 | `revision` | Starts at 1 and increases by exactly 1. The chain runs per namespace and continues across epochs, deletion and re-registration. |
 | `previous` | Null for revision 1, and otherwise the preceding record's digest |
 | `personhood` | `issuer_vouches` (the default meaning of `kind=human`) or `hardware_backing_required` |
-| `grants` | A list, possibly empty, of `{grant_id, key, not_before, not_after}`. `grant_id` is a nonreusable UUID, `key` an Ed25519 `did:key`, and `not_after - not_before` is at most 92 days. |
+| `grants` | A list, possibly empty, of `{grant_id, key, controller_epoch, not_before, not_after}`. `grant_id` is a nonreusable UUID. `key` is an Ed25519 `did:key`. `controller_epoch` is the epoch of the revision that created the grant. `not_after - not_before` is at most 92 days. A grant is **immutable** once committed (see Publication). |
 
 The namespace controller signs it under the open epoch key, in the D2
 envelope.
@@ -370,8 +372,17 @@ that lock the registry:
 - verifies the covering request, and the exact open epoch and its controller,
   independently of the object;
 - requires `revision` = head revision + 1 and `previous` = head digest;
+- requires every listed grant that an earlier revision already listed to be
+  byte-identical to its first committed form. Its key, `controller_epoch`,
+  `not_before` and `not_after` never change;
+- requires a new grant's `controller_epoch` to be the open epoch, and refuses
+  to list a grant whose `controller_epoch` is not the open epoch. Retiring an
+  epoch ends all its grants, with no carry-forward;
 - refuses a `grant_id` that any earlier revision listed and a later revision
-  removed, so a re-addition needs a new `grant_id`.
+  removed;
+- refuses a new grant whose `key` was the key of any earlier grant of this
+  namespace. Renewal always uses fresh key material, so one key is never
+  usable for more than one grant, and never for more than 92 days.
 
 A retry with byte-identical canonical bytes and signature returns the same
 result. A conflicting revision or a stale predecessor is refused, so two
@@ -384,18 +395,22 @@ continues the chain from that tombstone, and the revision never resets.
 **Force intervals.** A revision enters force at its registry commit time. It
 leaves force at the commit time of the next revision, or when its
 `controller_epoch` is retired, whichever comes first. A grant is in force
-from the later of `not_before` and the commit time of the first revision that
-lists it. It leaves force at the earliest of `not_after`, the commit time of
-the first revision that omits it, and the retirement of that revision's epoch.
-Neither the controller's clock nor the delegate's clock sets an interval.
+from the later of `not_before` and `first_committed_at`, the commit time of
+the revision that created it. It leaves force at the earliest of `not_after`,
+the commit time of the first revision that omits it, and the retirement of
+its `controller_epoch`. Neither the controller's clock nor the delegate's
+clock sets an interval.
 
 **Currentness read** (`GET /v1/namespaces/{domain}/issuer-personhood?nonce={nonce}`).
 This is the D2 signed observation, purpose `awid.namespace-read/1` and
 `kind` `issuer_personhood` (`standing-organisation-records.md:180-204`). It
 binds `issuer`, `registry_origin`, `kind`, `domain`, `controller_epoch`, the
 verifier's fresh `nonce`, `observed_at`, an exclusive `expires_at` at most 30
-seconds later, `state`, `revision`, `record_sha256` and the current record's
-`committed_at`, and the registry's pinned `namespace_read` key signs it.
+seconds later, `state`, `revision`, `record_sha256`, the current record's
+`committed_at`, and a `grant_intervals` list. That list holds
+`{grant_id, first_committed_at}` for every listed grant, including grants
+created by an earlier revision than the head. The registry's pinned
+`namespace_read` key signs it.
 `state` is one of:
 
 - `present`, when the head was committed under the **open** epoch. The
@@ -412,9 +427,11 @@ response cannot omit it.
 
 **History read** (`GET /v1/namespaces/{domain}/issuer-personhood/history?at={T}&nonce={nonce}`).
 This is a separate route from currentness. It returns a signed observation of
-kind `issuer_personhood_at`, bound like the current read. It carries the
-revision in force at T with its force interval (`committed_at`, and
-`superseded_at` or null), together with the epoch interval. The interval can
+kind `issuer_personhood_at`, bound like the current read, which also binds the
+requested `at`. It carries the revision in force at T with its force interval
+(`committed_at`, and `superseded_at` or null), the epoch interval, and, for
+each grant that revision lists, its full in-force interval:
+`first_committed_at`, and `removed_at` or null. The interval can
 also be `absent`, meaning none in force at T because nothing had been
 committed by then. Otherwise the read is unavailable. A revision committed
 after T is never in force at T, whatever its signed fields say.
@@ -455,9 +472,17 @@ confirmation or continuity receipt from §4.2 step 2), and `controller_epoch`.
 `D` is the namespace controller's signature, under the open epoch key and
 **only** that key, over `UTF8("aweb.hardware-backing-basis/1\n") + canonical_json(D_body)`.
 
-The controller signs D when §4.2 steps 1-3 hold: at the enrollment commit,
-together with E, and again after a recorded continuity transition. It
-re-signs D after a controller rotation, the same duty as for B. The holder
+`H_D` = SHA256(UTF8(`aweb.hardware-backing-basis-commitment/1\n`) + canonical_json(D)),
+where D is the signed envelope, issuer selector and signature included, as for
+`H_B`.
+
+The controller signs D only when **all four** steps of §4.2 hold, including
+step 4. Step 4 means the basis is eligible under the issuer's currently
+installed snapshot at the moment of the D decision, by the same
+compare-and-sign and the same withdrawal rule as for P. This applies at the
+enrollment commit (together with E), after a recorded continuity transition,
+and every time D is re-signed, including after a controller rotation. A
+model withdrawn between preparing B and deciding D therefore gets no D. The holder
 presents D with P. D carries no model, format or date (§6). A TPM-grade B, a
 passkey B, or a B whose basis never completed its own confirmation therefore
 has no D, and no P can be built on it by anyone.
@@ -479,19 +504,29 @@ currentness observation of the issuing namespace's S (§4.5). To get one, it:
 
 1. resolves the registry and the open epoch independently, from the
    namespace's `_awid` record and the existing ID-tree discovery;
-2. sends its own new nonce;
-3. checks the read signature under the pinned `namespace_read` key, the
-   exact `domain`, `kind`, `controller_epoch` equal to the epoch it resolved,
-   and `expires_at`;
+2. sends its own new 32-byte nonce, **after** it has received the
+   certificate-status response for this link;
+3. checks the read signature under the pinned `namespace_read` key, and then
+   checks each field:
+   - `nonce` equals the nonce it sent;
+   - `registry_origin` equals the origin named by the independently resolved
+     `_awid` record;
+   - `issuer` equals that registry's authority name;
+   - `domain` is the link's exact namespace;
+   - `kind` is `issuer_personhood`;
+   - `controller_epoch` equals the epoch it resolved;
+   - `expires_at` is still in the future
+   (`standing-organisation-records.md:18-27,180-204`);
 4. for `present`, also checks the controller's signature under the open
    epoch key and `record_sha256`.
 
-**Coherence.** The observation's `observed_at` must be no earlier than the
-certificate-status observation this verification used for the same link. A
-verifier may reuse its own observation until `expires_at` only within that
-rule. The issuer commits S before it commits any certificate S covers
-(§8.2). So a cached absence from before publication cannot classify a
-certificate committed after publication.
+**Order.** The S read is a new nonce request, sent only after the link's
+certificate-status response arrived. Ordering comes from that request
+sequence, never from comparing `observed_at` values, which D2 encodes to the
+millisecond and which can be equal. A cached S observation is never reused
+for this classification. The issuer commits S before it commits any
+certificate S covers (§8.2). So a read sent after the certificate was seen
+committed cannot return the pre-publication `absent`.
 
 **Pins.** A verifier that keeps state pins `(revision, record_sha256)` per
 namespace. A lower revision, the same revision with a different digest, or
@@ -530,9 +565,11 @@ needing the one fresh read.
 3. The signature verifies under independently obtained Trust. If `grant` is
    null, the signer is the namespace controller's open epoch key. If `grant`
    is set, then for a current reading the fresh S observation of §5.1 must
-   list that `grant_id` with this `key`. The evaluation time and `issued_at`
-   must both fall inside the grant's in-force interval (§4.5), and
-   `valid_until` must be at most its `not_after`. A grant that has expired
+   list that `grant_id` with this `key`, with its `controller_epoch` equal to
+   the open epoch. Its interval comes from the observation's
+   `grant_intervals`. The evaluation time and `issued_at` must both fall
+   inside the grant's in-force interval (§4.5), and `valid_until` must be at
+   most its `not_after`. A grant that has expired
    or been removed fails every current reading, whatever `issued_at` claims,
    so backdating gains nothing. Removal takes effect for a current reading
    within one observation lifetime, at most 30 seconds after the removing
@@ -553,8 +590,9 @@ needing the one fresh read.
    `H_B(B)` equals `binding`, and B lists `credential` with grade
    `certified_hardware` and the same `grade_policy`. A presented D verifies
    under the namespace controller's open epoch key, `H_D(D)` equals
-   `designation`, and D names the same person, certificate, identity key,
-   `binding` and `credential`. If B or D is absent, the reason is
+   `designation`, D's `namespace` is the link's exact namespace, D's
+   `controller_epoch` is the open epoch (for a current reading), and D names
+   the same person, certificate, identity key, `binding` and `credential`. If B or D is absent, the reason is
    `missing_binding` or `missing_designation`. If either does not match, it
    is `binding_mismatch`.
    The body also satisfies `issued_at < valid_until <= issued_at + 31 days`;
@@ -605,7 +643,7 @@ Each human link gets these results, added beside the existing fields in
 | `personhood.reason` | `issuer_default`, `issuer_statement`, `hardware_backed`, `hardware_backing_required`, `issuer_statement_unavailable`, `issuer_statement_invalid` |
 | `personhood.issuer` | The checked issuing namespace, or null |
 | `hardware_backing.status` | `current`, `lapsed`, `none` or `invalid` |
-| `hardware_backing.reason` | `checked`, `missing_statement`, `missing_binding`, `missing_designation`, `malformed`, `unsupported_version`, `signature_invalid`, `issuer_superseded`, `binding_mismatch`, `not_yet_valid`, `expired`, `not_current`, `trust_input_unavailable` |
+| `hardware_backing.reason` | `checked`, `missing_statement`, `missing_binding`, `missing_designation`, `retrospective_delegated`, `malformed`, `unsupported_version`, `signature_invalid`, `issuer_superseded`, `binding_mismatch`, `not_yet_valid`, `expired`, `not_current`, `trust_input_unavailable` |
 | `hardware_backing.issuer` / `credential` / `assessed_under` / `valid_until` | From a checked P, or null |
 | `hardware_backing.enrollment_proof` | `true`, `false` or null, plus the receipt's event when it is true |
 | `as_of` | The evaluation time, and whether this is a current or a historical reading |
@@ -639,12 +677,27 @@ which is the existing explicit as-of practice (approval-service@be53c0a
 
 Personhood and delegated grants as of T need authenticated S evidence for T.
 That is either the currentness observation the relying party saved at T, or
-a history observation for T (§4.5). Each proves the revision and grants in
-force at T from commit times and epoch boundaries, never from `issued_at`. A
-delegated P counts as of T only if its grant was in force at both T and
-`issued_at`. Without that evidence, personhood as of T is `unknown`
-(`issuer_statement_unavailable`), and a delegated P as of T is
-`trust_input_unavailable`.
+a history observation for T (§4.5). The verifier checks the latter's `at`
+against T, its nonce, and that T lies inside the returned intervals. Each
+proves the revision and grants in force at T from commit times and epoch
+boundaries, never from `issued_at`. Without that evidence, personhood as of T
+is `unknown` (`issuer_statement_unavailable`).
+
+S evidence for T proves the policy and the grant at T. It does not prove that
+P and D existed at T. A leaked grant key, after its grant has ended, could
+sign a new P with an earlier `issued_at` that fits an old grant window. So
+there are two historical modes, and the result names which one ran:
+
+- `as_of_preserved`: P and D are taken from the relying party's own record
+  made at or before T, such as the evidence it saved with its S observation.
+  A delegated P counts only in this mode, and only if its grant was in force
+  at both T and `issued_at`;
+- `retrospective`: P and D are first presented after T. Only a
+  controller-signed P (`grant` null) can count. A delegated P reads
+  `invalid`, reason `retrospective_delegated`.
+
+So a leaked grant key cannot manufacture backing for an earlier window in
+either mode.
 
 A later controller rotation, a key change, or a lapsed P does not change a
 historical reading of a window that P covered. That matches the existing rule
@@ -740,7 +793,11 @@ separately approved step (same document, §7).
   person's key model, or after the pilot stopped renewing them. It lasts until
   the controller publishes an S without the grant (effective within 30
   seconds for any verifier making a fresh read), or until the grant's
-  `not_after`, at most 92 days.
+  `not_after`, at most 92 days. The key is never granted again: every
+  renewal uses a fresh key, and a grant cannot be extended, so 92 days is the
+  limit for that key. After the grant ends, its signatures count only where a
+  relying party had already saved them; they cannot create backing for an
+  earlier period.
 
   It cannot:
   - designate anyone new, or back a passkey, a TPM-grade key, a withdrawn
@@ -748,7 +805,10 @@ separately approved step (same document, §7).
     own confirmation;
   - sign certificates, B, D, E or S;
   - act for any other namespace, including organisations the pilot hosts;
-  - affect a person whose identity key has changed;
+  - affect a person whose identity key has changed, or revive a superseded
+    identity binding. A D for a new binding is a new controller act, with its
+    own eligibility check;
+  - survive a controller rotation: the grant ends with its epoch;
   - change any approval, membership or message verdict.
 
   Holding the key in the pilot is a narrow custody change from F1, so it goes
@@ -1008,15 +1068,34 @@ matter, and each test is paired with a valid neighbouring case:
     `not_after`, is accepted;
   - a P signed after expiry with a backdated `issued_at` fails, as does any
     current reading after `not_after`;
+  - a grant listed continuously across a later unrelated revision keeps its
+    `first_committed_at` from `grant_intervals`, and a P issued after that
+    time is accepted;
+  - a revision that changes a listed grant's `not_after`, key or
+    `controller_epoch` under the same `grant_id` is refused;
+  - after expiry, a new grant with the same key is refused, and a new grant
+    with a fresh key is accepted;
+  - after an epoch retirement, the old epoch's grants fail every current
+    reading, and a revision listing them is refused;
   - after the grant is removed, current readings fail within one observation
-    lifetime, and a re-added key needs a new `grant_id`. The old grant's P
-    stay dead;
-  - an independent historical reading with a history observation for T
-    accepts a P whose grant was in force at T and at `issued_at`;
+    lifetime, and the removed `grant_id` cannot be re-added. The old grant's
+    P stay dead;
+  - a history observation whose signed `at` differs from the requested T, or
+    whose nonce differs, is refused;
+  - `as_of_preserved`: a delegated P saved at T, whose grant was in force at
+    T and at `issued_at`, is accepted;
+  - `retrospective`: the same P first presented after the grant expired reads
+    `retrospective_delegated`, and a controller-signed P is accepted;
   - a delegated key's signature on B, D, E, a certificate or S is refused;
   - controls: a TPM-grade `certified_hardware` B, and a B whose model was
-    withdrawn before designation, have no D, so a delegated P on them reads
-    `missing_designation`.
+    withdrawn after B was prepared but before the D decision, are refused D,
+    so a delegated P on them reads `missing_designation`;
+  - a D with another namespace, or from an earlier `controller_epoch`
+    signed by a key the controller reused, reads `binding_mismatch`.
+- Observation order: a cached `absent` with the same millisecond
+  `observed_at` as a post-commit certificate-status observation is not used.
+  Only a new nonce read sent after the status response classifies, and it
+  returns `present`.
 - Ordering: S revision 1 is committed before the first sign-in certificate.
   A certificate committed before S, which is not allowed, would read
   `vouched` and is the control for that rule.
