@@ -1,6 +1,8 @@
 package awid
 
 import (
+	"context"
+	"crypto/ecdh"
 	"fmt"
 	"reflect"
 	"testing"
@@ -89,5 +91,68 @@ func requireNoSharedStorage(t *testing.T, path string, original, clone reflect.V
 		for i := 0; i < original.NumField(); i++ {
 			requireNoSharedStorage(t, path+"."+original.Type().Field(i).Name, original.Field(i), clone.Field(i))
 		}
+	}
+}
+
+// Open reads its snapshot once: an archive loader that overwrites the verified
+// value with another one cannot change what is opened.
+func TestSignedEnvelopeOpenIsNotRedirectedByTheArchiveLoader(t *testing.T) {
+	recipient := newRotatedRecipient(t)
+	identity := E2EEDecryptIdentity{Address: "receiver.example/bob", DID: recipient.did, StableID: recipient.stableID, EncryptionKeyID: recipient.active.EncryptionKeyID, PrivateKey: recipient.activeKey}
+	first, err := VerifySignedE2EEEnvelope(sealedMailTo(t, recipient, recipient.archived, "the first message"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := VerifySignedE2EEEnvelope(sealedMailTo(t, recipient, recipient.archived, "the second message"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := first.Open(identity, func(string) (*ecdh.PrivateKey, error) {
+		*first = *second
+		return recipient.archivedKey, nil
+	})
+	if err != nil || plain.Body != "the first message" {
+		t.Fatalf("open with a loader that replaced the verified value: body=%v err=%v", plain, err)
+	}
+}
+
+type mutatingUnwrapCustody struct{ fakeE2EECustody }
+
+func (f *mutatingUnwrapCustody) UnwrapE2EEMessage(ctx context.Context, req *E2EEUnwrapRequest) (*E2EEUnwrapResponse, error) {
+	out, err := f.fakeE2EECustody.UnwrapE2EEMessage(ctx, req)
+	req.Envelope.MessageID = "changed by custody"
+	req.Envelope.KeyWraps[0].WrappedCEK = "changed by custody"
+	req.Envelope.Recipients[0].DID = "did:key:changed"
+	return out, err
+}
+
+// A custody provider receives its own copy of a verified envelope, never the
+// snapshot a later decision reads.
+func TestCustodyUnwrapGetsADetachedCopyOfTheVerifiedEnvelope(t *testing.T) {
+	recipient := newRotatedRecipient(t)
+	signed, err := VerifySignedE2EEEnvelope(sealedMailTo(t, recipient, recipient.active, "sealed"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := signed.Envelope()
+	_, sessionKey, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := NewWithGrant("http://127.0.0.1:1", sessionKey, "11111111-1111-4111-8111-111111111111")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.SetGrantSubject("backend:receiver.example", recipient.stableID, recipient.did, "receiver.example/bob", "bob")
+	custody := &mutatingUnwrapCustody{}
+	client.SetPlainMessageSigner(custody)
+	if _, err := client.decryptE2EEEnvelope(context.Background(), nil, signed); err != nil {
+		t.Fatal(err)
+	}
+	if custody.unwrapReq == nil || custody.unwrapReq.Envelope == signed.envelope {
+		t.Fatal("custody received the verified snapshot itself")
+	}
+	if after := signed.Envelope(); !reflect.DeepEqual(after, before) {
+		t.Fatalf("custody changed the verified snapshot: before=%+v after=%+v", before, after)
 	}
 }

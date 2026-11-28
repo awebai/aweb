@@ -189,7 +189,7 @@ func (c *Client) decryptE2EEEnvelope(ctx context.Context, envelope *E2EEMessageE
 			if err != nil {
 				return nil, err
 			}
-			req := &E2EEUnwrapRequest{Version: 1, Operation: "unwrap_e2ee_message", GrantID: strings.TrimSpace(c.grantID), SessionDIDKey: strings.TrimSpace(c.did), TeamID: firstNonEmptyString(c.custodySubject.TeamID, c.teamID), SubjectDIDAW: firstNonEmptyString(c.custodySubject.DIDAW, c.stableID), SubjectDIDKey: strings.TrimSpace(c.custodySubject.DIDKey), Audience: audience, Kind: strings.TrimSpace(envelope.Kind), MessageID: strings.TrimSpace(envelope.MessageID), ConversationID: strings.TrimSpace(envelope.ConversationID), OutputMode: "plaintext", Envelope: envelope}
+			req := &E2EEUnwrapRequest{Version: 1, Operation: "unwrap_e2ee_message", GrantID: strings.TrimSpace(c.grantID), SessionDIDKey: strings.TrimSpace(c.did), TeamID: firstNonEmptyString(c.custodySubject.TeamID, c.teamID), SubjectDIDAW: firstNonEmptyString(c.custodySubject.DIDAW, c.stableID), SubjectDIDKey: strings.TrimSpace(c.custodySubject.DIDKey), Audience: audience, Kind: strings.TrimSpace(envelope.Kind), MessageID: strings.TrimSpace(envelope.MessageID), ConversationID: strings.TrimSpace(envelope.ConversationID), OutputMode: "plaintext", Envelope: cloneE2EEEnvelope(envelope)}
 			if err := SignE2EEUnwrapCustodyProof(c.signingKey, req); err != nil {
 				return nil, err
 			}
@@ -298,14 +298,17 @@ func cloneStringPointer(value *string) *string {
 // Open checks the rest of the envelope's evidence (version, ciphertext and
 // key-wrap hashes) and opens it as OpenE2EEMessage describes.
 func (s *SignedE2EEEnvelope) Open(identity E2EEDecryptIdentity, archived E2EEArchivedKeyLoader) (*E2EEInnerPayload, error) {
-	if err := checkE2EEEnvelopeContents(s.envelope); err != nil {
+	// One read of the snapshot serves the whole open, so nothing the archive
+	// loader does to s can change what is checked, keyed and decrypted.
+	envelope := s.envelope
+	if err := checkE2EEEnvelopeContents(envelope); err != nil {
 		return nil, &DecryptionError{Code: "decrypt_failed", err: err}
 	}
-	identity, err := e2eeDecryptKeyFor(s.envelope, identity, archived)
+	identity, err := e2eeDecryptKeyFor(envelope, identity, archived)
 	if err != nil {
 		return nil, err
 	}
-	return openVerifiedE2EEMessage(s.envelope, identity)
+	return openVerifiedE2EEMessage(envelope, identity)
 }
 
 // e2eeDecryptKeyFor returns identity with the private key that opens a
