@@ -23,20 +23,26 @@ This design does not reopen these decisions.
 
 ## Summary
 
-- Personhood is a new short statement, **P**, that the ID's issuer signs. It
-  says one thing: "this exact person ID, at this exact certificate and
+- **Personhood is the issuer's vouching, as today.** A verified `kind=human`
+  certificate means its issuer vouches, by its own conditions, that one natural
+  person holds the ID (`docs/id-certificates.md:16-20`). An organisation's
+  vouching is unchanged by this design. A verifier sees which issuer vouches
+  and decides whether it trusts that issuer.
+- **The physical-key rule is aweb.ai's condition as an issuer.** It is not
+  everyone's. How aweb.ai applies it to its own issuance is an open decision
+  for Juan (§8).
+- **Hardware backing is new, separate and checkable.** The issuer can sign a
+  short statement, **P**: "this exact person ID, at this exact certificate and
   identity key, is backed by this certified hardware credential, until this
-  date."
-- P sits on top of the enrollment binding **B** that already exists. B is
-  signed by the same issuer, at the approval service (awsign). P adds no
+  date". P sits on top of the enrollment binding **B** that already exists,
+  which the same issuer signs, at the approval service (awsign). P adds no
   second enrollment, no second attestation check, no second metadata loader
-  and no registry record.
-- The default reading is **unknown**. Personhood is unknown when P is absent,
-  expired or fails to verify, and for every agent link. P never says "not a
-  person".
+  and no registry record. Any issuer may sign it. None is required to.
 - P lasts no longer than the FIDO metadata snapshot under which the issuer
-  last assessed the credential. When FIDO withdraws a model, the issuer stops
-  renewing P, and personhood reverts to unknown without a key rotation.
+  last assessed the credential, and never past a withdrawal date the issuer
+  already knows. When FIDO withdraws a model, the issuer stops renewing, and
+  the verifier shows **hardware backing lapsed**. Nothing is revoked, and the
+  person can enrol a current key. P never says "not hardware".
 - The attestation certificate chain and the model identifier stay private to
   the issuer. P carries neither.
 
@@ -51,10 +57,10 @@ This design does not reopen these decisions.
 | `check_registration` | The shared registration verifier. The service and the issuer each run it on the same raw WebAuthn create response. | approval-service@be53c0a `src/approval_service/registration.py:218-341` |
 | Snapshot | A pinned and verified FIDO MDS blob, loaded through `metadata_cache.fetch_and_pin` and `EnrollmentGrading`. | `src/approval_service/metadata.py:79-136`, `grading.py:20-146` |
 
-A `kind=human` ID certificate stays exactly as it is (decision 2). It
-classifies the ID as a person's ID rather than an agent's. Personhood, meaning
-that the issuer stands behind the claim that a natural person holds this ID,
-is reported only from P. See §9 for the contract wording this changes.
+A `kind=human` ID certificate keeps exactly its current meaning (decision 2,
+and `docs/id-certificates.md:16-20`). Its issuer vouches for one natural person,
+by the issuer's own process. P is an additional, independent fact about one
+of that person's credentials. It never creates or removes the vouching.
 
 ## 2. Attestation formats accepted, and why
 
@@ -157,10 +163,10 @@ monitor also apply to the issuer (`docs/deployment.md:62-86`).
 `snapshot_expired`, `snapshot_validation_expired` or `snapshot_unavailable`,
 and passkeys continue (`docs/deployment.md:171-186`). For P it has a second:
 the issuer cannot renew any P without a current snapshot. Existing P therefore
-run out at their own `valid_until`, and personhood reads unknown for every
-hardware-backed person. This is the honest outcome, because the issuer no
-longer has current eligibility data. It does mean the pin renewal now protects
-personhood for every hardware-backed person, not only new enrollments. The
+run out at their own `valid_until`, and hardware backing reads lapsed for
+every hardware-backed person. This is the honest outcome, because the issuer
+no longer has current eligibility data. It does mean the pin renewal now
+protects hardware backing for every person, not only new enrollments. The
 operator's existing expiry alert must name that consequence.
 
 **On withdrawal.** When the issuer installs a new snapshot, it re-evaluates
@@ -181,7 +187,7 @@ exposure is bounded by the 31-day cap and the snapshot cutoff.
 
 ## 4. What the issuer signs, and where
 
-### 4.1 The personhood statement P
+### 4.1 The hardware-backing statement P
 
 The domain and encoding follow the B and E rules: canonical JSON, a literal
 prefix ending in one newline, and an issuer signature
@@ -204,7 +210,7 @@ prefix ending in one newline, and an issuer signature
 | `issued_at` | The issuer's clock time |
 | `valid_until` | The earliest of: the `assessed_under` snapshot's `valid_until`; the earliest `effectiveDate`, after `issued_at`, of any withdrawal report in that snapshot that applies to this AAGUID, or to a certificate in its retained chain (§3); and `issued_at + 31 days` |
 
-`P` = issuer signature over `UTF8("aweb.human-personhood/1\n") + canonical_json(P_body)`.
+`P` = issuer signature over `UTF8("aweb.human-hardware-backing/1\n") + canonical_json(P_body)`.
 The issuer selection and key are those that sign B for this person, and they
 are checked the same way (approval-service@be53c0a `README.md:30-37,148-153`).
 
@@ -293,17 +299,38 @@ the format, the firmware version and the MDS entry. §6 has the full split.
 
 ## 5. How a verifier reads it
 
-### 5.1 The reading rule
+For each **human** link of a checked chain, the verifier reports two
+independent facts: `personhood`, which is the issuer's vouching, and
+`hardware_backing`, which comes from P. An agent link has neither. Its
+responsible human's link carries its own. An agent never inherits a person's
+reading, and an agent can never pass as a person. Neither fact changes the
+message or chain verdict or its exit code (`docs/protocol.md:575-578`).
 
-For each **human** link of a checked chain, the verifier reports
-`personhood`. An agent link never has a personhood reading. Its responsible
-human's link carries its own. An agent never inherits a person's reading. An agent can
-never pass as a person.
+### 5.1 Personhood: the issuer's vouching (unchanged meaning)
 
-The status is `person` only if every check below passes. Otherwise it is
-`unknown`, and a typed reason says why.
+`personhood.status` is `vouched` when this link's certificate verified with
+`kind=human` under the existing chain rules, and `unknown` otherwise.
+`personhood.issuer` is the checked issuing namespace. This is a reading of the
+existing certificate, not a new artifact. The verifier attributes it ("<issuer>
+vouches for a person") and makes no trust decision for the relying party.
 
-1. A P is presented for this link. If not, the reason is `missing_statement`.
+aweb.ai's own issued IDs are the one case still open (§8). Under option A this
+section applies to them unchanged. Under option B, sign-in IDs whose issuer is
+aweb.ai must read `unknown` without hardware, and §8 states what that would
+need.
+
+### 5.2 Hardware backing: the reading rule for P
+
+`hardware_backing.status` is one of these:
+
+- `current` when every check below passes;
+- `lapsed` when checks 1-5 pass, but the evaluation time is at or after
+  `valid_until`;
+- `none` when no P is presented;
+- `invalid` for any other failure, with a typed reason.
+
+1. A P is presented for this link. If not, the status is `none`, with reason
+   `missing_statement`.
 2. The version is supported and the body is well formed and closed. If not,
    `unsupported_version` or `malformed`.
 3. The issuer signature verifies under independently obtained Trust, using the
@@ -315,26 +342,27 @@ The status is `person` only if every check below passes. Otherwise it is
 5. A presented B verifies, `H_B(B)` equals `binding`, and B lists `credential`
    with grade `certified_hardware` and the same `grade_policy`. If B is absent,
    the reason is `missing_binding`. If it does not match, `binding_mismatch`.
-6. `issued_at < valid_until <= issued_at + 31 days`, otherwise the body is
-   `malformed`. The evaluation time is inside `[issued_at, valid_until)`. If
-   not, `not_yet_valid` or `expired`.
+   The body also satisfies `issued_at < valid_until <= issued_at + 31 days`;
+   otherwise it is `malformed`.
+6. The evaluation time is at or after `issued_at` (otherwise `not_yet_valid`)
+   and before `valid_until` (otherwise `lapsed`, reason `expired`).
 7. For a current reading, the certificate and identity key are current under
    fresh public status, using the existing 60-second rule
    (`docs/human-approval-architecture.md:91-94`). If not, the reason is
    `not_current`. If status cannot be read, it is `trust_input_unavailable`.
 
-All three of the following read `unknown` with reason `missing_statement`:
-an ID certificate of `kind=human` with no P, a valid B with only `passkey_uv`
-credentials, and a valid B with a `certified_hardware` credential but no P.
+A holder can always leave out an expired P. In that case `lapsed` and `none`
+both mean the same thing: not hardware-backed now. `lapsed` is shown when
+the evidence is there to show it. Neither status changes `personhood`.
 
-### 5.2 Enrollment proof, reported separately
+### 5.3 Enrollment proof, reported separately
 
-The verifier separately reports `enrollment_proof`. This is optional public
-evidence that the named credential really signed. Only **public identity
-receipts** count: the `enrollment_confirmation` or `enroll_existing_person`
-confirmation receipt, or a continuity-transition receipt
-(`docs/protocol.md:476-483,511-556`). Application receipts and their resources
-stay private and are never used.
+The verifier separately reports `hardware_backing.enrollment_proof`. This is
+optional public evidence that the named credential really signed. Only
+**public identity receipts** count: the `enrollment_confirmation` or
+`enroll_existing_person` confirmation receipt, or a continuity-transition
+receipt (`docs/protocol.md:476-483,511-556`). Application receipts and their
+resources stay private and are never used.
 
 `enrollment_proof` is `true` only when a presented receipt checks fully. Its
 raw UV assertion verifies under the public key that B lists for P's
@@ -346,46 +374,49 @@ and null when no receipt is presented.
 
 A checked receipt shows that the credential was used **at its named event**.
 It does not show that the key was used for this presentation or at the
-evaluation time. The wording says so (§5.3). The attestation itself stays the
+evaluation time. The wording says so (§5.4). The attestation itself stays the
 issuer's assessment, as for B's grade today (`docs/protocol.md:426-436,467-473`).
 Two independent assessments back it: the issuer's own check, and awsign's
 refusal of any grade beyond its own (`registration.py:42-56`).
 
-### 5.3 Result shape and default wording
+### 5.4 Result shape and default wording
 
-Each human link gets one result, added beside the existing fields in
+Each human link gets these results, added beside the existing fields in
 `docs/protocol.md:582-593`:
 
 | Field | Values |
 |---|---|
-| `personhood.status` | `person` or `unknown` |
-| `personhood.reason` | `checked`, `missing_statement`, `missing_binding`, `malformed`, `unsupported_version`, `signature_invalid`, `binding_mismatch`, `not_yet_valid`, `expired`, `not_current`, `trust_input_unavailable` |
-| `personhood.issuer` | The checked issuer namespace, or null |
-| `personhood.basis` / `credential` / `assessed_under` / `valid_until` | From a checked P, or null |
-| `personhood.enrollment_proof` | `true`, `false` or null, plus the receipt's event when it is true |
-| `personhood.as_of` | The evaluation time, and whether this is a current or a historical reading |
+| `personhood.status` | `vouched` or `unknown` |
+| `personhood.issuer` | The checked issuing namespace, or null |
+| `hardware_backing.status` | `current`, `lapsed`, `none` or `invalid` |
+| `hardware_backing.reason` | `checked`, `missing_statement`, `missing_binding`, `malformed`, `unsupported_version`, `signature_invalid`, `binding_mismatch`, `not_yet_valid`, `expired`, `not_current`, `trust_input_unavailable` |
+| `hardware_backing.issuer` / `credential` / `assessed_under` / `valid_until` | From a checked P, or null |
+| `hardware_backing.enrollment_proof` | `true`, `false` or null, plus the receipt's event when it is true |
+| `as_of` | The evaluation time, and whether this is a current or a historical reading |
 
-The default `aw verify` line for each human link:
+The default `aw verify` line for each human link has the personhood phrase,
+then the backing phrase:
 
 | Condition | Text |
 |---|---|
-| `person`, proof true | `personhood: <issuer> states a person, backed by certified hardware until <date>; key used at <event>` |
-| `person`, proof null | `personhood: <issuer> states a person, backed by certified hardware until <date>; enrollment proof not presented` |
-| `person`, proof false | `personhood: <issuer> states a person, backed by certified hardware until <date>; enrollment proof invalid: <reason>` |
-| `unknown`, missing statement | `personhood unknown` |
-| `unknown`, any other reason | `personhood unknown: <reason words>` |
+| `vouched` | `<issuer> vouches for a person` |
+| `unknown` | `personhood unknown` |
+| backing `current`, proof true | `; backed by certified hardware until <date>, key used at <event>` |
+| backing `current`, proof null | `; backed by certified hardware until <date>, enrollment proof not presented` |
+| backing `current`, proof false | `; backed by certified hardware until <date>, enrollment proof invalid: <reason>` |
+| backing `lapsed` | `; hardware backing lapsed on <date>` |
+| backing `none` | nothing appended |
+| backing `invalid` | `; hardware backing invalid: <reason words>` |
 
-The wording always attributes the claim to the issuer. Personhood is
-independent of the message and chain verdict and its exit code, as with the
-evidence results (`docs/protocol.md:575-578`). It is not a person-wide maximum
-grade. The grade of an approval is still the grade of the credential that
-actually signed (`docs/protocol.md:558-563`).
+Both phrases attribute their claim to the issuer. Hardware backing is not a
+person-wide maximum grade. The grade of an approval is still the grade of the
+credential that actually signed (`docs/protocol.md:558-563`).
 
-### 5.4 Historical (as-of) reading
+### 5.5 Historical (as-of) reading
 
 A relying party that saved P, B, any receipt, and as-of Trust (the issuer key
 and the certificate status at time T) can later ask "was this ID
-hardware-backed at T?" The check runs §5.1 with time T and the as-of Trust,
+hardware-backed at T?" The check runs §5.2 with time T and the as-of Trust,
 which is the existing explicit as-of practice (approval-service@be53c0a
 `README.md:23-27,159-160`). Step 7 then uses status as of T.
 
@@ -422,69 +453,107 @@ Further rules:
 
 ## 7. Key loss, rotation and re-enrollment
 
-| Event | Effect on P | Basis |
+| Event | Effect on P and the reading | Basis |
 |---|---|---|
 | Identity-key rotation (enrolled keys unchanged) | The old P binds the old identity key and certificate, so a current reading gives `not_current`. The issuer re-signs B (an existing duty) and then P. No ceremony is needed. | approval-service@be53c0a `README.md:30-37,153-157` |
 | Namespace-controller rotation | P signed by the superseded key no longer verifies for current readings. The issuer re-signs at the next renewal. Historical readings use as-of Trust. | `README.md:30-37` |
-| Basis credential lost, replaced or withdrawn | Replacing or withdrawing an enrolled key changes the identity key (`docs/protocol.md:94-99`). The old P becomes not current. A new P needs a batch-profile `certified_hardware` credential in the new B that completed its own proof (§4.2). If only passkeys remain, personhood is unknown from then on. The retained reference is deleted. | §4.2 |
+| Basis credential lost, replaced or withdrawn | Replacing or withdrawing an enrolled key changes the identity key (`docs/protocol.md:94-99`). The old P becomes not current. A new P needs a batch-profile `certified_hardware` credential in the new B that completed its own proof (§4.2). If only passkeys remain, hardware backing is `none` from then on. Personhood (the issuer's vouching) is unaffected. The retained reference is deleted. | §4.2 |
 | A second hardware credential is still enrolled | The issuer issues the new P on that credential. P names it, and a basis never moves silently. | §4.1 |
 | Re-enrollment at another origin or RP | New B, new assessment, new P. Nothing carries over. | `docs/protocol.md:121-126` |
 | Recovery or recreation after losing every key | A new creation event after an explicit break. P starts over and never inherits the old basis. | `docs/deployment.md:160-167`; `docs/protocol.md:100-106` |
 | ID revoked | Current readings give `not_current`. Retained references are deleted. Historical readings of earlier windows still hold. | §5.4 |
-| Model withdrawn by FIDO | No renewal. The status reverts to unknown at `valid_until`. B's grade is untouched (see §10.4). | §3 |
-| Pin renewal lapses | No renewals. Every P runs out at its `valid_until`. | §3 |
+| Model withdrawn by FIDO | No renewal and no revocation. Backing reads `lapsed` from `valid_until`. The person can enrol a current key, which grounds a new P once it completes its own proof (§4.2). Personhood is unaffected. B's grade is untouched (see §10.4). | §3 |
+| Pin renewal lapses | No renewals. Every P reads `lapsed` after its `valid_until`. | §3 |
 
-## 8. aweb.ai's issuer policy
+## 8. aweb.ai as an issuer
 
-This section is the policy of one issuer: the hosted pilot service (aweb-adyx)
-acting for namespaces it controls. The contract in §§2-7 is generic. An
-organisation's key holder can sign the same P under the same rule.
+The contract in §§2-7 is generic. Any issuer, including an organisation's key
+holder or the hosted service acting as an organisation's issuer, may sign P
+under the same rule. None is required to. This section covers aweb.ai's own
+issuance, for people who sign in.
 
-- For people who sign in to aweb.ai, aweb.ai signs P only under §4.2. Signing
-  in, a verified email, the sign-in second factor, payment, an invitation, a
-  passkey, or custody of the person's key never produces a personhood claim.
-  They all read unknown.
-- The hosted sign-in security key (Juan's sign-in requirement for aweb-adyx)
-  is a credential at the hosted service's own RP. It is **not** a P basis
-  (§10.2). A person can register the same physical key at awsign as a
-  separate credential, which then becomes the basis.
-- For an organisation's IDs that aweb.ai hosts, aweb.ai signs P as that
-  organisation's issuer, under the same v1 rule. The reading attributes it to
-  the organisation's namespace, not to aweb.ai. In v1 there is no other basis
-  that an organisation could choose (§10.1).
+### 8.1 Settled
+
+- aweb.ai signs P only under §4.2. Signing in, a verified email, the sign-in
+  second factor, payment, an invitation, a passkey, or custody of the person's
+  key never produces P.
+- The hosted sign-in security key (Juan's sign-in requirement for aweb-adyx) is
+  a credential at the hosted service's own RP. It is **not** a P basis (§10.2).
+  A person can register the same physical key at awsign as a separate
+  credential, which then becomes the basis.
+- For an organisation's IDs that the hosted service holds, it signs P as that
+  organisation's issuer. The reading attributes P to the organisation's
+  namespace, not to aweb.ai. The organisation's vouching (`kind=human`) is the
+  organisation's, unchanged.
+- In the pilot, the organisation's members are the only person IDs, so they
+  are unaffected by the open decision below.
+- When FIDO withdraws a model, nothing is revoked. The reading shows
+  "hardware backing lapsed", and the person can enrol a current key.
 - The pilot runs the issuer side of §3: its own pin manifest, private cache,
   watcher, monitor and re-evaluation job. It depends on awsign running for
   enrollment (`docs/human-approval-architecture.md:452-453`).
 
+### 8.2 Open decision for Juan: how aweb.ai issues to people who sign in
+
+Decision 3 says aweb.ai reports personhood as unknown unless the person uses a
+physical key. A `kind=human` certificate means its issuer vouches (§5.1), and
+the certificate body is closed (`docs/id-certificates.md:102-116`), so it
+cannot carry a per-issuer condition. That leaves two options. This design does
+not choose between them.
+
+**Option A: a person ID only after hardware.** aweb.ai issues a `kind=human`
+certificate only once the person has enrolled at awsign a credential that
+satisfies §4.2. Until then, a signed-in person has an account but no aweb.ai
+person ID.
+
+- §5.1 applies to aweb.ai's IDs unchanged. Every `kind=human` certificate has
+  one meaning, whichever issuer signed it.
+- P stays the renewable, checkable evidence that aweb.ai's condition was met.
+  A later lapse shows "hardware backing lapsed", and the vouching stays.
+- Cost: sign-in alone does not give a person ID, which changes the pilot's
+  sign-in and onboarding flow.
+
+**Option B: an ID for every sign-in, with personhood unknown.** aweb.ai issues
+a `kind=human` certificate to everyone who signs in. Its sign-in IDs read
+personhood `unknown` unless P is current.
+
+- A verifier must be able to tell that aweb.ai's `kind=human` does not vouch
+  on its own. Nothing a holder presents can carry that, because the holder
+  could leave it out and the reading would fall back to `vouched`. The
+  condition must therefore come from something the holder cannot omit.
+  Either it is a public, issuer-level record discoverable from the namespace,
+  which is a new record and conflicts with the approval protocol's "no new
+  registry record" rule (`docs/protocol.md` §1). Or it is a per-issuer rule
+  built into verifiers, which lets one operator govern the contract.
+- §5.1 would gain that issuer-condition input, and §9 would grow to change
+  `docs/id-certificates.md:16-20` for such issuers.
+- Benefit: every sign-in gets an ID immediately.
+
 ## 9. Contract text this changes
 
-These are identity-path wording changes. They need Juan's recorded approval
-when they are implemented; the coordinator routes that. They are listed here
-so they are changed by an explicit ruling rather than reinterpreted:
+The organisation's vouching keeps its current text, so the change is small:
 
-- `docs/id-certificates.md:16-18`: "A human ID means one natural person …
-  Its issuer vouches for that claim." Proposed text: a human ID is a person's
-  ID, never a shared account or an agent, by its issuer's classification.
-  Whether the issuer stands behind a natural person holding it is the separate
-  personhood statement. Without that statement, personhood is unknown.
-- `docs/human-assurance-contract.md:21-22`: "A verified `kind=human` ID
-  certificate records that its issuer vouches for one person." This changes
-  the same way.
-- The pilot's hosted-service design (row O1) says the issuer vouches
-  for a natural person "only under the checked enrolment ceremony". That needs
-  to say that this vouching is P, under §4.2.
+- `docs/human-approval-architecture.md` "Showing that an ID belongs to a
+  person" gains the hardware-backing statement beside B and E, and the
+  verifier result gains `personhood` and `hardware_backing` (§5.4).
+- `docs/protocol.md` §8.2 and §8.4 in approval-service gain the same result
+  fields and wording, if the P verifier lives in the shared Python and Go
+  verifiers.
+- Under option B only, `docs/id-certificates.md:16-20` and
+  `docs/human-assurance-contract.md:21-22` would need to say that an issuer
+  may declare that its `kind=human` certificates do not vouch on their own.
+  That is an identity-path change, which needs Juan's recorded approval.
+  Under option A they stay unchanged.
 
 ## 10. Rejected alternatives and open points
 
-### 10.1 Open: does an organisation have a basis without hardware?
+### 10.1 Settled: an organisation vouches by its own conditions
 
-Decision 1 says an organisation stands behind its own people. Decision 3
-limits only aweb.ai. An organisation may know its people by its own process,
-such as employment, and could sign a P with a basis like `issuer_attested`.
-The verifier would report it as "<org> states a person, by its own process".
-v1 leaves this out: nobody can check such a claim beyond trusting the
-organisation. Adding it later is a new `basis` value, an additive change.
-**Question for the coordinator.**
+Each issuer vouches by its own conditions (oats-integration-coordinator's
+ruling, relayed by approval-service on 2026-11-28). An organisation's
+`kind=human` certificate already means it vouches for its own people. So v1
+adds no "self-attestation" basis to P, and organisation-issued humans never
+read `unknown` because they lack P. P records only hardware backing.
 
 ### 10.2 Rejected: the sign-in security key as the basis
 
@@ -494,11 +563,12 @@ never presented to anyone else, so no relying party could check possession;
 that is the "claim nobody can check". It would also create a second binding
 mechanism next to B. Using the awsign credential reuses B and its receipts.
 
-### 10.3 Rejected: reading personhood from B's grade alone
+### 10.3 Rejected: reading hardware backing from B's grade alone
 
 B has no lifetime. Its currentness is anchored to the identity key
 (`docs/protocol.md:94-99`). A grade signed before a FIDO withdrawal would keep
-reading "person" indefinitely: an overclaim that grows silently. E records
+reading "backed by certified hardware" indefinitely: an overclaim that grows
+silently. E records
 events and is not a renewable state, so it was rejected for the same reason.
 Registry publication was rejected as well: it would contradict "a bare ID
 cannot be looked up for its grade"
@@ -511,8 +581,9 @@ model. A pin reload changes only the snapshot used for new registrations
 (approval-service@be53c0a `grading.py:84-123`). Act verification consumes the
 signed grade (`verify/receipt.go:168-193`). An approval requirement of
 `hardware` would therefore still be met by a withdrawn model until rotation,
-retirement or replacement ends the binding. P avoids this for personhood. Whether
-approvals need the same treatment is the approval service's decision.
+retirement or replacement ends the binding. P avoids this for hardware
+backing. Approvals are tracked separately as approval-service task
+aweb-adrj.11. The `tpm` and `apple` finding is aweb-adrj.10.
 
 ### 10.5 Open: does "physical key" cover certified platform authenticators?
 
@@ -522,14 +593,14 @@ definition qualifies. The alternative is to also require the MDS
 `attachmentHint` to be external, which would mean a roaming security key only.
 That would be a second hardware definition beside the shared grade. The
 recommendation is to keep v1 as written. `docs/human-approval-architecture.md:334`
-says "certified security key", so this should be confirmed. **Question for
-the coordinator.**
+says "certified security key". **This is with Juan.** Until he answers, v1
+keeps the shared grade, with platform authenticators included.
 
 ### 10.6 Follow-up: carriage in messages
 
 Ordinary mail and chat carry the chain without evidence
-(`docs/human-approval-architecture.md:161-162`), so personhood reads unknown
-there until evidence carriage exists. A separate design will cover how a
+(`docs/human-approval-architecture.md:161-162`), so hardware backing reads
+`none` there until evidence carriage exists. A separate design will cover how a
 person's current P reaches the export-envelope `evidence` member, and the
 mail sent by the person's agents.
 
@@ -547,11 +618,11 @@ mail sent by the person's agents.
 
 | New | Why it is not a reuse |
 |---|---|
-| Statement P and its domain `aweb.human-personhood/1` | B and E cannot express a claim that expires when eligibility lapses (§10.3) |
+| Statement P and its domain `aweb.human-hardware-backing/1` | B and E cannot express a claim that expires when eligibility lapses (§10.3) |
 | `AttestationAssessment`, a private result of the same `check_registration` pass (§4.2a) | `RegisteredCredential` exposes no format, AAGUID, chain or root. This is an API addition, not a second verifier. |
 | Issuer's private retained assessment, its committed-basis observation, and its re-evaluation job | Nothing retains it today. The key holder persists only the selector, public key, grade, snapshot digest and policy id (key-holder@16752b74 `enrollment.py:783-801`). awsign clears raw registration at activation. Public verifiers cannot see the AAGUID. Only the issuer can honour a withdrawal. |
 | The P basis restricted to the batch profile (`aweb-attestation-batch-v1`) | `tpm`, `apple`, AttCA, AnonCA and mixed profiles have no established privacy (§2) |
-| The verifier's `personhood` result and wording | No existing field reports the issuer's personhood claim |
+| The verifier's `personhood` and `hardware_backing` results and wording | No existing field names who vouches, or reports hardware backing per link |
 | The issuer's own pin installation | Required independence: the issuer never uses awsign's snapshot (`registration.py:228-234`) |
 
 Not reused: awsign's metadata cache (independence), B as the carrier of the
@@ -564,19 +635,24 @@ Following the lesson *vary independent assurance dimensions*
 each test holds the authorising fact fixed and varies a property that must not
 matter, and each test is paired with a valid neighbouring case:
 
-- With a `certified_hardware` `packed` credential and a valid P held fixed,
-  vary custody (hosted or self-held), the sign-in method, email verification
-  and team membership. The reading stays `person`.
+- With a batch-profile `certified_hardware` credential and a valid P held
+  fixed, vary custody (hosted or self-held), the sign-in method, email
+  verification and team membership. Backing stays `current`.
 - With a valid B holding only `passkey_uv` held fixed, vary everything else,
-  including a `kind=human` certificate and a hardware sign-in key at the
-  hosted RP. The reading stays `unknown`.
-- An agent link under a person with a valid P reads no personhood. The
-  person's link reads `person`.
-- P expired by one second, P one second before `issued_at`, P for another
-  certificate digest, P whose `H_B` does not match, and P whose credential is
-  `passkey_uv` in B each give `unknown` with their distinct reasons.
+  including a hardware sign-in key at the hosted RP. Backing stays `none`.
+- With an organisation's verified `kind=human` certificate held fixed, add or
+  remove P, or let it lapse. Personhood stays `vouched` by that organisation
+  throughout. Only backing changes.
+- An agent link under a person with a valid P reads neither personhood nor
+  backing. The person's link reads `vouched` and `current`.
+- P past its `valid_until` reads `lapsed`. P one second before `issued_at`,
+  P for another certificate digest, P whose `H_B` does not match, and P whose
+  credential is `passkey_uv` in B each read `invalid`, with distinct reasons.
 - P signed by a superseded controller key gives `not_current` when read now,
-  and `person` when read as of a time inside its window.
+  and `current` when read as of a time inside its window.
+- A FIDO withdrawal leaves the certificate unrevoked. Backing reads `lapsed`
+  after `valid_until`. A newly enrolled current key that completes its own
+  proof reads `current` again.
 - A synthetic-vendor-root snapshot that adds an unscoped `REVOKED`, and one
   that adds a batch-scoped withdrawal (the existing test approach,
   approval-service `README.md:83-86`), stop the renewal of P only for the
