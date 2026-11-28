@@ -18,3 +18,7 @@ text = true
 name = "DocCheck"
 roots = ["TrustWeb.DocNames"]
 needs = ["readme", "claims"]
+
+[[lean_exe]]
+name = "trust-web-cases"
+root = "TrustWeb.Emit"
