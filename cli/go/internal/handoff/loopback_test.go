@@ -2,8 +2,11 @@ package handoff
 
 import (
 	"context"
+	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -49,13 +52,61 @@ func TestRedirectURIIsALiteralLoopbackAddress(t *testing.T) {
 
 func TestTheFirstExactCallbackYieldsTheCode(t *testing.T) {
 	l := listen(t)
-	if status := get(t, callback(l, "handoff_id=h1&code="+testCode)); status != http.StatusOK {
-		t.Fatalf("status %d", status)
+	type result struct {
+		code string
+		err  error
 	}
-	code, err := l.Wait(context.Background(), time.Now().Add(time.Minute))
-	if err != nil || code != testCode {
-		t.Fatalf("code %q err %v", code, err)
+	waited := make(chan result, 1)
+	go func() {
+		code, err := l.Wait(context.Background(), time.Now().Add(time.Minute))
+		waited <- result{code, err}
+	}()
+	resp, err := http.Get(callback(l, "handoff_id=h1&code="+testCode))
+	if err != nil {
+		t.Fatal(err)
 	}
+	page, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil || resp.StatusCode != http.StatusOK || string(page) != callbackPage {
+		t.Fatalf("status %d page %q err %v", resp.StatusCode, page, err)
+	}
+	if r := <-waited; r.err != nil || r.code != testCode {
+		t.Fatalf("code %q err %v", r.code, r.err)
+	}
+}
+
+func TestTheAcceptedCallbackClosesTheListenerBeforeHandingOverTheCode(t *testing.T) {
+	l := listen(t)
+	get(t, callback(l, "handoff_id=h1&code="+testCode))
+	// The browser can return before aw reaches Wait: the code handed over,
+	// not Wait, marks the end of the accepted callback.
+	if code := <-l.codes; code != testCode {
+		t.Fatalf("code %q", code)
+	}
+	if conn, err := net.Dial("tcp", l.listener.Addr().String()); err == nil {
+		conn.Close()
+		t.Fatal("listener still accepts connections")
+	}
+}
+
+func TestWaitReleasesTheListeningSocketBeforeServingHasStarted(t *testing.T) {
+	// One processor keeps the serving goroutine from starting before Wait.
+	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(1))
+	l, err := ListenLoopback()
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := l.listener.Addr().String()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := l.Wait(ctx, time.Now().Add(time.Minute)); err != context.Canceled {
+		t.Fatalf("err %v", err)
+	}
+	again, err := net.Listen("tcp", address)
+	if err != nil {
+		t.Fatalf("listening socket still held: %v", err)
+	}
+	again.Close()
 }
 
 func TestEveryOtherRequestIsNotFoundAndYieldsNothing(t *testing.T) {
