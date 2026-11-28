@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
 
-from aweb.mcp.tools.mail import check_inbox as _check_inbox_impl
+from aweb.mcp.tools.mail import check_mail as _check_mail_impl
 from aweb.mcp.tools.mail import list_threads as _list_threads_impl
 from aweb.mcp.tools.mail import send_mail as _send_mail_impl
 
@@ -70,7 +70,7 @@ def register_tools(mcp: FastMCP, dependencies: ToolDependencies) -> None:
         unread_only: bool = True, limit: int = 50, include_bodies: bool = True
     ) -> str:
         """Check hosted mail. The tool marks returned unread messages read before returning. The hosted service decrypts managed encrypted mail for this MCP session; self-custodial encrypted content remains metadata-only."""
-        return await _check_inbox_impl(
+        return await _check_mail_impl(
             dependencies.db_infra,
             hosted_decryptor=dependencies.hosted_decryptor,
             unread_only=unread_only,

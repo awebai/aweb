@@ -283,7 +283,7 @@ async def test_literal_key_cannot_read_count_or_ack_a_normalized_global_thread(
             ),
         )
         response = json.loads(
-            await mail_tools.check_inbox(SimpleNamespace(get_manager=lambda _: db))
+            await mail_tools.check_mail(SimpleNamespace(get_manager=lambda _: db))
         )
         assert {UUID(m["message_id"]) for m in response["messages"]} == {local}, (
             response

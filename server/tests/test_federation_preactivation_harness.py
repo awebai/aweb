@@ -1238,7 +1238,7 @@ async def test_mcp_cross_registry_uses_production_strict_authority_not_home_regi
                 )
             else:
                 result = json.loads(
-                    await mcp_chat_tools.chat_send(
+                    await mcp_chat_tools.send_chat(
                         type(
                             "DB",
                             (),

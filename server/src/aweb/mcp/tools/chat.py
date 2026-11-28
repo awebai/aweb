@@ -35,7 +35,7 @@ from aweb.messaging.verification import (
     verified_signed_recipient_fields,
 )
 from aweb.messaging.waiting import register_waiting, unregister_waiting
-from aweb.messaging.chat_read import mark_chat_read
+from aweb.messaging.chat_read import mark_chat_read as mark_chat_messages_read
 from aweb.mcp.auth import current_agent_wake_publisher, get_auth
 from aweb.mcp.signing import (
     HostedMessageDecryptor,
@@ -64,7 +64,7 @@ from aweb.messaging.chat_send import (
     ChatSessionSelection,
     resolve_actor_agent,
     resolve_chat_targets,
-    send_chat,
+    send_chat as send_chat_message,
 )
 from aweb.messaging.chat_models import (
     CreateSessionRequest,
@@ -380,7 +380,7 @@ async def _resolve_chat_target_for_tool(
 
 
 @messaging_tool
-async def chat_send(
+async def send_chat(
     db_infra,
     redis,
     *,
@@ -571,7 +571,7 @@ async def chat_send(
                 )
             )
         try:
-            sent = await send_chat(db_infra, sender, target, payload, runtime)
+            sent = await send_chat_message(db_infra, sender, target, payload, runtime)
         except ChatSessionChanged:
             continue
         except (ServiceError, HTTPException, FederationAuthorityError) as exc:
@@ -612,7 +612,7 @@ async def chat_send(
 
 
 @messaging_tool
-async def chat_pending(
+async def check_chats(
     db_infra,
     redis,
     *,
@@ -671,7 +671,7 @@ async def chat_pending(
 
 
 @messaging_tool
-async def chat_history(
+async def read_chat(
     db_infra,
     *,
     session_id: str,
@@ -754,7 +754,7 @@ async def chat_history(
 
 
 @messaging_tool
-async def chat_read(
+async def mark_chat_read(
     db_infra,
     *,
     session_id: str,
@@ -789,7 +789,7 @@ async def chat_read(
         return json.dumps({"error": "up_to_message_id or message_ids is required"})
 
     try:
-        result = await mark_chat_read(
+        result = await mark_chat_messages_read(
             db_infra,
             redis,
             mcp_messaging_auth(auth),

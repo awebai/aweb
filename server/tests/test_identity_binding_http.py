@@ -728,7 +728,7 @@ async def test_stored_mail_and_chat_routes_keep_recipient_policy(
     from fastapi import FastAPI
     from starlette.responses import JSONResponse
     from aweb.mcp.auth import MCPAuthMiddleware
-    from aweb.mcp.tools.chat import chat_send
+    from aweb.mcp.tools.chat import send_chat
 
     env = privacy_app
     sender, recipient = env.actors["alice"], env.actors["bob"]
@@ -862,7 +862,7 @@ async def test_stored_mail_and_chat_routes_keep_recipient_policy(
 
         @mcp_app.post("/")
         async def continue_chat():
-            result = await chat_send(
+            result = await send_chat(
                 env.infra,
                 env.redis,
                 registry_client=registry,
@@ -982,13 +982,13 @@ async def test_retired_group_member_does_not_relax_live_member_policy(privacy_ap
         from fastapi import FastAPI
         from fastapi.responses import JSONResponse
         from aweb.mcp.auth import MCPAuthMiddleware
-        from aweb.mcp.tools.chat import chat_send
+        from aweb.mcp.tools.chat import send_chat
 
         mcp_app = FastAPI()
 
         @mcp_app.post("/")
         async def continue_group_chat():
-            result = await chat_send(
+            result = await send_chat(
                 env.infra,
                 env.redis,
                 registry_client=registry,

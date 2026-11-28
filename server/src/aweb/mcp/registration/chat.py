@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
 
-from aweb.mcp.tools.chat import chat_history as _chat_history_impl
-from aweb.mcp.tools.chat import chat_pending as _chat_pending_impl
-from aweb.mcp.tools.chat import chat_read as _chat_read_impl
-from aweb.mcp.tools.chat import chat_send as _chat_send_impl
+from aweb.mcp.tools.chat import read_chat as _read_chat_impl
+from aweb.mcp.tools.chat import check_chats as _check_chats_impl
+from aweb.mcp.tools.chat import mark_chat_read as _mark_chat_read_impl
+from aweb.mcp.tools.chat import send_chat as _send_chat_impl
 
 from .dependencies import ToolDependencies
 
@@ -40,7 +40,7 @@ def register_tools(mcp: FastMCP, dependencies: ToolDependencies) -> None:
             to_address = recipient_ref
         else:
             to_alias = recipient_ref
-        return await _chat_send_impl(
+        return await _send_chat_impl(
             dependencies.db_infra,
             dependencies.redis,
             registry_client=dependencies.registry_client,
@@ -68,7 +68,7 @@ def register_tools(mcp: FastMCP, dependencies: ToolDependencies) -> None:
     )
     async def check_chats() -> str:
         """List chat conversations with unread messages waiting for you."""
-        return await _chat_pending_impl(
+        return await _check_chats_impl(
             dependencies.db_infra,
             dependencies.redis,
             hosted_decryptor=dependencies.hosted_decryptor,
@@ -79,7 +79,7 @@ def register_tools(mcp: FastMCP, dependencies: ToolDependencies) -> None:
         conversation_id: str, unread_only: bool = False, limit: int = 50
     ) -> str:
         """Get message history for a chat session."""
-        return await _chat_history_impl(
+        return await _read_chat_impl(
             dependencies.db_infra,
             session_id=conversation_id,
             unread_only=unread_only,
@@ -97,7 +97,7 @@ def register_tools(mcp: FastMCP, dependencies: ToolDependencies) -> None:
         message_ids: list[str] | None = None,
     ) -> str:
         """Mark chat messages read using up_to_message_id, message_ids, or both; message_ids takes precedence."""
-        return await _chat_read_impl(
+        return await _mark_chat_read_impl(
             dependencies.db_infra,
             session_id=conversation_id,
             up_to_message_id=up_to_message_id,

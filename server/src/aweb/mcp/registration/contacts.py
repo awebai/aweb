@@ -5,11 +5,11 @@ from __future__ import annotations
 from mcp.server.fastmcp import FastMCP
 
 from aweb.mcp.tools.contacts import add_contact_by_handle as _add_contact_by_handle_impl
-from aweb.mcp.tools.contacts import contacts_add as _contacts_add_impl
-from aweb.mcp.tools.contacts import contacts_remove as _contacts_remove_impl
-from aweb.mcp.tools.contacts import list_contacts_tool as _list_contacts_tool_impl
+from aweb.mcp.tools.contacts import add_contact as _add_contact_impl
+from aweb.mcp.tools.contacts import list_contacts as _list_contacts_impl
+from aweb.mcp.tools.contacts import remove_contact as _remove_contact_impl
 from aweb.mcp.tools.contacts import (
-    read_messages_from_contact as _read_messages_from_contact_impl,
+    read_contact_messages as _read_contact_messages_impl,
 )
 
 from .dependencies import ToolDependencies
@@ -24,12 +24,12 @@ def register_tools(mcp: FastMCP, dependencies: ToolDependencies) -> None:
     )
     async def list_contacts() -> str:
         """List saved contacts for the authenticated identity."""
-        return await _list_contacts_tool_impl(dependencies.db_infra)
+        return await _list_contacts_impl(dependencies.db_infra)
 
     @mcp.tool(name="add_contact", description="Add a contact by routable address.")
     async def add_contact(address: str, label: str = "") -> str:
         """Add a contact by routable address."""
-        return await _contacts_add_impl(
+        return await _add_contact_impl(
             dependencies.db_infra,
             contact_address=address,
             label=label,
@@ -49,7 +49,7 @@ def register_tools(mcp: FastMCP, dependencies: ToolDependencies) -> None:
     @mcp.tool(name="remove_contact", description="Remove a saved contact.")
     async def remove_contact(contact_id: str) -> str:
         """Remove a saved contact."""
-        return await _contacts_remove_impl(dependencies.db_infra, contact_id=contact_id)
+        return await _remove_contact_impl(dependencies.db_infra, contact_id=contact_id)
 
     @mcp.tool(
         name="read_contact_messages",
@@ -59,7 +59,7 @@ def register_tools(mcp: FastMCP, dependencies: ToolDependencies) -> None:
         contact_id: str, channel: str = "mail", limit: int = 50
     ) -> str:
         """Read hosted mail or chat messages exchanged with a saved contact. Encrypted E2E mail content is returned as metadata only; read it in a local aw client."""
-        return await _read_messages_from_contact_impl(
+        return await _read_contact_messages_impl(
             dependencies.db_infra,
             registry_client=dependencies.registry_client,
             contact_id=contact_id,

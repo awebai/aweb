@@ -453,7 +453,7 @@ async def send_mail(
 
 
 @messaging_tool
-async def check_inbox(
+async def check_mail(
     db_infra,
     *,
     hosted_decryptor: HostedMessageDecryptor | None = None,

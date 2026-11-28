@@ -449,7 +449,7 @@ async def test_consumer_mcp_add_contact_by_hosted_handle_rejects_bad_namespace(
 
 
 @pytest.mark.asyncio
-async def test_consumer_mcp_contacts_add_normalizes_hosted_handle_address(
+async def test_consumer_mcp_add_contact_normalizes_hosted_handle_address(
     aweb_cloud_db,
     monkeypatch,
 ):
@@ -465,7 +465,7 @@ async def test_consumer_mcp_contacts_add_normalizes_hosted_handle_address(
         )
     )
     result = json.loads(
-        await contacts_tools.contacts_add(
+        await contacts_tools.add_contact(
             DBInfra(aweb_cloud_db.aweb_db),
             contact_address="@jane/c3po",
             label="C-3PO",
@@ -515,7 +515,7 @@ async def test_mcp_mail_send_to_hosted_handle_uses_canonical_address(
 
 
 @pytest.mark.asyncio
-async def test_mcp_chat_send_to_hosted_handle_uses_canonical_address(
+async def test_mcp_send_chat_to_hosted_handle_uses_canonical_address(
     aweb_cloud_db, monkeypatch
 ):
     alice_agent_id, _ = await _seed_team(aweb_cloud_db.aweb_db)
@@ -523,7 +523,7 @@ async def test_mcp_chat_send_to_hosted_handle_uses_canonical_address(
     _patch_auth(monkeypatch, _auth(agent_id=alice_agent_id))
 
     result = json.loads(
-        await chat_tools.chat_send(
+        await chat_tools.send_chat(
             DBInfra(aweb_cloud_db.aweb_db),
             redis=None,
             registry_client=None,
@@ -545,7 +545,7 @@ async def test_mcp_chat_send_to_hosted_handle_uses_canonical_address(
 
 
 @pytest.mark.asyncio
-async def test_consumer_mcp_read_messages_from_contact_filters_on_server_side(
+async def test_consumer_mcp_read_contact_messages_filters_on_server_side(
     aweb_cloud_db, monkeypatch
 ):
     alice_agent_id, bob_agent_id = await _seed_team(aweb_cloud_db.aweb_db)
@@ -601,7 +601,7 @@ async def test_consumer_mcp_read_messages_from_contact_filters_on_server_side(
     )
 
     result = json.loads(
-        await contacts_tools.read_messages_from_contact(
+        await contacts_tools.read_contact_messages(
             DBInfra(aweb_cloud_db.aweb_db),
             registry_client=None,
             contact_id=str(contact["contact_id"]),
@@ -614,7 +614,7 @@ async def test_consumer_mcp_read_messages_from_contact_filters_on_server_side(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("channel", ["mail", "chat"])
-async def test_read_messages_from_contact_does_not_read_an_earlier_holder_of_the_address(
+async def test_read_contact_messages_does_not_read_an_earlier_holder_of_the_address(
     aweb_cloud_db,
     monkeypatch,
     channel,
@@ -691,7 +691,7 @@ async def test_read_messages_from_contact_does_not_read_an_earlier_holder_of_the
         )
 
     result = json.loads(
-        await contacts_tools.read_messages_from_contact(
+        await contacts_tools.read_contact_messages(
             DBInfra(aweb_cloud_db.aweb_db),
             registry_client=None,
             contact_id=str(contact["contact_id"]),
@@ -703,7 +703,7 @@ async def test_read_messages_from_contact_does_not_read_an_earlier_holder_of_the
 
 
 @pytest.mark.asyncio
-async def test_consumer_mcp_read_messages_from_contact_returns_encrypted_mail_metadata_only(
+async def test_consumer_mcp_read_contact_messages_returns_encrypted_mail_metadata_only(
     aweb_cloud_db,
     monkeypatch,
 ):
@@ -764,7 +764,7 @@ async def test_consumer_mcp_read_messages_from_contact_returns_encrypted_mail_me
     )
 
     result = json.loads(
-        await contacts_tools.read_messages_from_contact(
+        await contacts_tools.read_contact_messages(
             DBInfra(aweb_cloud_db.aweb_db),
             registry_client=None,
             contact_id=str(contact["contact_id"]),

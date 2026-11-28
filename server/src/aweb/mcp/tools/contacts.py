@@ -18,11 +18,11 @@ from aweb.mcp.auth import get_auth
 from aweb.mcp.tools.mail import mcp_mail_message_from_row
 from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
 from aweb.messaging.contacts import (
-    add_contact,
+    add_contact as add_contact_record,
     add_handle_contact,
-    list_contacts,
+    list_contacts as list_contact_records,
     normalize_owner_dids,
-    remove_contact,
+    remove_contact as remove_contact_record,
     resolve_handle_contact_agent,
 )
 from aweb.messaging.verification import verified_signed_recipient_fields
@@ -30,25 +30,19 @@ from aweb.service_errors import ServiceError, ValidationError
 
 
 @messaging_tool
-async def contacts_list(db_infra) -> str:
+async def list_contacts(db_infra) -> str:
     """List all contacts for the authenticated identity."""
     auth = get_auth()
     owner_dids = normalize_owner_dids(owner_dids=[auth.did_aw, auth.did_key])
     try:
-        contacts = await list_contacts(db_infra, owner_dids=owner_dids)
+        contacts = await list_contact_records(db_infra, owner_dids=owner_dids)
     except ServiceError as exc:
         return json.dumps({"error": exc.detail})
     return json.dumps({"contacts": contacts})
 
 
 @messaging_tool
-async def list_contacts_tool(db_infra) -> str:
-    """Consumer-friendly alias for contacts_list."""
-    return await contacts_list(db_infra)
-
-
-@messaging_tool
-async def contacts_add(
+async def add_contact(
     db_infra,
     *,
     contact_address: str,
@@ -68,7 +62,7 @@ async def contacts_add(
             normalize_hosted_handle_reference(contact_address),
             source_ip=mcp_sender_budget_key(auth),
         )
-        result = await add_contact(
+        result = await add_contact_record(
             db_infra,
             owner_did=owner_did,
             contact_address=resolved.canonical_address,
@@ -109,7 +103,7 @@ async def add_contact_by_handle(db_infra, *, handle: str, label: str = "") -> st
 
 
 @messaging_tool
-async def read_messages_from_contact(
+async def read_contact_messages(
     db_infra,
     *,
     registry_client,
@@ -138,16 +132,18 @@ async def read_messages_from_contact(
 
 
 @messaging_tool
-async def contacts_remove(db_infra, *, contact_id: str) -> str:
+async def remove_contact(db_infra, *, contact_id: str) -> str:
     """Remove a contact for the authenticated identity."""
     auth = get_auth()
     owner_dids = normalize_owner_dids(owner_dids=[auth.did_aw, auth.did_key])
     try:
-        await remove_contact(db_infra, owner_dids=owner_dids, contact_id=contact_id)
+        await remove_contact_record(
+            db_infra, owner_dids=owner_dids, contact_id=contact_id
+        )
     except ServiceError as exc:
         return json.dumps({"error": exc.detail})
 
-    # remove_contact already validated the UUID; normalize for the response.
+    # remove_contact_record already validated the UUID; normalize for the response.
     try:
         normalized_id = str(UUID(contact_id.strip()))
     except (ValueError, TypeError, AttributeError):

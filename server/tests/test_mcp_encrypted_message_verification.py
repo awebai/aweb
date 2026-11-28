@@ -158,7 +158,7 @@ async def test_hosted_encrypted_chat_reads_verified_under_the_senders_address(
 
     monkeypatch.setattr(chat_tools, "get_auth", lambda: _auth(m))
     sent = json.loads(
-        await chat_tools.chat_send(
+        await chat_tools.send_chat(
             db,
             None,
             registry_client=None,
@@ -173,7 +173,7 @@ async def test_hosted_encrypted_chat_reads_verified_under_the_senders_address(
     for reader in (m, bond):
         monkeypatch.setattr(chat_tools, "get_auth", lambda reader=reader: _auth(reader))
         history = json.loads(
-            await chat_tools.chat_history(
+            await chat_tools.read_chat(
                 db, session_id=conversation_id, hosted_decryptor=decryptor
             )
         )
@@ -196,7 +196,7 @@ async def test_hosted_encrypted_chat_reads_verified_under_the_senders_address(
     )
     monkeypatch.setattr(chat_tools, "get_auth", lambda: _auth(bond))
     history = json.loads(
-        await chat_tools.chat_history(
+        await chat_tools.read_chat(
             db, session_id=conversation_id, hosted_decryptor=None
         )
     )
@@ -215,7 +215,7 @@ async def test_hosted_encrypted_chat_wait_reply_names_the_senders_address(
     m_encryptor, _ = _custody(m, bond)
     monkeypatch.setattr(chat_tools, "get_auth", lambda: _auth(m))
     sent = json.loads(
-        await chat_tools.chat_send(
+        await chat_tools.send_chat(
             db,
             None,
             registry_client=None,
@@ -266,7 +266,7 @@ async def test_hosted_encrypted_mail_reads_verified_and_a_tampered_one_fails(
     assert "error" not in sent, sent
 
     monkeypatch.setattr(mail_tools, "get_auth", lambda: _auth(bond))
-    inbox = json.loads(await mail_tools.check_inbox(db, hosted_decryptor=decryptor))
+    inbox = json.loads(await mail_tools.check_mail(db, hosted_decryptor=decryptor))
     [message] = inbox["messages"]
     assert message["body"] == "Signed by m", message
     assert message["verification_status"] == "verified", message
@@ -284,7 +284,7 @@ async def test_hosted_encrypted_mail_reads_verified_and_a_tampered_one_fails(
         row["message_id"],
     )
     inbox = json.loads(
-        await mail_tools.check_inbox(db, hosted_decryptor=None, unread_only=False)
+        await mail_tools.check_mail(db, hosted_decryptor=None, unread_only=False)
     )
     assert inbox["messages"][0]["verification_status"] == "failed"
 
@@ -322,7 +322,7 @@ async def test_hosted_encrypted_mail_reads_verified_from_a_contact(
 
     monkeypatch.setattr(contacts_tools, "get_auth", lambda: _auth(bond))
     result = json.loads(
-        await contacts_tools.read_messages_from_contact(
+        await contacts_tools.read_contact_messages(
             db, registry_client=None, contact_id=str(contact_id), channel="mail"
         )
     )

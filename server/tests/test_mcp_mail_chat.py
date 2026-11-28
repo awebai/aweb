@@ -1226,7 +1226,7 @@ async def test_mcp_send_mail_continues_first_legacy_bound_conversation(
         )
     )
     inbox = json.loads(
-        await mail_tools.check_inbox(
+        await mail_tools.check_mail(
             DBInfra(aweb_cloud_db.aweb_db),
             unread_only=False,
         )
@@ -1640,7 +1640,7 @@ async def test_mcp_send_mail_fails_closed_for_trusted_proxy_without_workspace_id
 
 
 @pytest.mark.asyncio
-async def test_mcp_chat_send_rejects_legacy_bound_session_continuation(
+async def test_mcp_send_chat_rejects_legacy_bound_session_continuation(
     aweb_cloud_db, monkeypatch
 ):
     team_id = "ops:acme.com"
@@ -1718,7 +1718,7 @@ async def test_mcp_chat_send_rejects_legacy_bound_session_continuation(
     )
 
     result = json.loads(
-        await chat_tools.chat_send(
+        await chat_tools.send_chat(
             DBInfra(aweb_cloud_db.aweb_db),
             None,
             registry_client=None,
@@ -1735,7 +1735,7 @@ async def test_mcp_chat_send_rejects_legacy_bound_session_continuation(
 
 
 @pytest.mark.asyncio
-async def test_mcp_chat_send_uses_hosted_signer_for_trusted_proxy(
+async def test_mcp_send_chat_uses_hosted_signer_for_trusted_proxy(
     aweb_cloud_db, monkeypatch
 ):
     team_id = "ops:acme.com"
@@ -1780,7 +1780,7 @@ async def test_mcp_chat_send_uses_hosted_signer_for_trusted_proxy(
         )
 
     result = json.loads(
-        await chat_tools.chat_send(
+        await chat_tools.send_chat(
             DBInfra(aweb_cloud_db.aweb_db),
             None,
             registry_client=None,
@@ -1818,7 +1818,7 @@ async def test_mcp_chat_send_uses_hosted_signer_for_trusted_proxy(
 
 
 @pytest.mark.asyncio
-async def test_mcp_chat_send_uses_hosted_encryptor_by_default_for_trusted_proxy(
+async def test_mcp_send_chat_uses_hosted_encryptor_by_default_for_trusted_proxy(
     aweb_cloud_db, monkeypatch
 ):
     team_id = "ops:acme.com"
@@ -1873,7 +1873,7 @@ async def test_mcp_chat_send_uses_hosted_encryptor_by_default_for_trusted_proxy(
         }
 
     result = json.loads(
-        await chat_tools.chat_send(
+        await chat_tools.send_chat(
             DBInfra(aweb_cloud_db.aweb_db),
             None,
             registry_client=None,
@@ -1998,7 +1998,7 @@ async def test_mcp_chat_continuation_encryptor_gets_active_recipient_identities(
         }
 
     result = json.loads(
-        await chat_tools.chat_send(
+        await chat_tools.send_chat(
             DBInfra(aweb_cloud_db.aweb_db),
             None,
             registry_client=None,
@@ -2024,7 +2024,7 @@ async def test_mcp_chat_continuation_encryptor_gets_active_recipient_identities(
 
 
 @pytest.mark.asyncio
-async def test_mcp_chat_send_accepts_external_to_address_without_local_agent(
+async def test_mcp_send_chat_accepts_external_to_address_without_local_agent(
     aweb_cloud_db, monkeypatch
 ):
     team_id = "ops:acme.com"
@@ -2114,7 +2114,7 @@ async def test_mcp_chat_send_accepts_external_to_address_without_local_agent(
         )
 
     result = json.loads(
-        await chat_tools.chat_send(
+        await chat_tools.send_chat(
             DBInfra(aweb_cloud_db.aweb_db),
             None,
             registry_client=_Registry(),
@@ -2149,7 +2149,7 @@ async def test_mcp_chat_send_accepts_external_to_address_without_local_agent(
 
 
 @pytest.mark.asyncio
-async def test_mcp_chat_send_uses_same_team_local_persistent_when_awid_misses(
+async def test_mcp_send_chat_uses_same_team_local_persistent_when_awid_misses(
     aweb_cloud_db, monkeypatch
 ):
     team_id = "ops:acme.com"
@@ -2190,7 +2190,7 @@ async def test_mcp_chat_send_uses_same_team_local_persistent_when_awid_misses(
             return None
 
     result = json.loads(
-        await chat_tools.chat_send(
+        await chat_tools.send_chat(
             DBInfra(aweb_cloud_db.aweb_db),
             None,
             registry_client=_Registry(),
@@ -2205,7 +2205,7 @@ async def test_mcp_chat_send_uses_same_team_local_persistent_when_awid_misses(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("address_registered", [False, True])
-async def test_mcp_chat_send_requires_current_local_address_authority(
+async def test_mcp_send_chat_requires_current_local_address_authority(
     aweb_cloud_db, monkeypatch, address_registered
 ):
     alice_agent_id = uuid4()
@@ -2288,7 +2288,7 @@ async def test_mcp_chat_send_requires_current_local_address_authority(
 
     registry = _Registry()
     result = json.loads(
-        await chat_tools.chat_send(
+        await chat_tools.send_chat(
             DBInfra(aweb_cloud_db.aweb_db),
             None,
             registry_client=registry,
@@ -2307,7 +2307,7 @@ async def test_mcp_chat_send_requires_current_local_address_authority(
 
 
 @pytest.mark.asyncio
-async def test_mcp_chat_send_existing_session_uses_hosted_signer(
+async def test_mcp_send_chat_existing_session_uses_hosted_signer(
     aweb_cloud_db, monkeypatch
 ):
     team_id = "ops:acme.com"
@@ -2370,7 +2370,7 @@ async def test_mcp_chat_send_existing_session_uses_hosted_signer(
         }
 
     result = json.loads(
-        await chat_tools.chat_send(
+        await chat_tools.send_chat(
             DBInfra(aweb_cloud_db.aweb_db),
             None,
             registry_client=None,
@@ -2401,7 +2401,7 @@ async def test_mcp_chat_send_existing_session_uses_hosted_signer(
 
 
 @pytest.mark.asyncio
-async def test_mcp_chat_send_continues_federated_session(aweb_cloud_db, monkeypatch):
+async def test_mcp_send_chat_continues_federated_session(aweb_cloud_db, monkeypatch):
     team_id = "ops:acme.com"
     alice_agent_id = uuid4()
     workspace_id = uuid4()
@@ -2511,7 +2511,7 @@ async def test_mcp_chat_send_continues_federated_session(aweb_cloud_db, monkeypa
     mutation_token = set_mutation_callback(_record_mutation)
     try:
         result = json.loads(
-            await chat_tools.chat_send(
+            await chat_tools.send_chat(
                 DBInfra(aweb_cloud_db.aweb_db),
                 None,
                 registry_client=_Registry(),
@@ -2548,7 +2548,7 @@ async def test_mcp_chat_send_continues_federated_session(aweb_cloud_db, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_mcp_chat_send_rejects_forged_hosted_signature(
+async def test_mcp_send_chat_rejects_forged_hosted_signature(
     aweb_cloud_db, monkeypatch
 ):
     team_id = "ops:acme.com"
@@ -2588,7 +2588,7 @@ async def test_mcp_chat_send_rejects_forged_hosted_signature(
         }
 
     result = json.loads(
-        await chat_tools.chat_send(
+        await chat_tools.send_chat(
             DBInfra(aweb_cloud_db.aweb_db),
             None,
             registry_client=None,
@@ -2638,7 +2638,7 @@ async def test_mcp_global_inbox_does_not_read_or_ack_a_key_only_identity(
         ),
     )
 
-    data = json.loads(await mail_tools.check_inbox(DBInfra(aweb_cloud_db.aweb_db)))
+    data = json.loads(await mail_tools.check_mail(DBInfra(aweb_cloud_db.aweb_db)))
 
     assert [item["subject"] for item in data["messages"]] == ["stable"]
 
@@ -2657,7 +2657,7 @@ async def test_mcp_global_inbox_does_not_read_or_ack_a_key_only_identity(
 
 
 @pytest.mark.asyncio
-async def test_mcp_check_inbox_returns_encrypted_mail_metadata_only(
+async def test_mcp_check_mail_returns_encrypted_mail_metadata_only(
     aweb_cloud_db, monkeypatch
 ):
     encrypted_message_id = uuid4()
@@ -2695,7 +2695,7 @@ async def test_mcp_check_inbox_returns_encrypted_mail_metadata_only(
     )
 
     data = json.loads(
-        await mail_tools.check_inbox(
+        await mail_tools.check_mail(
             DBInfra(aweb_cloud_db.aweb_db),
             unread_only=False,
         )
@@ -2715,7 +2715,7 @@ async def test_mcp_check_inbox_returns_encrypted_mail_metadata_only(
 
 
 @pytest.mark.asyncio
-async def test_mcp_check_inbox_decrypts_hosted_custodial_encrypted_mail(
+async def test_mcp_check_mail_decrypts_hosted_custodial_encrypted_mail(
     aweb_cloud_db, monkeypatch
 ):
     encrypted_message_id = uuid4()
@@ -2766,7 +2766,7 @@ async def test_mcp_check_inbox_decrypts_hosted_custodial_encrypted_mail(
         }
 
     data = json.loads(
-        await mail_tools.check_inbox(
+        await mail_tools.check_mail(
             DBInfra(aweb_cloud_db.aweb_db),
             hosted_decryptor=_decryptor,
             unread_only=False,
@@ -2789,7 +2789,7 @@ async def test_mcp_check_inbox_decrypts_hosted_custodial_encrypted_mail(
 
 
 @pytest.mark.asyncio
-async def test_mcp_chat_pending_does_not_expand_global_identity_to_current_key(
+async def test_mcp_check_chats_does_not_expand_global_identity_to_current_key(
     aweb_cloud_db, monkeypatch
 ):
     session_id = uuid4()
@@ -2838,7 +2838,7 @@ async def test_mcp_chat_pending_does_not_expand_global_identity_to_current_key(
     )
 
     data = json.loads(
-        await chat_tools.chat_pending(DBInfra(aweb_cloud_db.aweb_db), None)
+        await chat_tools.check_chats(DBInfra(aweb_cloud_db.aweb_db), None)
     )
 
     assert data["pending"] == []
@@ -2853,7 +2853,7 @@ async def test_mcp_chat_pending_does_not_expand_global_identity_to_current_key(
         ),
     )
     data = json.loads(
-        await chat_tools.chat_pending(DBInfra(aweb_cloud_db.aweb_db), None)
+        await chat_tools.check_chats(DBInfra(aweb_cloud_db.aweb_db), None)
     )
     assert len(data["pending"]) == 1
     assert data["pending"][0]["session_id"] == str(session_id)
@@ -2862,7 +2862,7 @@ async def test_mcp_chat_pending_does_not_expand_global_identity_to_current_key(
 
 
 @pytest.mark.asyncio
-async def test_mcp_chat_history_decrypts_hosted_custodial_encrypted_chat(
+async def test_mcp_read_chat_decrypts_hosted_custodial_encrypted_chat(
     aweb_cloud_db, monkeypatch
 ):
     session_id = uuid4()
@@ -2931,7 +2931,7 @@ async def test_mcp_chat_history_decrypts_hosted_custodial_encrypted_chat(
         return {"body": "decrypted chat", "decryptable": True}
 
     pending = json.loads(
-        await chat_tools.chat_pending(
+        await chat_tools.check_chats(
             DBInfra(aweb_cloud_db.aweb_db),
             None,
             hosted_decryptor=_decryptor,
@@ -2941,7 +2941,7 @@ async def test_mcp_chat_history_decrypts_hosted_custodial_encrypted_chat(
     assert pending["pending"][0]["last_message_decryptable"] is True
 
     history = json.loads(
-        await chat_tools.chat_history(
+        await chat_tools.read_chat(
             DBInfra(aweb_cloud_db.aweb_db),
             session_id=str(session_id),
             unread_only=False,
@@ -3006,7 +3006,7 @@ async def test_mcp_chat_global_history_and_ack_refuse_key_only_participation(
     )
 
     history = json.loads(
-        await chat_tools.chat_history(
+        await chat_tools.read_chat(
             DBInfra(aweb_cloud_db.aweb_db),
             session_id=str(session_id),
             unread_only=False,
@@ -3015,7 +3015,7 @@ async def test_mcp_chat_global_history_and_ack_refuse_key_only_participation(
     )
     assert history == {"error": "Session not found"}
     read = json.loads(
-        await chat_tools.chat_read(
+        await chat_tools.mark_chat_read(
             DBInfra(aweb_cloud_db.aweb_db),
             session_id=str(session_id),
             message_ids=[str(message_id)],
@@ -3039,7 +3039,7 @@ async def test_mcp_chat_global_history_and_ack_refuse_key_only_participation(
         ),
     )
     history = json.loads(
-        await chat_tools.chat_history(
+        await chat_tools.read_chat(
             DBInfra(aweb_cloud_db.aweb_db),
             session_id=str(session_id),
             unread_only=False,
@@ -3048,7 +3048,7 @@ async def test_mcp_chat_global_history_and_ack_refuse_key_only_participation(
     )
     assert [item["body"] for item in history["messages"]] == ["hello"]
     read = json.loads(
-        await chat_tools.chat_read(
+        await chat_tools.mark_chat_read(
             DBInfra(aweb_cloud_db.aweb_db),
             session_id=str(session_id),
             message_ids=[str(message_id)],
@@ -3088,12 +3088,12 @@ async def test_mcp_contacts_accept_equivalent_identity_owner_did(
     )
 
     listed = json.loads(
-        await contacts_tools.contacts_list(DBInfra(aweb_cloud_db.aweb_db))
+        await contacts_tools.list_contacts(DBInfra(aweb_cloud_db.aweb_db))
     )
     assert [item["contact_address"] for item in listed["contacts"]] == ["acme.com/bob"]
 
     removed = json.loads(
-        await contacts_tools.contacts_remove(
+        await contacts_tools.remove_contact(
             DBInfra(aweb_cloud_db.aweb_db), contact_id=str(contact_id)
         )
     )
@@ -3301,18 +3301,18 @@ async def test_mcp_send_mail_continuation_reevaluates_recipient_inbound_policy(
 
 
 @pytest.mark.asyncio
-async def test_mcp_chat_send_accepts_a_participant_row_keyed_by_the_callers_did_aw(
+async def test_mcp_send_chat_accepts_a_participant_row_keyed_by_the_callers_did_aw(
     aweb_cloud_db, monkeypatch
 ):
     """A global agent's two DIDs are one principal; the send gate must accept either.
 
-    Per docs/aweb-sot.md a global identity holds BOTH did:key and did:aw. chat_history
-    and chat_read already accept a participant row keyed by either - see
-    test_mcp_chat_history_and_read_accept_alternate_session_participant_did. chat_send
+    Per docs/aweb-sot.md a global identity holds BOTH did:key and did:aw. read_chat
+    and mark_chat_read already accept a participant row keyed by either - see
+    test_mcp_read_chat_and_mark_chat_read_accept_alternate_session_participant_did. send_chat
     does not, on the trusted-proxy path only: mcp/tools/chat.py:379 drops did_aw and
     :659 passes the single remaining did_key to the exact-match gate at :255-266.
 
-    This test is test_mcp_chat_send_existing_session_uses_hosted_signer with exactly one
+    This test is test_mcp_send_chat_existing_session_uses_hosted_signer with exactly one
     variable changed - the participant row is keyed by alice's did:aw rather than her
     did:key. Same agent, same auth context, same call.
     """
@@ -3377,7 +3377,7 @@ async def test_mcp_chat_send_accepts_a_participant_row_keyed_by_the_callers_did_
         }
 
     result = json.loads(
-        await chat_tools.chat_send(
+        await chat_tools.send_chat(
             DBInfra(aweb_cloud_db.aweb_db),
             None,
             registry_client=None,
@@ -3462,7 +3462,7 @@ async def test_mcp_same_team_contacts_only(
             body="contact policy",
         )
     else:
-        raw = await chat_tools.chat_send(
+        raw = await chat_tools.send_chat(
             DBInfra(manager),
             redis=None,
             registry_client=None,
@@ -3490,7 +3490,7 @@ async def test_mcp_same_team_contacts_only(
             message="still a contact",
         )
         active = json.loads(
-            await chat_tools.chat_send(DBInfra(manager), **continuation_args)
+            await chat_tools.send_chat(DBInfra(manager), **continuation_args)
         )
         assert "error" not in active, active
         before = await manager.fetch_value(
@@ -3500,7 +3500,7 @@ async def test_mcp_same_team_contacts_only(
             "DELETE FROM {{tables.contacts}} WHERE owner_did='did:aw:bob'"
         )
         removed = json.loads(
-            await chat_tools.chat_send(DBInfra(manager), **continuation_args)
+            await chat_tools.send_chat(DBInfra(manager), **continuation_args)
         )
         assert removed == {
             "error": "Recipient only accepts messages from exact active contacts. Ask the recipient to add your exact address as a contact or check their inbound policy.",

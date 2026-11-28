@@ -331,7 +331,7 @@ async def test_signed_recipient_display_read_paths(
                             pytest.fail("No chat message in stream")
             elif view == "mcp-history":
                 message = json.loads(
-                    await chat.chat_history(env.infra, session_id=session)
+                    await chat.read_chat(env.infra, session_id=session)
                 )["messages"][0]
             elif view == "mcp-wait":
                 replies, timed_out = await chat._wait_for_replies(
