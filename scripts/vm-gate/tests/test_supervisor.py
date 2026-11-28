@@ -114,6 +114,26 @@ class SupervisorTests(unittest.TestCase):
         def status(registry):
             return supervisor.cleanup_receipts(registry, True)[0]["status"]
 
+        # An owned run whose cleanup passed but left no interruption receipt.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            registry = root / "registry"
+            registry.write_text("this-run\t" + str(root) + "\n")
+            (root / "run-id").write_text("this-run\n")
+            subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'source "$1/candidate-cleanup.sh"; write_cleanup_verdict 0 >/dev/null',
+                    "verdict",
+                    str(scripts),
+                ],
+                env=dict(os.environ, LOG_DIR=str(root)),
+                check=True,
+            )
+            self.assertFalse((root / "interruption.tsv").exists())
+            self.assertEqual(status(registry), "absent")
+
         cases = {
             "passed": ({}, "passed"),
             "wrong run in receipt": ({"receipt_run": "other-run"}, "absent"),
