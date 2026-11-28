@@ -35,27 +35,62 @@ test("passive terminal cleanup retains its socket root on child failure", () => 
   }
 });
 
+// A fake tmux pane that is not the test's child, as a real pane is the
+// server's: a supervisor, the test's own child, owns it from before its launch
+// until it is reaped. The supervisor installs its SIGTERM handler before it
+// starts the pane, hands the pane's pid over through pidFile, exits when the
+// pane exits, and ends the pane through its child handle, which never signals
+// a reaped process, when stopped or when the handoff fails.
+function superviseFakePane(paneScript, pidFile) {
+  return spawn(process.execPath, ["-e", `
+const { spawn } = require("node:child_process");
+let pane;
+let code = 0;
+process.on("SIGTERM", () => {
+  code = 143;
+  if (pane === undefined) process.exit(code);
+  pane.kill("SIGKILL");
+});
+pane = spawn(process.execPath, ["-e", ${JSON.stringify(paneScript)}], { stdio: "ignore" });
+pane.on("exit", () => process.exit(code));
+try {
+  require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(pane.pid));
+} catch {
+  code = 3;
+  pane.kill("SIGKILL");
+}
+`], { stdio: "ignore" });
+}
+
+// The child's exit code and signal, or null if it is still running after ms.
+// The timer is cancelled whichever side wins, so it never holds the loop.
+async function waitForExit(child, ms) {
+  if (child.exitCode !== null || child.signalCode !== null) return [child.exitCode, child.signalCode];
+  const stop = new AbortController();
+  try {
+    return await Promise.race([
+      once(child, "exit", { signal: stop.signal }).catch(() => null),
+      sleep(ms, null, { signal: stop.signal }).catch(() => null),
+    ]);
+  } finally { stop.abort(); }
+}
+
+// Ends a supervisor that is still running, within a bound.
+async function stopSupervisor(supervisor) {
+  if (supervisor.exitCode !== null || supervisor.signalCode !== null) return;
+  supervisor.kill("SIGTERM");
+  if ((await waitForExit(supervisor, 10000)) === null) supervisor.kill("SIGKILL");
+}
+
 test("passive terminal cleanup waits for the panes the stopped server leaves running", async () => {
   // kill-server returns before the panes exit. A pane's shell that writes its
   // history as it exits must not race the root's removal.
   const scratch = mkdtempSync("/tmp/kpw-");
   const root = join(scratch, "root"), marker = join(scratch, "pane-last-write"), ready = join(scratch, "pane-ready"), pidFile = join(scratch, "pane-pid");
   mkdirSync(root);
-  // The pane is not the test's child, as a real pane is the server's: a
-  // supervisor, the test's own child, starts it and waits for it, so its pid
-  // stays the pane's until the supervisor reaps it. The pane says it is ready
-  // only once its SIGHUP handler is installed, so the signal cannot arrive
-  // first. On failure the test stops the supervisor, which ends its pane
-  // through the child handle; a reaped pane is never signalled.
-  const paneScript = `process.on("SIGHUP", () => setTimeout(() => { require("fs").writeFileSync(${JSON.stringify(marker)}, "history"); process.exit(0); }, 300));require("fs").writeFileSync(${JSON.stringify(ready)}, "");setInterval(() => {}, 1000)`;
-  const supervisor = spawn(process.execPath, ["-e", `
-const { spawn } = require("node:child_process");
-const pane = spawn(process.execPath, ["-e", ${JSON.stringify(paneScript)}], { stdio: "ignore" });
-require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(pane.pid));
-pane.on("exit", () => process.exit(0));
-process.on("SIGTERM", () => pane.kill("SIGKILL"));
-`], { stdio: "ignore" });
-  const supervised = once(supervisor, "exit");
+  // The pane says it is ready only once its SIGHUP handler is installed, so
+  // the signal cannot arrive first.
+  const supervisor = superviseFakePane(`process.on("SIGHUP", () => setTimeout(() => { require("fs").writeFileSync(${JSON.stringify(marker)}, "history"); process.exit(0); }, 300));require("fs").writeFileSync(${JSON.stringify(ready)}, "");setInterval(() => {}, 1000)`, pidFile);
   try {
     const readyBy = Date.now() + 10000;
     while (!(existsSync(ready) && existsSync(pidFile)) && Date.now() < readyBy) await sleep(20);
@@ -73,13 +108,27 @@ process.exit(1);
     assert.equal(existsSync(marker), true, "cleanup returns only after the pane's last write");
     assert.equal(existsSync(root), false, "the root is removed after the pane exits");
     // The pane exited on its own: its supervisor reaps it and ends.
-    const [code] = await Promise.race([supervised, sleep(10000).then(() => ["timeout"])]);
-    assert.equal(code, 0, "the supervisor saw its pane exit");
+    assert.deepEqual(await waitForExit(supervisor, 10000), [0, null], "the supervisor saw its pane exit");
   } finally {
-    if (supervisor.exitCode === null && supervisor.signalCode === null) {
-      supervisor.kill("SIGTERM");
-      await supervised;
+    await stopSupervisor(supervisor);
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+test("a fake pane whose pid cannot be handed over is ended and reaped by its supervisor", async () => {
+  const scratch = mkdtempSync("/tmp/kph-");
+  const started = join(scratch, "pane-started"), pidFile = join(scratch, "pid-is-a-directory");
+  mkdirSync(pidFile);
+  const supervisor = superviseFakePane(`require("fs").writeFileSync(${JSON.stringify(started)}, String(process.pid));setInterval(() => {}, 1000)`, pidFile);
+  try {
+    assert.deepEqual(await waitForExit(supervisor, 10000), [3, null], "the failed handoff ends the supervisor");
+    if (existsSync(started)) {
+      const pid = Number(readFileSync(started, "utf8").trim());
+      // Reaped by its supervisor before it exited: no such process remains.
+      assert.throws(() => process.kill(pid, 0), { code: "ESRCH" }, "the pane was ended and reaped");
     }
+  } finally {
+    await stopSupervisor(supervisor);
     rmSync(scratch, { recursive: true, force: true });
   }
 });
