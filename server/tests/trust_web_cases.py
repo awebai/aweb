@@ -3,7 +3,7 @@
 The cases are ``docs/vectors/trust-web-cases-v1.json`` (format
 ``aweb.trust-web-cases/1``, specified in docs/vectors/README.md). A case is
 written in the vocabulary of the experimental Lean model in
-``spec/trust-model``: a setup of model acts, one act by one party, the
+``docs/spec/trust-model``: a setup of model acts, one act by one party, the
 expected decision (allowed, or refused because one named premise fails) and
 predicates over the model's record that prove the effect or its absence.
 

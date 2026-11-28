@@ -16,7 +16,7 @@ text = true
 
 [[input_file]]
 name = "modelCases"
-path = "../../docs/vectors/trust-web-cases-model-v2.json"
+path = "../../../docs/vectors/trust-web-cases-model-v2.json"
 text = true
 
 [[lean_lib]]

@@ -30,6 +30,6 @@ elab "#cases_file_current " f:str : command => do
   unless (committed.getObjValD "model").getObjValD "emitter" == (fresh.getObjValD "model").getObjValD "emitter" do
     throwError m!"{f.getString}: its emitter is not the generator's"
 
-#cases_file_current "../../docs/vectors/trust-web-cases-model-v2.json"
+#cases_file_current "../../../docs/vectors/trust-web-cases-model-v2.json"
 
 end TrustWeb.CasesCheck
