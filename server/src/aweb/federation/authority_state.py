@@ -74,6 +74,99 @@ _COHORT_COMPARE_FIELDS = (
 )
 
 
+@dataclass(frozen=True)
+class ExistingCohort:
+    """The address's stored cohort: whether it is the candidate's exact tuple,
+    whether it is still live by the database clock, and its counters."""
+
+    matches: bool
+    live: bool
+    generation: int
+    revision: int
+
+
+@dataclass(frozen=True)
+class PhaseAPlan:
+    """What Phase A writes for an accepted candidate.
+
+    ``checkpoint`` is ``insert`` (the first observation), ``keep`` (the same
+    entry) or ``advance`` (a later entry extending the stored one).
+    ``reused_generation`` is set when the live cohort is already this exact
+    tuple, so nothing more is written. Otherwise the cohort is written with
+    ``generation`` and ``cohort_revision``, and the DID's cohorts for other
+    addresses are invalidated when ``invalidate_peers``.
+    """
+
+    checkpoint: str
+    revision: int
+    reused_generation: int | None
+    invalidate_peers: bool
+    generation: int
+    cohort_revision: int
+
+
+def phase_a_verdict(
+    checkpoint: CheckpointCandidate,
+    cohort: AddressAuthorityCandidate,
+    current: IdentityCheckpoint | None,
+    existing: ExistingCohort | None,
+) -> PhaseAPlan | FederationAuthorityError:
+    """The checkpoint and cohort rule, from the rows the Phase A locks hold."""
+    if current is None:
+        if checkpoint.expected_revision is not None:
+            return FederationAuthorityError("federation_authority_cas_conflict")
+        action, revision = "insert", 1
+    elif checkpoint.seq < current.seq:
+        return FederationAuthorityError(
+            "sender_did_log_rollback",
+            did_aw=checkpoint.did_aw,
+            observed_sequence=checkpoint.seq,
+        )
+    elif checkpoint.seq == current.seq:
+        if (
+            checkpoint.entry_hash != current.entry_hash
+            or checkpoint.state_hash != current.state_hash
+            or checkpoint.current_did_key != current.current_did_key
+        ):
+            return FederationAuthorityError(
+                "sender_did_log_split_view",
+                did_aw=checkpoint.did_aw,
+                observed_sequence=checkpoint.seq,
+            )
+        action, revision = "keep", current.revision
+    else:
+        if not checkpoint.contains_snapshot:
+            return FederationAuthorityError(
+                "sender_did_log_split_view",
+                did_aw=checkpoint.did_aw,
+                observed_sequence=checkpoint.seq,
+            )
+        if (
+            checkpoint.expected_revision != current.revision
+            or checkpoint.expected_entry_hash != current.entry_hash
+        ):
+            return FederationAuthorityError("federation_authority_cas_conflict")
+        action, revision = "advance", current.revision + 1
+
+    if cohort.checkpoint_revision != revision:
+        return FederationAuthorityError("federation_authority_cas_conflict")
+
+    reused = (
+        existing.generation
+        if existing is not None and existing.live and existing.matches
+        else None
+    )
+    return PhaseAPlan(
+        checkpoint=action,
+        revision=revision,
+        reused_generation=reused,
+        invalidate_peers=action == "advance"
+        or (existing is not None and not existing.matches),
+        generation=1 if existing is None else existing.generation + 1,
+        cohort_revision=1 if existing is None else existing.revision + 1,
+    )
+
+
 class AuthorityRepository:
     def __init__(self, db, *, before_commit=None) -> None:
         self.db = db
@@ -166,13 +259,31 @@ class AuthorityRepository:
                     self._cohort_check_time(),
                 )
 
-                advanced = False
-                if current is None:
-                    if checkpoint.expected_revision is not None:
-                        raise FederationAuthorityError(
-                            "federation_authority_cas_conflict"
-                        )
-                    revision = 1
+                plan = phase_a_verdict(
+                    checkpoint,
+                    cohort,
+                    None
+                    if current is None
+                    else IdentityCheckpoint(
+                        seq=current["seq"],
+                        entry_hash=current["entry_hash"],
+                        state_hash=current["state_hash"],
+                        current_did_key=current["current_did_key"],
+                        revision=current["revision"],
+                    ),
+                    None
+                    if existing_cohort is None
+                    else ExistingCohort(
+                        matches=self._cohort_matches(existing_cohort, cohort),
+                        live=existing_cohort["live"],
+                        generation=existing_cohort["generation"],
+                        revision=existing_cohort["revision"],
+                    ),
+                )
+                if isinstance(plan, FederationAuthorityError):
+                    raise plan
+
+                if plan.checkpoint == "insert":
                     await tx.execute(
                         """
                         INSERT INTO {{tables.federation_did_checkpoints}} (
@@ -186,38 +297,7 @@ class AuthorityRepository:
                         checkpoint.state_hash,
                         checkpoint.current_did_key,
                     )
-                elif checkpoint.seq < current["seq"]:
-                    raise FederationAuthorityError(
-                        "sender_did_log_rollback",
-                        did_aw=checkpoint.did_aw,
-                        observed_sequence=checkpoint.seq,
-                    )
-                elif checkpoint.seq == current["seq"]:
-                    if (
-                        checkpoint.entry_hash != current["entry_hash"]
-                        or checkpoint.state_hash != current["state_hash"]
-                        or checkpoint.current_did_key != current["current_did_key"]
-                    ):
-                        raise FederationAuthorityError(
-                            "sender_did_log_split_view",
-                            did_aw=checkpoint.did_aw,
-                            observed_sequence=checkpoint.seq,
-                        )
-                    revision = current["revision"]
-                else:
-                    if not checkpoint.contains_snapshot:
-                        raise FederationAuthorityError(
-                            "sender_did_log_split_view",
-                            did_aw=checkpoint.did_aw,
-                            observed_sequence=checkpoint.seq,
-                        )
-                    if (
-                        checkpoint.expected_revision != current["revision"]
-                        or checkpoint.expected_entry_hash != current["entry_hash"]
-                    ):
-                        raise FederationAuthorityError(
-                            "federation_authority_cas_conflict"
-                        )
+                elif plan.checkpoint == "advance":
                     row = await tx.fetch_one(
                         """
                         UPDATE {{tables.federation_did_checkpoints}}
@@ -235,39 +315,26 @@ class AuthorityRepository:
                         checkpoint.expected_revision,
                         checkpoint.expected_entry_hash,
                     )
-                    if row is None:
+                    if row is None or row["revision"] != plan.revision:
                         raise FederationAuthorityError(
                             "federation_authority_cas_conflict"
                         )
-                    revision = row["revision"]
-                    advanced = True
+                revision = plan.revision
 
-                if cohort.checkpoint_revision != revision:
-                    raise FederationAuthorityError("federation_authority_cas_conflict")
-
-                source_changed = bool(
-                    existing_cohort is not None
-                    and not self._cohort_matches(existing_cohort, cohort)
-                )
-                idempotent_cohort = bool(
-                    existing_cohort is not None
-                    and existing_cohort["live"]
-                    and self._cohort_matches(existing_cohort, cohort)
-                )
                 if self.before_commit is not None:
                     await self.before_commit()
                 # Check every fence immediately before any result can commit,
                 # including an idempotent Phase-A result.
                 await self._require_fences(tx, fences)
-                if idempotent_cohort:
+                if plan.reused_generation is not None:
                     return AuthoritySecurityToken(
                         cohort.canonical_address,
                         checkpoint.did_aw,
                         revision,
-                        existing_cohort["generation"],
+                        plan.reused_generation,
                     )
 
-                if advanced or source_changed:
+                if plan.invalidate_peers:
                     await tx.execute(
                         """
                         UPDATE {{tables.federation_address_authority_cohorts}}
@@ -282,12 +349,8 @@ class AuthorityRepository:
                         cohort.canonical_address,
                     )
 
-                generation = (
-                    1 if existing_cohort is None else existing_cohort["generation"] + 1
-                )
-                cohort_revision = (
-                    1 if existing_cohort is None else existing_cohort["revision"] + 1
-                )
+                generation = plan.generation
+                cohort_revision = plan.cohort_revision
                 row = await tx.fetch_one(
                     """
                     WITH authority_clock AS MATERIALIZED (
