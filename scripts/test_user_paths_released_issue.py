@@ -147,9 +147,12 @@ class HistoricalChatIssue(unittest.TestCase):
                 "released/contacts-only/chat",
             },
         )
-        self.assertEqual(len(report["passed_agent_cases"]), 62)
+        # Known issues stay out of the passed count; everything else passed.
+        self.assertEqual(
+            set(report["passed_agent_cases"]), set(inventory) - known_issues
+        )
         self.assertTrue(known_issues.isdisjoint(report["passed_agent_cases"]))
-        self.assertEqual(len(report["required_agent_cases"]), 66)
+        self.assertEqual(set(report["required_agent_cases"]), set(inventory))
         self.assertEqual(report["missing_agent_cases"], [])
 
     def test_public_diagnostics_require_existing_local_session_and_both_keys(self):
