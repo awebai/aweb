@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-28
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-cleanup-oss.
+* **Creation**: decision [test databases go on the host PostgreSQL through pgdbm's fixtures; Redis stays isolated](/aweb-expert/decisions/test-databases-on-the-host-postgres.md), accepted by Juan (source-reported). It supersedes earlier team steering towards per-run containers, which was never a concept here.
+* **Creation**: lesson [read an inventory from the exact base SHA, never a shared clone's local main](/aweb-expert/lessons/read-an-inventory-from-the-exact-base-sha.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
