@@ -11,6 +11,7 @@ import os
 import re
 from pathlib import Path
 import shutil
+import shlex
 import signal
 import socket
 import subprocess
@@ -384,12 +385,8 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(result.stdout, network.hostname(project, "gateway"))
 
     def test_gate_does_not_allocate_or_use_host_ports(self):
-        journey = (ROOT / "scripts/e2e-oss-user-journey.sh").read_text()
-        functions = journey[
-            journey.index("allocate_service_ports() {") : journey.index("compose() {")
-        ]
         result = bash(
-            functions + "\n"
+            f"source {shlex.quote(str(ROOT / 'scripts/lib/oss-journey.sh'))}\n"
             'docker() { echo "unexpected host allocation" >&2; return 99; }; '
             "AWEB_PORT=; AWID_PORT=; PORT_ALLOCATOR=; "
             "allocate_service_ports; release_service_ports; "
