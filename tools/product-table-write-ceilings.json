@@ -202,7 +202,7 @@
     "server/tests/test_closed_task_claims.py": 3,
     "server/tests/test_connect_http.py": 13,
     "server/tests/test_connect_private_team_refusal.py": 2,
-    "server/tests/test_contacts.py": 7,
+    "server/tests/test_contacts.py": 6,
     "server/tests/test_contacts_only.py": 6,
     "server/tests/test_conversation_dashboard.py": 11,
     "server/tests/test_conversation_expiry.py": 2,
