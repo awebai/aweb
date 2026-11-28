@@ -1,5 +1,5 @@
 import ipaddress
-import re
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -18,24 +18,40 @@ DEPRECATED_6TO4_RELAY = ipaddress.IPv4Network("192.88.99.0/24")
 
 class MerakTests(unittest.TestCase):
     def test_installed_egress_helper_matches_federation_ipv4_ranges(self):
-        contract = Path(__file__).resolve().parents[3] / "docs/aweb-sot.md"
-        # The R3 vector exercises addresses. The governing SoT enumerates CIDRs.
-        ipv4 = contract.read_text().split("An IPv4 answer is refused in ", 1)[1]
-        ipv4 = ipv4.split("An IPv6 answer is admitted", 1)[0]
-        ranges = {
-            ipaddress.IPv4Network(cidr)
-            for cidr in re.findall(r"`([0-9.]+/[0-9]+)`", ipv4)
-        }
-        self.assertTrue(ranges)
+        # The frozen federation egress vector, not the prose that describes it.
+        vector = json.loads(
+            (
+                Path(__file__).resolve().parents[3]
+                / "docs/vectors/egress-address-v1.json"
+            ).read_text()
+        )
+        ranges = {ipaddress.IPv4Network(cidr) for cidr in vector["denied_ipv4"]}
         self.assertNotIn(DEPRECATED_6TO4_RELAY, ranges)
         installed = {
             ipaddress.IPv4Network(cidr.strip())
             for cidr in merak_egress.NON_PUBLIC.split(",")
         }
         self.assertEqual(installed, ranges | {DEPRECATED_6TO4_RELAY})
+        # Every IPv4 address the vector says federation must refuse is dropped.
+        denied = [
+            address
+            for address in map(ipaddress.ip_address, vector["public_denied"])
+            if address.version == 4
+        ]
+        self.assertTrue(denied)
+        for address in denied:
+            self.assertTrue(
+                any(address in network for network in installed), str(address)
+            )
 
     def test_the_guest_gets_every_cpu_and_the_memory_the_host_spares(self):
-        for cpus, memory_mib in [(4, 16384), (10, 32768), (12, 63488), (16, 65536), (64, 262144)]:
+        for cpus, memory_mib in [
+            (4, 16384),
+            (10, 32768),
+            (12, 63488),
+            (16, 65536),
+            (64, 262144),
+        ]:
             with self.subTest(cpus=cpus, memory_mib=memory_mib):
                 guest_cpus, guest_memory = merak_host.guest_size(cpus, memory_mib)
                 self.assertEqual(guest_cpus, cpus)
