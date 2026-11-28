@@ -169,6 +169,13 @@ func (c *Client) DecryptE2EEEnvelope(envelope *E2EEMessageEnvelope) (*E2EEInnerP
 }
 
 func (c *Client) DecryptE2EEEnvelopeWithContext(ctx context.Context, envelope *E2EEMessageEnvelope) (*E2EEInnerPayload, error) {
+	return c.decryptE2EEEnvelope(ctx, envelope, nil)
+}
+
+// decryptE2EEEnvelope opens envelope through this client's custody host or
+// its own keys. signed, when given, is envelope with its signature already
+// verified by the caller.
+func (c *Client) decryptE2EEEnvelope(ctx context.Context, envelope *E2EEMessageEnvelope, signed *SignedE2EEEnvelope) (*E2EEInnerPayload, error) {
 	if c == nil {
 		return nil, fmt.Errorf("missing client")
 	}
@@ -192,7 +199,10 @@ func (c *Client) DecryptE2EEEnvelopeWithContext(ctx context.Context, envelope *E
 			return &E2EEInnerPayload{InnerVersion: E2EEMessageVersion, Kind: out.Kind, MessageID: out.MessageID, ConversationID: out.ConversationID, CreatedAt: out.CreatedAt, From: out.From, Recipients: out.Recipients, Subject: out.Subject, Body: out.Body, Attachments: out.Attachments}, nil
 		}
 	}
-	return OpenE2EEMessage(envelope, c.e2eeDecryptIdentity(), c.e2eeArchivedKey)
+	if signed == nil {
+		return OpenE2EEMessage(envelope, c.e2eeDecryptIdentity(), c.e2eeArchivedKey)
+	}
+	return signed.Open(c.e2eeDecryptIdentity(), c.e2eeArchivedKey)
 }
 
 // custodyRowLocalCodes are the custody refusals that concern one message's
@@ -225,14 +235,40 @@ var ErrE2EENotARecipient = errors.New("not a recipient")
 // archived key named by the first such wrap that archived can load. Keys are
 // found by the key id a wrap names, never by trial.
 func OpenE2EEMessage(envelope *E2EEMessageEnvelope, identity E2EEDecryptIdentity, archived E2EEArchivedKeyLoader) (*E2EEInnerPayload, error) {
-	if err := verifyE2EEMessageEnvelope(envelope); err != nil {
+	signed, err := VerifySignedE2EEEnvelope(envelope)
+	if err != nil {
 		return nil, &DecryptionError{Code: "decrypt_failed", err: err}
 	}
-	identity, err := e2eeDecryptKeyFor(envelope, identity, archived)
+	return signed.Open(identity, archived)
+}
+
+// SignedE2EEEnvelope is an envelope whose sender signature was verified, so
+// a caller that checks the signature before other refusals can open it
+// without verifying the signature again. The envelope must not change after
+// verification.
+type SignedE2EEEnvelope struct {
+	envelope *E2EEMessageEnvelope
+}
+
+// VerifySignedE2EEEnvelope verifies envelope's sender signature.
+func VerifySignedE2EEEnvelope(envelope *E2EEMessageEnvelope) (*SignedE2EEEnvelope, error) {
+	if err := VerifyE2EEMessageEnvelopeSignature(envelope); err != nil {
+		return nil, err
+	}
+	return &SignedE2EEEnvelope{envelope: envelope}, nil
+}
+
+// Open checks the rest of the envelope's evidence (version, ciphertext and
+// key-wrap hashes) and opens it as OpenE2EEMessage describes.
+func (s *SignedE2EEEnvelope) Open(identity E2EEDecryptIdentity, archived E2EEArchivedKeyLoader) (*E2EEInnerPayload, error) {
+	if err := checkE2EEEnvelopeContents(s.envelope); err != nil {
+		return nil, &DecryptionError{Code: "decrypt_failed", err: err}
+	}
+	identity, err := e2eeDecryptKeyFor(s.envelope, identity, archived)
 	if err != nil {
 		return nil, err
 	}
-	return openVerifiedE2EEMessage(envelope, identity)
+	return openVerifiedE2EEMessage(s.envelope, identity)
 }
 
 // e2eeDecryptKeyFor returns identity with the private key that opens a
@@ -563,10 +599,8 @@ func openVerifiedE2EEMessage(envelope *E2EEMessageEnvelope, identity E2EEDecrypt
 }
 
 // verifyE2EEMessageEnvelope checks an envelope's version, signature and
-// hashes. A read verifies each envelope once.
-var verifyE2EEMessageEnvelope = checkE2EEMessageEnvelope
-
-func checkE2EEMessageEnvelope(envelope *E2EEMessageEnvelope) error {
+// hashes.
+func verifyE2EEMessageEnvelope(envelope *E2EEMessageEnvelope) error {
 	if envelope == nil {
 		return fmt.Errorf("missing e2ee envelope")
 	}
@@ -575,6 +609,16 @@ func checkE2EEMessageEnvelope(envelope *E2EEMessageEnvelope) error {
 	}
 	if err := VerifyE2EEMessageEnvelopeSignature(envelope); err != nil {
 		return err
+	}
+	return checkE2EEEnvelopeContents(envelope)
+}
+
+// checkE2EEEnvelopeContents checks the evidence an envelope's signature
+// covers but does not itself establish: the version, and the ciphertext and
+// key-wrap hashes.
+func checkE2EEEnvelopeContents(envelope *E2EEMessageEnvelope) error {
+	if envelope.MessageVersion != E2EEMessageVersion || envelope.EnvelopeType != E2EEEnvelopeType {
+		return fmt.Errorf("unsupported e2ee envelope version")
 	}
 	ciphertext, err := base64.RawStdEncoding.DecodeString(strings.TrimSpace(envelope.Ciphertext))
 	if err != nil {

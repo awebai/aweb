@@ -372,10 +372,11 @@ func (c *Client) prepareE2EEMail(ctx context.Context, payload *SendMessageReques
 // Conversation participant lists and display aliases are not key authority.
 func (c *Client) MailReplyRecipient(ctx context.Context, source InboxMessage) (E2EERecipientKey, error) {
 	envelope := source.Encrypted
-	if err := VerifyE2EEMessageEnvelopeSignature(envelope); err != nil {
+	signed, err := VerifySignedE2EEEnvelope(envelope)
+	if err != nil {
 		return E2EERecipientKey{}, fmt.Errorf("cannot reply to unverified encrypted mail: %w", err)
 	}
-	plain, err := c.DecryptE2EEEnvelopeWithContext(ctx, envelope)
+	plain, err := c.decryptE2EEEnvelope(ctx, envelope, signed)
 	if err != nil {
 		return E2EERecipientKey{}, fmt.Errorf("cannot reply to unverified encrypted mail: %w", err)
 	}

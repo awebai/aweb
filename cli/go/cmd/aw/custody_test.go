@@ -23,7 +23,7 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
-func testCustodyService(t *testing.T, residentKey, sessionKey ed25519.PrivateKey) *custodyService {
+func testCustodyService(t testing.TB, residentKey, sessionKey ed25519.PrivateKey) *custodyService {
 	t.Helper()
 	residentDID := awid.ComputeDIDKey(residentKey.Public().(ed25519.PublicKey))
 	sessionDID := awid.ComputeDIDKey(sessionKey.Public().(ed25519.PublicKey))
@@ -717,7 +717,7 @@ type custodyE2EETestIdentity struct {
 	assertion *awid.EncryptionKeyAssertion
 }
 
-func newCustodyE2EETestIdentity(t *testing.T, address string) custodyE2EETestIdentity {
+func newCustodyE2EETestIdentity(t testing.TB, address string) custodyE2EETestIdentity {
 	t.Helper()
 	_, signKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -947,7 +947,7 @@ func TestCustodyUnwrapUsesArchivedE2EEKeyForHistory(t *testing.T) {
 	}
 }
 
-func signedE2EECreateRequest(t *testing.T, sessionKey ed25519.PrivateKey, alice, bob custodyE2EETestIdentity) *awid.E2EEEnvelopeCreateRequest {
+func signedE2EECreateRequest(t testing.TB, sessionKey ed25519.PrivateKey, alice, bob custodyE2EETestIdentity) *awid.E2EEEnvelopeCreateRequest {
 	t.Helper()
 	req := &awid.E2EEEnvelopeCreateRequest{Version: 1, Operation: "create_e2ee_envelope", GrantID: "11111111-1111-4111-8111-111111111111", SessionDIDKey: awid.ComputeDIDKey(sessionKey.Public().(ed25519.PublicKey)), TeamID: "backend:acme.com", SubjectDIDAW: alice.stableID, SubjectDIDKey: alice.did, Audience: "local-resident-custody:test-service", Kind: "mail", Subject: "secret", Body: "body", MessageID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", ConversationID: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", Recipients: []awid.E2EERecipientKey{{Address: bob.address, DID: bob.did, StableID: bob.stableID, EncryptionKey: bob.assertion}}}
 	if err := awid.SignE2EECreateCustodyProof(sessionKey, req); err != nil {
@@ -956,7 +956,7 @@ func signedE2EECreateRequest(t *testing.T, sessionKey ed25519.PrivateKey, alice,
 	return req
 }
 
-func testCustodyE2EEService(t *testing.T, alice, bob custodyE2EETestIdentity, sessionKey ed25519.PrivateKey) *custodyService {
+func testCustodyE2EEService(t testing.TB, alice, bob custodyE2EETestIdentity, sessionKey ed25519.PrivateKey) *custodyService {
 	t.Helper()
 	svc := testCustodyService(t, alice.signKey, sessionKey)
 	svc.identity.DID = alice.did

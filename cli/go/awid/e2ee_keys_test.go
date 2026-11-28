@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func testEncryptionAssertion(t *testing.T, priv ed25519.PrivateKey, did, stableID string) *EncryptionKeyAssertion {
+func testEncryptionAssertion(t testing.TB, priv ed25519.PrivateKey, did, stableID string) *EncryptionKeyAssertion {
 	t.Helper()
 	raw := []byte{
 		1, 2, 3, 4, 5, 6, 7, 8,

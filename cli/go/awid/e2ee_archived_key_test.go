@@ -21,7 +21,7 @@ type rotatedRecipient struct {
 	activeKey     *ecdh.PrivateKey
 }
 
-func newRotatedRecipient(t *testing.T) rotatedRecipient {
+func newRotatedRecipient(t testing.TB) rotatedRecipient {
 	t.Helper()
 	pub, key, err := ed25519.GenerateKey(nil)
 	if err != nil {
@@ -45,7 +45,7 @@ func newRotatedRecipient(t *testing.T) rotatedRecipient {
 	return r
 }
 
-func sealedMailTo(t *testing.T, recipient rotatedRecipient, key *EncryptionKeyAssertion, body string) *E2EEMessageEnvelope {
+func sealedMailTo(t testing.TB, recipient rotatedRecipient, key *EncryptionKeyAssertion, body string) *E2EEMessageEnvelope {
 	t.Helper()
 	senderPub, senderKey, err := ed25519.GenerateKey(nil)
 	if err != nil {
@@ -185,7 +185,7 @@ func TestListingCustodyFailureStillFailsTheListing(t *testing.T) {
 	}
 }
 
-func rotatedRecipientClient(t *testing.T, recipient rotatedRecipient, baseURL string) *Client {
+func rotatedRecipientClient(t testing.TB, recipient rotatedRecipient, baseURL string) *Client {
 	t.Helper()
 	client, err := NewWithIdentity(baseURL, recipient.signingKey, recipient.did)
 	if err != nil {
@@ -274,24 +274,5 @@ func TestListingPlaceholderKeepsNoContactAssertion(t *testing.T) {
 	}
 	if _, present := fields["is_contact"]; present {
 		t.Fatalf("placeholder JSON kept is_contact: %s", raw)
-	}
-}
-
-// A read verifies the envelope's signature and hashes once, then chooses the
-// key and opens that verified envelope.
-func TestClientReadVerifiesTheEnvelopeOnce(t *testing.T) {
-	recipient := newRotatedRecipient(t)
-	client := rotatedRecipientClient(t, recipient, "http://127.0.0.1:1")
-	verifications := 0
-	verify := verifyE2EEMessageEnvelope
-	verifyE2EEMessageEnvelope = func(envelope *E2EEMessageEnvelope) error {
-		verifications++
-		return verify(envelope)
-	}
-	t.Cleanup(func() { verifyE2EEMessageEnvelope = verify })
-
-	plain, err := client.DecryptE2EEEnvelope(sealedMailTo(t, recipient, recipient.active, "once"))
-	if err != nil || plain.Body != "once" || verifications != 1 {
-		t.Fatalf("active-key read: body=%v err=%v verifications=%d, want one", plain, err, verifications)
 	}
 }

@@ -1233,7 +1233,8 @@ func (s *custodyService) storedMailReplyRecipient(ctx context.Context, req *awid
 	if stored == nil || stored.Kind != "mail" || stored.MessageID != req.ReplyToMessageID || stored.ConversationID != req.ConversationID {
 		return refuse("stored_message_mismatch")
 	}
-	if err := awid.VerifyE2EEMessageEnvelopeSignature(stored); err != nil {
+	signed, err := awid.VerifySignedE2EEEnvelope(stored)
+	if err != nil {
 		return refuse("stored_message_signature_invalid")
 	}
 	if stored.From.Address != "" {
@@ -1262,7 +1263,7 @@ func (s *custodyService) storedMailReplyRecipient(ctx context.Context, req *awid
 	if stored.From.DID == s.identity.DID || (s.identity.StableID != "" && stored.From.StableID == s.identity.StableID) {
 		return refuse("reply_source_is_resident")
 	}
-	plain, err := s.openE2EEEnvelope(stored)
+	plain, err := s.openE2EEEnvelope(signed)
 	if err != nil {
 		return awid.E2EERecipientKey{}, err
 	}
@@ -1403,17 +1404,15 @@ func e2eeEnvelopesEqual(a, b *awid.E2EEMessageEnvelope) bool {
 	return left == right
 }
 
-// openE2EEEnvelope opens a stored envelope with the resident's active or
-// archived key, refusing with the custody host's stable codes.
-func (s *custodyService) openE2EEEnvelope(envelope *awid.E2EEMessageEnvelope) (*awid.E2EEInnerPayload, error) {
-	if envelope == nil {
-		return nil, fmt.Errorf("bad_request")
-	}
+// openE2EEEnvelope opens a stored envelope whose signature was verified with
+// the resident's active or archived key, refusing with the custody host's
+// stable codes.
+func (s *custodyService) openE2EEEnvelope(signed *awid.SignedE2EEEnvelope) (*awid.E2EEInnerPayload, error) {
 	identity := awid.E2EEDecryptIdentity{Address: s.identity.Address, DID: s.identity.DID, StableID: s.identity.StableID}
 	if s.e2eeAssertion != nil && s.e2eePrivateKey != nil {
 		identity.EncryptionKeyID, identity.PrivateKey = strings.TrimSpace(s.e2eeAssertion.EncryptionKeyID), s.e2eePrivateKey
 	}
-	plain, err := awid.OpenE2EEMessage(envelope, identity, func(keyID string) (*ecdh.PrivateKey, error) {
+	plain, err := signed.Open(identity, func(keyID string) (*ecdh.PrivateKey, error) {
 		statePath, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: s.residentHome}, "encryption.yaml")
 		if err != nil {
 			return nil, err
@@ -1476,7 +1475,11 @@ func (s *custodyService) unwrapE2EEMessage(ctx context.Context, req *awid.E2EEUn
 	if !e2eeEnvelopesEqual(storedEnvelope, req.Envelope) {
 		return nil, fmt.Errorf("stored_message_mismatch")
 	}
-	plain, err := s.openE2EEEnvelope(storedEnvelope)
+	signed, err := awid.VerifySignedE2EEEnvelope(storedEnvelope)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt_failed")
+	}
+	plain, err := s.openE2EEEnvelope(signed)
 	if err != nil {
 		return nil, err
 	}
