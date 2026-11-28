@@ -362,8 +362,10 @@ spreads reconnects and preserves replay handling after a fleet-wide loss.
 ## 6. Federation and issuer discovery
 
 Discover foreign authority outside the request path under the existing
-domain and delegation rules. Verify the binding from the authority for that
-exact domain to the standing and feed signer before pinning it. Public
+domain and delegation rules. Verify the exact domain's issuer association
+and the registry authority's current standing key set before pinning a
+signer. The [organisation records and issuer trust design](standing-organisation-records.md)
+specifies those two checks and the withdrawal bound. Public
 distribution does not make an arbitrary issuer trusted. A peer-supplied URL,
 unverified key, or evidence from an unrelated fresh issuer cannot substitute.
 A split view requires reconciliation. Emergency signer removal uses an
@@ -406,10 +408,10 @@ and recipient-binding checks.
 
 ### Frozen and standing-protocol peers
 
-Clients select the serving contract from trusted domain and service
-configuration before they sign. They use the released contract for the
-frozen service and standing for E5. A client can support both contracts.
-E5's native serving routes accept only the request-bound protocol in §2.
+Select the client from trusted domain and service configuration before
+signing. The released `aw` speaks the released contract for the frozen
+service. The new `aweb` speaks only the standing contract for E5. E5's
+serving routes accept only the request-bound protocol in §2.
 
 **E5 launch scope.** On 2026-11-28 Juan decided that E5 serves
 `awebai.org` with standing and refuses cross-federation with frozen
@@ -448,8 +450,9 @@ Only a verified applied point establishes freshness. Alert on signer
 queues, barrier age, applied lag and loss of the measured clock bound.
 
 The registry's operational proof, barrier and recovery keys have separate
-custody and access policy. Provision their trust binding through the
-domain's authorised controller. They confer no controller or membership
+custody and access policy. The domain controller selects the issuer.
+The registry authority publishes and rotates its purpose keys.
+They confer no controller or membership
 authority. The pilot's custody plan keeps the `awebai.org` root and team
 controller keys outside the hosted service. Bootstrap the first chain at
 the new registry with those authorities, using the exact staged admin
@@ -706,4 +709,4 @@ extrapolating from raw signature operations.
 | aweb runtime and grants | Complete request inventory, local gates and typed refusal, owner-held grant/application facts, effect and stream tests. Show that the stream recheck reads registry standing only from the process's applied view, with no DB round trip for it. Show that grant revocation, app uninstall and workspace removal still end the affected stream before its next protected emission. Use event-driven local service facts or bounded DB reads, and measure and report any remaining DB recheck cost. |
 | Federation | Native interoperability between real standing issuers, exact trust bootstrap and recovery, and no request-time authority fetch. At E5, prove both directions refuse across the frozen boundary with no effect. For a later customer move, check retired, unknown and current addresses, including opt-in disclosure of a verified replacement. |
 | Pilot, clients and registry deployment | Separate digest-pinned registry deploy at `https://api.awdid.org` in `servers`, named operations ownership, HA signer and feed recovery, and a first-deployment rehearsal for `awebai.org`. Verify client protocol selection, the per-process subscriber and readiness, and the exact DNS/controller bootstrap. Keep existing customers on the frozen service and registry. Verify side-by-side client and home isolation, fresh cohort admission, explicit use of the unchanged frozen identity, and old mail access. For a later customer move, verify the typed refusal and discoverable upgrade path from the pinned released client. |
-| Scale and integration gate | Reproducible history, traffic, change, partition and recovery fixtures with stated hardware and measured limits. Run the E5 boundary against the real new registry and the pinned released registry and server. Test both standing and frozen serving paths with the same client and verify issuance/feed loss, discovery failure and issuer isolation. Exercise fresh cohort onboarding and independent old and new sessions. For a future customer move, apply §7's independent source-cut verification, exclusion and abort controls, full negative inventory check, source retirement and mail controls. |
+| Scale and integration gate | Reproducible history, traffic, change, partition and recovery fixtures with stated hardware and measured limits. Run the E5 boundary against the real new registry and the pinned released registry and server. Test standing with the new client and frozen service with the released client. Verify issuance/feed loss, discovery failure and issuer isolation. Exercise fresh cohort onboarding, independent old and new sessions, and refusal of crossed client bindings. For a future customer move, apply §7's independent source-cut verification, exclusion and abort controls, full negative inventory check, source retirement and mail controls. |
