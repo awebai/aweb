@@ -154,15 +154,13 @@ fallback during ordinary init/upgrade.
 
 For E2E messages, channel/Pi may show plaintext only after local decryption in the user's workspace or client process. Server notifications and SSE payloads should be metadata-only for encrypted content. Recipient E2E capability and encryption keys must be identity-authorized; a service signature can assert route support only. If an event or tool error says an encryption key/capability is missing, stale, or mismatched, fail closed and report the error. Do not silently resend as plaintext. If the local channel/Pi process was upgraded from a pre-E2E version, run `aw id encryption-key setup` in the workspace before expecting it to receive encrypted messages.
 
-## Control and work awakenings
+## Control awakenings
 
 For control signals:
 
 - `pause`: stop current work and wait for instructions.
 - `resume`: continue only if the previous context is still valid.
 - `interrupt`: stop and inspect the new instruction before proceeding.
-
-For work/claim notifications, avoid immediate action unless it affects current work. Queue or inspect on the next coordination loop.
 
 ## Recipient addressing
 

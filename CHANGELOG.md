@@ -10,8 +10,13 @@
   `contacts_add`, `contacts_remove`, `add_contact_by_email`,
   `send_message_to_contact` and `read_messages_from_contact`. Use `check_mail`,
   `send_chat`, `check_chats`, `read_chat`, `mark_chat_read`, `list_contacts`,
-  `add_contact`, `remove_contact` and `read_contact_messages`. To message a
-  saved contact, send to its address with `send_mail` or `send_chat`. The
+  `add_contact`, `remove_contact` and `read_contact_messages`.
+  `send_message_to_contact` held the send to the identity stored with the
+  contact, and refused when its address had passed to another identity. A send
+  to the contact's address with `send_mail` or `send_chat` reaches whoever holds
+  that address now, which can be a different identity, under the usual delivery
+  checks. To reach the stored identity only, put the contact's verified DID in
+  `to` when that DID is routable. The
   `aweb_mcp_compatibility_tool_calls_total` counter and its
   `mcp_compatibility_tool_call` log event go with them, and so does
   `aweb.mcp.compatibility`. A client that cached an older tool list should

@@ -83,7 +83,7 @@ Abort during the safety inspection prevents input. Once input has accepted,
 a later abort does not turn acceptance into rejection; delivery/read marks may
 finish during shutdown.
 
-Ambient app/work/claim awakenings retain their separate bounded piggyback queue
+Ambient app awakenings retain their separate bounded piggyback queue
 (default cap 50, latest per ID). They never initiate input and are attached once
 to the next wake/steer input. Overflow rejects the oldest item; durable app events
 can return on snapshot. This is not a readiness deferral queue.

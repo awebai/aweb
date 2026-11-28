@@ -20,7 +20,8 @@ Choose the integration that owns delivery for your session:
 | Explicit `aw notify` fallback | Polls for pending chats after tool calls | Chat only; no mail, control events or idle wake-ups |
 
 Use the channel when you want to run Claude Code yourself (interactive or
-headless) and still receive coordination events in real time.
+headless) and still receive mail, chat, room posts, control signals and app
+events in real time.
 
 ## Setup: plugin (recommended)
 

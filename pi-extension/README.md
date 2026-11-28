@@ -115,7 +115,7 @@ After a first install, an already-running current Pi can load the package with
 
 - Mail and chat **wake** the LLM so it can read and respond.
 - A waiting chat sender or a control signal (pause / resume / interrupt) **steers** the active turn.
-- Ambient work and claim notifications are **queued** for the next natural turn — they inform without interrupting focused work.
+- Ambient app events are **queued** for the next natural turn — they inform without interrupting focused work.
 
 ### When something else does the waking: `AWEB_DELIVERY=session`
 
