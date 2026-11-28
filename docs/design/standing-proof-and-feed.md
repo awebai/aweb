@@ -737,8 +737,10 @@ policy imposes no new restriction on unrelated zones.
 #### Transfer a hosting parent before its children
 
 0. **Separate shared controllers.** Before either parent-controller key
-   removal or the parent transfer, verify the source inventory of registered
-   children. Give each child whose controller equals the parent's a fresh
+   removal or the parent transfer, build the live child inventory from
+   source AWID rows. Join it to the service's custody and activity data.
+   Reconcile registry-only names and stale service status before acting.
+   Give each child whose controller equals the parent's a fresh
    per-child controller key in frozen custody, using the existing two-key
    `POST /v1/namespaces/{domain}/rotate` under its old and new child keys.
    Use the valid inherited witness while it still agrees with the old
@@ -756,9 +758,16 @@ policy imposes no new restriction on unrelated zones.
    ID issuance, team operations and address publication. Check any carried
    root-signed evidence under the successor and arrange replacement where
    required. Reconcile an interrupted rotation against the actual source
-   head before resuming writes. The key removal and parent transfer both
-   wait for the inventory to show no remaining shared controllers. Step 1
-   names the resulting per-child controllers.
+   head before resuming writes. Fence provisioning that could add a
+   shared-controller child before the final inventory check. Both key
+   removal and parent transfer wait for that check to show no remaining
+   shared controllers. Step 1 names the resulting per-child controllers.
+
+   In the verified source inventory for this move, all live child
+   controllers are held in frozen custody. Operations supplies their
+   namespace-controller signatures for steps 0 and 1 and the later
+   transfers. The separate holder and roster checks above still apply to
+   transferred identities and teams.
 
 1. **Pin the source per child.** Inventory and freeze new provisioning for
    the moving parent. Before changing the parent's `_awid`, publish exact
@@ -805,8 +814,10 @@ policy imposes no new restriction on unrelated zones.
    registry is tried and no failing exact record is treated as absent.
 
 **Dormant children.** The operator decides the policy before the move.
-Inactivity is an inventory signal. A bulk move groups dormant children into
-the same window as the parent. Each child still needs its authorised source
+Classify activity and build the retirement list against the live AWID
+inventory. Service registration status does not establish which children
+are live. A bulk move groups dormant children into the same window as the
+parent. Each child still needs its authorised source
 cut, verified destination, deny inventory and source retirement before
 activation. Keep exact source pins for unresolved children. Alternatively,
 give notice and retire the approved dormant children at the source under
