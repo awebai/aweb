@@ -21,12 +21,18 @@ func (f *fakeUI) ClearInputLine()                   {}
 func (f *fakeUI) SetExitConfirmation(bool)          {}
 func (f *fakeUI) HasActiveProgram() bool            { return false }
 
-func TestPublicUICanBeImplementedOutsideRunPackage(t *testing.T) {
-	var control awrun.InputController = &fakeUI{}
-	var ui awrun.UI = &fakeUI{}
+// A type outside the run package implements its public UI and input
+// controller interfaces; this file fails to compile if either one gains a
+// method an external implementation cannot provide.
+var (
+	_ awrun.UI              = (*fakeUI)(nil)
+	_ awrun.InputController = (*fakeUI)(nil)
+)
 
+func TestPublicUICanBeImplementedOutsideRunPackage(t *testing.T) {
+	ui := &fakeUI{}
 	loop := awrun.Loop{Control: ui}
-	if loop.Control != control {
-		t.Fatal("expected public UI implementation to satisfy loop control")
+	if loop.Control != awrun.InputController(ui) {
+		t.Fatal("a Loop does not keep the external UI as its control")
 	}
 }
