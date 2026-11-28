@@ -673,7 +673,7 @@ func TestOATSSpawnJoinFromStoredWorkspaceKeyPreservesCreator(t *testing.T) {
 	buildAwBinary(t, context.Background(), bin)
 	command := exec.Command(bin, "init", "--join-from="+source, "--join-team="+teamID, "--name=target", "--json", "--do-not-touch-agents-md")
 	command.Dir = target
-	command.Env = withoutEnvForTest(testCommandEnv(t.TempDir()), "AWEB_URL", "AWEB_API_KEY", "AWEB_ROLE_NAME", "AWEB_ROLE")
+	command.Env = withoutEnvForTest(testCommandEnv(t.TempDir()), "AWEB_URL", "AWEB_API_KEY")
 	if out, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("OATS spawn: %v %s", err, out)
 	}
