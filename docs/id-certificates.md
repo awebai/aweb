@@ -1,13 +1,13 @@
 # Identity certificates v1
 
-Status: **contract candidate; docs and vectors before implementation**.
+Status: **current contract**, implemented in AWID, `aw` and channel-core.
 [`vectors/id-certificates-v1.json`](vectors/id-certificates-v1.json) freezes the
 bytes and decisions below. This is the source of truth for the identity tree;
-it supersedes [member attribution](drafts/member-attribution.md), not existing team
+it supersedes the earlier email-based member attribution proposal, not existing team
 certificates, `member_person`, `member_custody`, owner acts or membership auth.
 The identity-path change was approved on 2026-10-26: a namespace admits human
 and agent identities, humans can issue humans, and local agents need no registry
-registration. This document enables no new authority until implemented.
+registration.
 
 ## 1. What the tree proves
 

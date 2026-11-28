@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -57,25 +58,29 @@ func (l *Loopback) Expect(handoffID string) {
 }
 
 // Wait returns the code of the accepted callback. It gives up at the
-// handoff's expiry, or when ctx ends.
+// handoff's expiry, or when ctx ends. It closes the listener before it
+// returns, so nothing answers on the redirect URI once it has returned.
 func (l *Loopback) Wait(ctx context.Context, expiresAt time.Time) (string, error) {
+	defer l.Close()
 	timer := time.NewTimer(time.Until(expiresAt))
 	defer timer.Stop()
 	select {
 	case code := <-l.codes:
 		return code, nil
 	case <-timer.C:
-		l.Close()
 		return "", coded("handoff_expired", errors.New("the handoff expired before the browser returned to aw"))
 	case <-ctx.Done():
-		l.Close()
 		return "", ctx.Err()
 	}
 }
 
-// Close stops the listener.
+// Close stops the listener. It closes the listening socket itself, which the
+// server knows about only once its serving goroutine has started.
 func (l *Loopback) Close() {
-	l.closeOnce.Do(func() { l.server.Close() })
+	l.closeOnce.Do(func() {
+		_ = l.listener.Close()
+		l.server.Close()
+	})
 }
 
 func (l *Loopback) serve(w http.ResponseWriter, r *http.Request) {
@@ -86,9 +91,14 @@ func (l *Loopback) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Length", strconv.Itoa(len(callbackPage)))
 	_, _ = w.Write([]byte(callbackPage))
+	// The whole page is on the wire before the listener closes, closing this
+	// connection too, and the listener is closed before the code is handed
+	// over, whether or not Wait has started.
+	_ = http.NewResponseController(w).Flush()
+	l.Close()
 	l.codes <- code
-	go l.Close()
 }
 
 func (l *Loopback) accept(r *http.Request) (string, bool) {
