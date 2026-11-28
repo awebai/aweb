@@ -1,5 +1,20 @@
 name = "trustweb"
-defaultTargets = ["TrustWeb"]
+defaultTargets = ["TrustWeb", "DocCheck"]
 
 [[lean_lib]]
 name = "TrustWeb"
+
+[[input_file]]
+name = "readme"
+path = "README.md"
+text = true
+
+[[input_file]]
+name = "claims"
+path = "CLAIMS.md"
+text = true
+
+[[lean_lib]]
+name = "DocCheck"
+roots = ["TrustWeb.DocNames"]
+needs = ["readme", "claims"]

@@ -3,3 +3,8 @@ import TrustWeb.Properties
 import TrustWeb.Core
 import TrustWeb.Abilities
 import TrustWeb.Operations
+import TrustWeb.Evidence
+import TrustWeb.SphereActs
+import TrustWeb.Spheres
+import TrustWeb.SphereApprovals
+import TrustWeb.SphereAdmins
