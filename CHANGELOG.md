@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- awid-service reads `AWID_DATABASE_MIN_CONNECTIONS` and
+  `AWID_DATABASE_MAX_CONNECTIONS` to size its database pool, apart from
+  transaction-pooler mode. Unset, the pool keeps pgdbm's defaults (10 and 20).
+  A test fixture that starts an AWID can now hold a small pool without
+  turning off the statement cache.
+
 - A revoked or root-replaced enrolled ID that omits its did:aw claim is
   refused. A request without `X-AWEB-DID-AW`, or with a team certificate
   that names no `member_did_aw`, used to be attributed to the member's stored
