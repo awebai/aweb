@@ -143,9 +143,10 @@ class Commands(unittest.TestCase):
             result, root = self.run_probe(directory, command, window=1)
             self.assertEqual(result.returncode, 1, result.stderr)
             self.assertEqual((root / "verdict").read_text(), "late\n")
-            # Bounded by the 1.5 s left, not by the full 6 s window nor the
-            # attempt's 30 s.
-            self.assertLess(time.monotonic() - started, 4)
+            # Ended at its timeout, long before its own 30 s. The exact budget
+            # each attempt gets is test_a_refusal_within_the_window_is_refused's;
+            # a wall-clock bound near 1.5 s would measure the host's load.
+            self.assertLess(time.monotonic() - started, 20)
             # Observed absent: no such process; any other error surfaces.
             with self.assertRaises(ProcessLookupError):
                 os.kill(int(pid_file.read_text()), 0)
