@@ -511,11 +511,16 @@ func (r *doctorRunner) addTeamOnlineChecks(state *doctorAwebState, client *aweb.
 	if state.cert != nil {
 		localTeamID = strings.TrimSpace(state.cert.Team)
 	}
-	if localTeamID != "" && serverTeamID != "" && localTeamID != serverTeamID {
-		r.add(awebCheck(doctorCheckTeamMembershipAuth, doctorStatusFail, &doctorTarget{Type: "team", ID: localTeamID}, "Caller-owned team certificate authenticated, but the server returned a different team id.", "Confirm the active local team certificate and configured aweb server belong to the same team.", map[string]any{"local_team_id": localTeamID, "server_team_id": serverTeamID}))
+	teamIDs := map[string]any{"local_team_id": localTeamID, "server_team_id": serverTeamID}
+	if localTeamID == "" || serverTeamID == "" {
+		r.add(awebCheck(doctorCheckTeamMembershipAuth, doctorStatusUnknown, nil, "Current team membership is unknown: the server or the certificate did not name a team.", "Retry aw doctor --online; if the server still names no team, check that the configured aweb server serves this team.", teamIDs))
 		return
 	}
-	r.add(awebCheck(doctorCheckTeamMembershipAuth, doctorStatusOK, &doctorTarget{Type: "team", ID: localTeamID}, membership.Message, "", map[string]any{"local_team_id": localTeamID, "server_team_id": serverTeamID}))
+	if localTeamID != serverTeamID {
+		r.add(awebCheck(doctorCheckTeamMembershipAuth, doctorStatusFail, &doctorTarget{Type: "team", ID: localTeamID}, "Caller-owned team certificate authenticated, but the server returned a different team id.", "Confirm the active local team certificate and configured aweb server belong to the same team.", teamIDs))
+		return
+	}
+	r.add(awebCheck(doctorCheckTeamMembershipAuth, doctorStatusOK, &doctorTarget{Type: "team", ID: localTeamID}, membership.Message, "", teamIDs))
 }
 
 // doctorCurrentTeamCertificate reports current registry authority separately

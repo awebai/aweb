@@ -29,8 +29,10 @@ type doctorAwebServer struct {
 	Unavailable    bool
 	VersionHeader  string
 	AgentsTeamID   string
-	AgentsRefused  bool
-	WorkspaceError string
+	// AgentsTeamIDBlank serves a whitespace-only roster team_id.
+	AgentsTeamIDBlank bool
+	AgentsRefused     bool
+	WorkspaceError    string
 }
 
 func newDoctorAwebServer(t *testing.T, cfg *doctorAwebServer) *doctorAwebServer {
@@ -127,6 +129,9 @@ func newDoctorAwebServer(t *testing.T, cfg *doctorAwebServer) *doctorAwebServer 
 			teamID := "backend:example.com"
 			if strings.TrimSpace(cfg.AgentsTeamID) != "" {
 				teamID = cfg.AgentsTeamID
+			}
+			if cfg.AgentsTeamIDBlank {
+				teamID = "  "
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": teamID, "agents": []any{}})
 		case "/v1/messages/inbox":
@@ -259,6 +264,10 @@ func TestAwDoctorAwebOnlineHappyPath(t *testing.T) {
 		doctorCheckMessagingContactsRead,
 	} {
 		requireDoctorCheckStatus(t, got, id, doctorStatusOK)
+	}
+	membership := requireDoctorCheckStatus(t, got, doctorCheckTeamMembershipAuth, doctorStatusOK)
+	if membership.Detail["local_team_id"] != "backend:example.com" || membership.Detail["server_team_id"] != "backend:example.com" {
+		t.Fatalf("membership_authorized detail=%#v", membership.Detail)
 	}
 	policy := requireDoctorCheckStatus(t, got, doctorCheckMessagingPolicyRead, doctorStatusUnknown)
 	if policy.Detail["reason"] != "no_read_endpoint" {
@@ -432,6 +441,27 @@ func TestAwDoctorTeamMembershipAuthorizedDetectsTeamMismatch(t *testing.T) {
 		t.Fatalf("local_team_id=%v", check.Detail["local_team_id"])
 	}
 	if check.Detail["server_team_id"] != "backend:other.example.com" {
+		t.Fatalf("server_team_id=%v", check.Detail["server_team_id"])
+	}
+}
+
+func TestAwDoctorTeamMembershipAuthorizedUnknownWhenTheServerNamesNoTeam(t *testing.T) {
+	t.Parallel()
+
+	server := newDoctorAwebServer(t, &doctorAwebServer{AgentsTeamIDBlank: true})
+	bin, tmp := buildDoctorBinary(t)
+	registryURL := writeDoctorLocalFixture(t, tmp, server.Server.URL)
+
+	out, err := runDoctorCLIWithRegistry(t, bin, tmp, registryURL, "doctor", "team", "--online", "--json")
+	if err != nil {
+		t.Fatalf("doctor team failed: %v\n%s", err, string(out))
+	}
+	got := decodeDoctorOutput(t, out)
+	check := requireDoctorCheckStatus(t, got, doctorCheckTeamMembershipAuth, doctorStatusUnknown)
+	if check.Detail["local_team_id"] != "backend:example.com" {
+		t.Fatalf("local_team_id=%v", check.Detail["local_team_id"])
+	}
+	if check.Detail["server_team_id"] != "" {
 		t.Fatalf("server_team_id=%v", check.Detail["server_team_id"])
 	}
 }
