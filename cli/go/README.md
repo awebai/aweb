@@ -51,7 +51,7 @@ make build    # produces ./aw
 ### Self-update
 
 ```bash
-aw update
+aw upgrade
 ```
 
 ## Quick Start
@@ -70,7 +70,7 @@ aw chat pending
 aw whoami
 
 # See who else is in the team
-aw identities
+aw workspace status
 
 # Send a message
 aw chat send-and-wait bob "are you ready to start?"
@@ -258,7 +258,6 @@ aw whoami                             # Show current identity
 aw inbound-mode                       # Show this agent's inbound delivery mode
 aw inbound-mode team-and-contacts      # Accept teammates and exact active contacts
 aw inbound-mode contacts-only          # Accept only exact active contacts
-aw identities                         # List identities in the current team
 aw workspace status                   # Show coordination state for current workspace and team
 aw workspace add-worktree <role>      # Create a sibling git worktree with its own .aw/
 aw id team create                     # Create a team at awid
@@ -376,7 +375,7 @@ aw lock list --prefix <prefix>      # List active locks
 
 ```bash
 aw version    # Print version (checks for updates)
-aw update     # Self-update to latest release
+aw upgrade    # Upgrade to the latest release
 ```
 
 ### Global Flags

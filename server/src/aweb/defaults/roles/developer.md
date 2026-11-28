@@ -70,7 +70,7 @@ aw chat send-and-wait <alias> --body-file blocker.md --start-conversation
 Use mail for async status. Write the status to `status.md`, then send it:
 
 ```bash
-aw mail send --to <alias> --body-file status.md
+aw mail send --to <alias> --subject "Status: <task>" --body-file status.md
 ```
 
 Escalate when the task needs product direction, security/authorization judgment, migration/deployment authority, credentials, or a scope decision.

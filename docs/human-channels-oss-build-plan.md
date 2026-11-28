@@ -375,8 +375,8 @@ schema or provider-specific core code. Timestamp qualification cannot satisfy it
 
 N1 is not completed by an upstream adapter assumption. Its first implementation
 subtask pins the native runtime repository/version and the Telegram adapter/
-processing callback paths, using [current Hermes evidence](hermes-aweb-live-findings.md)
-as a starting point rather than assuming it already supports correlation. Its
+processing callback paths. It assumes nothing about correlation:
+[Telegram-to-aweb request correlation remains untested](hermes.md). Its
 next subtask supplies the specific receipt/proof patch and crash journey; any
 upstream landing/version is an explicit F dependency. N2 also needs a separately
 operated real Teams native bot/reference adapter; a Telegram-only Hermes result
