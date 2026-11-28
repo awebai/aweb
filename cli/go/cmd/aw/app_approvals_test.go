@@ -11,6 +11,15 @@ import (
 
 func TestAppApprovalMintSelection(t *testing.T) {
 	f := setupAppCustodyFixture(t, nil)
+	// A selection the test expects to succeed must also skip nothing.
+	prepared := func(explicit bool, values []string) (map[string]grantAppSnapshot, error) {
+		t.Helper()
+		apps, skipped, err := prepareGrantAppSnapshots(f.residentHome, f.grant.TeamID, explicit, values, nil)
+		if err == nil && len(skipped) != 0 {
+			t.Fatalf("selection skipped %v", skipped)
+		}
+		return apps, err
+	}
 	dir, _ := pluginDir()
 	original, err := os.ReadFile(manifestPluginManifestPath(dir, "testapp"))
 	if err != nil {
@@ -25,7 +34,7 @@ func TestAppApprovalMintSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Shared installations do not silently become authority on upgrade.
-	empty, err := selectGrantAppSnapshots(f.residentHome, f.grant.TeamID, false, nil, nil)
+	empty, err := prepared(false, nil)
 	if err != nil || len(empty) != 0 {
 		t.Fatalf("empty catalog: apps=%d err=%v", len(empty), err)
 	}
@@ -36,7 +45,7 @@ func TestAppApprovalMintSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, _ := os.ReadFile(appApprovalsPath(f.residentHome))
-	selected, err := selectGrantAppSnapshots(f.residentHome, f.grant.TeamID, true, []string{"testapp:get-thing"}, nil)
+	selected, err := prepared(true, []string{"testapp:get-thing"})
 	if err != nil || len(selected) != 1 || len(selected["testapp"].Tools) != 1 {
 		t.Fatalf("explicit selection: %v", err)
 	}
@@ -48,7 +57,7 @@ func TestAppApprovalMintSelection(t *testing.T) {
 		t.Fatal("explicit selection changed approvals")
 	}
 	for _, values := range [][]string{nil, {""}, {"testapp:"}, {"missing:get"}, {"testapp:nope"}, {"testapp:get-thing,"}} {
-		if _, err := selectGrantAppSnapshots(f.residentHome, f.grant.TeamID, true, values, nil); err == nil {
+		if _, _, err := prepareGrantAppSnapshots(f.residentHome, f.grant.TeamID, true, values, nil); err == nil {
 			t.Fatalf("invalid explicit selection fell back: %v", values)
 		}
 	}
@@ -56,7 +65,7 @@ func TestAppApprovalMintSelection(t *testing.T) {
 	if err := changeAppApproval(f.residentHome, "testapp", "", "", ""); err != nil {
 		t.Fatal(err)
 	}
-	all, err := selectGrantAppSnapshots(f.residentHome, f.grant.TeamID, false, nil, nil)
+	all, err := prepared(false, nil)
 	if err != nil || len(all) != 1 || len(all["otherapp"].Tools) != 3 {
 		t.Fatalf("approved signed tools: %v %+v", err, all)
 	}
@@ -85,7 +94,7 @@ func TestAppApprovalMintSelection(t *testing.T) {
 	if err := os.WriteFile(otherPath, []byte(other), 0600); err != nil {
 		t.Fatal(err)
 	}
-	all, err = selectGrantAppSnapshots(f.residentHome, f.grant.TeamID, false, nil, nil)
+	all, err = prepared(false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,9 +143,4 @@ func TestAppApprovalCatalogRejectsMalformedAndSymlinks(t *testing.T) {
 	if err := changeAppApproval(home, "testapp", "https://example.com", "backend:acme.com", "fixture-testapp"); err == nil {
 		t.Fatal("followed catalog symlink")
 	}
-}
-
-func selectGrantAppSnapshots(home, teamID string, explicit bool, values, deniedOrigins []string) (map[string]grantAppSnapshot, error) {
-	apps, _, err := prepareGrantAppSnapshots(home, teamID, explicit, values, deniedOrigins)
-	return apps, err
 }
