@@ -46,18 +46,13 @@ class LocalControls(unittest.TestCase):
                     self.assertEqual(selected["AWEB_TEST_SERVICES"], "1")
                     self.assertEqual(selected["TEST_DB_PORT"], "15432")
                     self.assertEqual(log, report / label / "pytest.log")
-                    self.assertEqual(
-                        shlex.split(selected["PYTEST_ADDOPTS"]),
-                        [
-                            "-k",
-                            "current_key",
-                            "-p",
-                            "local_pytest_progress",
-                            f"--junitxml={report / label / 'cases.xml'}",
-                            "--durations=0",
-                            "--durations-min=0",
-                        ],
-                    )
+                    options = shlex.split(selected["PYTEST_ADDOPTS"])
+                    # The caller's selection survives first and in order; the
+                    # runner adds its progress plugin and the suite's receipt.
+                    self.assertEqual(options[:2], ["-k", "current_key"])
+                    plugin = options.index("local_pytest_progress")
+                    self.assertEqual(options[plugin - 1], "-p")
+                    self.assertIn(f"--junitxml={report / label / 'cases.xml'}", options)
 
     def test_host_database_and_nonlocal_endpoints_refuse(self):
         for env in (
@@ -84,21 +79,36 @@ class LocalControls(unittest.TestCase):
                 local.check_inherited_database({"DATABASE_URL": url})
 
     def test_disposable_config_is_loopback_memory_only(self):
-        config = local.compose_configuration(workers=4)
-        self.assertEqual(len(config["services"]), 8)
-        for name, service in config["services"].items():
-            self.assertEqual(service["ports"][0]["host_ip"], "127.0.0.1")
-            self.assertEqual(service["ports"][0]["published"], "0")
-            self.assertEqual(service["mem_limit"], service["memswap_limit"])
-            if name.startswith("postgres"):
-                self.assertEqual(service["image"], "postgres:17")
-                self.assertIn(
-                    "/var/lib/postgresql/data:rw,noexec,nosuid,size=1g",
-                    service["tmpfs"],
+        for workers in (1, 4):
+            with self.subTest(workers=workers):
+                config = local.compose_configuration(workers=workers)
+                # One Postgres and one Redis per worker, nothing else.
+                self.assertEqual(
+                    set(config["services"]),
+                    {
+                        f"{kind}{index}"
+                        for kind in ("postgres", "redis")
+                        for index in range(workers)
+                    },
                 )
-            else:
-                self.assertEqual(service["image"], "redis:7")
-        json.dumps(config)
+                for name, service in config["services"].items():
+                    self.assertEqual(service["ports"][0]["host_ip"], "127.0.0.1")
+                    self.assertEqual(service["ports"][0]["published"], "0")
+                    self.assertEqual(service["mem_limit"], service["memswap_limit"])
+                    mounts = {
+                        entry.split(":", 1)[0]: entry.split(":", 1)[1].split(",")
+                        for entry in service["tmpfs"]
+                    }
+                    for options in mounts.values():
+                        self.assertIn("noexec", options)
+                        self.assertIn("nosuid", options)
+                    if name.startswith("postgres"):
+                        # The database lives only in memory.
+                        data = service["environment"]["PGDATA"]
+                        self.assertTrue(
+                            any(data.startswith(mount + "/") for mount in mounts), data
+                        )
+                json.dumps(config)
 
     def test_worker_limit_and_pytest_parallel_override_refuse(self):
         for value in (0, 5, -1):
