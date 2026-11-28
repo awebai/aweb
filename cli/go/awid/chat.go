@@ -757,20 +757,40 @@ type ChatPendingItem struct {
 	LastActivity           string               `json:"last_activity"`
 	SenderWaiting          bool                 `json:"sender_waiting"`
 	TimeRemainingSeconds   *int                 `json:"time_remaining_seconds"`
+	// LastDecryptError is set locally, never taken from the server, when this
+	// identity could not decrypt the last-message preview; LastMessage is then
+	// empty.
+	LastDecryptError string `json:"last_decrypt_error,omitempty"`
+}
+
+type ChatPendingParams struct {
+	// KeepUndecryptable blanks a preview this identity cannot decrypt and sets
+	// LastDecryptError, instead of failing the listing.
+	KeepUndecryptable bool
 }
 
 func (c *Client) ChatPending(ctx context.Context) (*ChatPendingResponse, error) {
+	return c.ChatPendingWithParams(ctx, ChatPendingParams{})
+}
+
+func (c *Client) ChatPendingWithParams(ctx context.Context, p ChatPendingParams) (*ChatPendingResponse, error) {
 	var out ChatPendingResponse
 	if err := c.Get(ctx, "/v1/chat/pending", &out); err != nil {
 		return nil, err
 	}
 	for i := range out.Pending {
 		item := &out.Pending[i]
+		item.LastDecryptError = ""
 		if item.LastMessageContentMode == ContentModeEncryptedV2 || item.LastMessageVersion == E2EEMessageVersion || item.LastEncrypted != nil {
 			if item.LastEncrypted == nil {
 				return nil, errors.New("encrypted chat pending response is missing encrypted envelope")
 			}
 			plain, err := c.DecryptE2EEEnvelopeWithContext(ctx, item.LastEncrypted)
+			var undecryptable *DecryptionError
+			if err != nil && p.KeepUndecryptable && errors.As(err, &undecryptable) {
+				item.LastMessage, item.LastDecryptError = "", undecryptable.Code
+				continue
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -812,6 +832,9 @@ type ChatMessage struct {
 	ReplacementAnnouncement *ReplacementAnnouncement `json:"replacement_announcement,omitempty"`
 	VerificationStatus      VerificationStatus       `json:"verification_status,omitempty"`
 	IsContact               *bool                    `json:"is_contact,omitempty"`
+	// DecryptError is as for InboxMessage: set locally on a listing row this
+	// identity could not decrypt, never taken from the server.
+	DecryptError string `json:"decrypt_error,omitempty"`
 }
 
 type ChatHistoryParams struct {
@@ -819,6 +842,9 @@ type ChatHistoryParams struct {
 	MessageID  string
 	UnreadOnly bool
 	Limit      int
+	// KeepUndecryptable keeps a message this identity cannot decrypt as a
+	// placeholder with DecryptError set, instead of failing the history.
+	KeepUndecryptable bool
 }
 
 func (c *Client) ChatHistory(ctx context.Context, p ChatHistoryParams) (*ChatHistoryResponse, error) {
@@ -841,7 +867,7 @@ func (c *Client) ChatHistory(ctx context.Context, p ChatHistoryParams) (*ChatHis
 	}
 	for i := range out.Messages {
 		m := &out.Messages[i]
-		if err := c.VerifyReceivedChatMessage(ctx, m, p.SessionID, m.FromAgent); err != nil {
+		if err := c.verifyReceivedChatMessage(ctx, m, p.SessionID, m.FromAgent, p.KeepUndecryptable); err != nil {
 			return nil, err
 		}
 	}
@@ -856,8 +882,13 @@ func (c *Client) ChatHistory(ctx context.Context, p ChatHistoryParams) (*ChatHis
 // names the sender for trust normalisation when the message carries no
 // address. An error means the message could not be read at all.
 func (c *Client) VerifyReceivedChatMessage(ctx context.Context, m *ChatMessage, conversationID, trustAlias string) error {
+	return c.verifyReceivedChatMessage(ctx, m, conversationID, trustAlias, false)
+}
+
+func (c *Client) verifyReceivedChatMessage(ctx context.Context, m *ChatMessage, conversationID, trustAlias string, keepUndecryptable bool) error {
 	r := receivedChatMessage(m, trustAlias)
 	r.requestedConversationID = strings.TrimSpace(conversationID)
+	r.keepUndecryptable = keepUndecryptable
 	if err := c.verifyReceived(ctx, &r); err != nil {
 		return err
 	}
@@ -908,6 +939,7 @@ func (r *receivedMessage) applyToChat(m *ChatMessage) {
 	m.AttachmentsAvailable = r.attachmentsAvailable
 	m.VerificationStatus = r.status
 	m.IsContact = r.isContact
+	m.DecryptError = r.decryptError
 }
 
 type ChatMarkReadRequest struct {

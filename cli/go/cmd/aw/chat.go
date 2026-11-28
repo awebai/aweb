@@ -412,7 +412,7 @@ var chatPendingCmd = &cobra.Command{
 		if err := configureClientE2EEForRead(cmd, ctx, c, sel); err != nil {
 			return err
 		}
-		result, err := chat.Pending(ctx, c.Client)
+		result, err := chat.PendingWithParams(ctx, c.Client, awid.ChatPendingParams{KeepUndecryptable: true})
 		if err != nil {
 			return err
 		}

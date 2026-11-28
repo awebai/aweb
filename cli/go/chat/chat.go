@@ -934,6 +934,7 @@ func buildMessages(messages []awid.ChatMessage) []Event {
 			ReplacementAnnouncement: m.ReplacementAnnouncement,
 			VerificationStatus:      m.VerificationStatus,
 			IsContact:               m.IsContact,
+			DecryptError:            m.DecryptError,
 		}
 	}
 	return events
@@ -1587,11 +1588,15 @@ func HistoryBySession(ctx context.Context, client *awid.Client, sessionID string
 	if limit <= 0 {
 		limit = 1000
 	}
+	messageID = strings.TrimSpace(messageID)
 	messagesResp, err := client.ChatHistory(ctx, awid.ChatHistoryParams{
 		SessionID:  sessionID,
-		MessageID:  strings.TrimSpace(messageID),
+		MessageID:  messageID,
 		UnreadOnly: unreadOnly,
 		Limit:      limit,
+		// A history page keeps an undecryptable message as a placeholder; an
+		// exact read of one message still fails.
+		KeepUndecryptable: messageID == "",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("getting messages: %w", err)
@@ -1605,7 +1610,13 @@ func HistoryBySession(ctx context.Context, client *awid.Client, sessionID string
 
 // Pending lists conversations with unread messages.
 func Pending(ctx context.Context, client *awid.Client) (*PendingResult, error) {
-	resp, err := client.ChatPending(ctx)
+	return PendingWithParams(ctx, client, awid.ChatPendingParams{})
+}
+
+// PendingWithParams is Pending with the listing's handling of previews this
+// identity cannot decrypt.
+func PendingWithParams(ctx context.Context, client *awid.Client, params awid.ChatPendingParams) (*PendingResult, error) {
+	resp, err := client.ChatPendingWithParams(ctx, params)
 	if err != nil {
 		return nil, fmt.Errorf("getting pending chats: %w", err)
 	}
@@ -1645,6 +1656,7 @@ func Pending(ctx context.Context, client *awid.Client) (*PendingResult, error) {
 			LastActivity:         p.LastActivity,
 			SenderWaiting:        p.SenderWaiting,
 			TimeRemainingSeconds: p.TimeRemainingSeconds,
+			LastDecryptError:     p.LastDecryptError,
 		})
 	}
 

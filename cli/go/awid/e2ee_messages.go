@@ -178,7 +178,7 @@ func (c *Client) DecryptE2EEEnvelopeWithContext(ctx context.Context, envelope *E
 	if keyID, ok := E2EEWrapKeyID(envelope, identity); ok && keyID != "" && keyID != identity.EncryptionKeyID && c.e2eeArchivedKey != nil {
 		archived, err := c.e2eeArchivedKey(keyID)
 		if err != nil {
-			return nil, &DecryptionError{Code: "encryption_key_missing", err: fmt.Errorf("encrypted message is wrapped to archived encryption key %s, which this identity cannot load: %w; restore it from the .aw/encryption-keys backup", keyID, err)}
+			return nil, &DecryptionError{Code: "encryption_key_missing", err: fmt.Errorf("encrypted message is wrapped to archived encryption key %s, which this identity cannot load (%w); restore it from the .aw/encryption-keys backup", keyID, err)}
 		}
 		identity.EncryptionKeyID, identity.PrivateKey = keyID, archived
 		return DecryptE2EEMessage(envelope, identity)

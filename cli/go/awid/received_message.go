@@ -2,6 +2,7 @@ package awid
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -36,9 +37,12 @@ type receivedMessage struct {
 	// requestedConversationID is the conversation the reader asked for, when
 	// it read one: a message is shown there only if it belongs to it.
 	requestedConversationID string
-	contentMode             string
-	messageVersion          int
-	encrypted               *E2EEMessageEnvelope
+	// keepUndecryptable makes a listing keep a message this identity cannot
+	// decrypt as a placeholder instead of failing the whole read.
+	keepUndecryptable bool
+	contentMode       string
+	messageVersion    int
+	encrypted         *E2EEMessageEnvelope
 	// Only the authenticated managed mail reader can supply this projection.
 	providerDecryptable     *bool
 	signature               string
@@ -60,6 +64,8 @@ type receivedMessage struct {
 	attachmentsAvailable bool
 	status               VerificationStatus
 	isContact            *bool
+	// decryptError is the local DecryptionError code of a kept placeholder.
+	decryptError string
 }
 
 func (r *receivedMessage) isEncrypted() bool {
@@ -99,6 +105,11 @@ func (c *Client) verifyReceived(ctx context.Context, r *receivedMessage) error {
 	}
 	if r.isEncrypted() {
 		teamID, ok, err := c.decryptReceived(ctx, r)
+		var undecryptable *DecryptionError
+		if err != nil && r.keepUndecryptable && errors.As(err, &undecryptable) {
+			r.keepAsUndecryptable(undecryptable.Code)
+			return nil
+		}
 		if err != nil || !ok {
 			return err
 		}
@@ -128,6 +139,16 @@ func (c *Client) receivedDisplayMatches(r *receivedMessage) bool {
 		FromDID:        r.fromDID,
 		ToDID:          r.toDID,
 	})
+}
+
+// keepAsUndecryptable leaves a row that this identity could not decrypt with
+// its identifiers and position but no content, no attachments and no verified
+// sender, so it can be neither read nor acted on.
+func (r *receivedMessage) keepAsUndecryptable(code string) {
+	r.subject, r.body = "", ""
+	r.attachments, r.attachmentsAvailable = nil, false
+	r.status = Failed
+	r.decryptError = code
 }
 
 // decryptReceived obtains readable encrypted content and authenticated

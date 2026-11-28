@@ -238,7 +238,7 @@ func (c *Client) VerifyManagedMailConversation(ctx context.Context, out *InboxRe
 	if strings.TrimSpace(conversationID) == "" {
 		return nil, errors.New("aweb: managed mail verification requires the requested conversation ID")
 	}
-	return c.normalizeMailRows(ctx, out, conversationID)
+	return c.normalizeMailRows(ctx, out, conversationID, false)
 }
 
 func (c *Client) prepareE2EEMail(ctx context.Context, payload *SendMessageRequest, identityTarget bool, initialConversationID string, hasRecipient bool) error {
@@ -674,6 +674,10 @@ type InboxMessage struct {
 	ReplacementAnnouncement *ReplacementAnnouncement `json:"replacement_announcement,omitempty"`
 	VerificationStatus      VerificationStatus       `json:"verification_status,omitempty"`
 	IsContact               *bool                    `json:"is_contact,omitempty"`
+	// DecryptError is set locally, never taken from the server, on a listing
+	// row this identity could not decrypt: encryption_key_missing or
+	// decrypt_failed.
+	DecryptError            string `json:"decrypt_error,omitempty"`
 	authenticatedSenderRead bool
 }
 
@@ -771,23 +775,37 @@ type InboxParams struct {
 	Limit      int
 	Cursor     string
 	MessageID  string
+	// KeepUndecryptable keeps a row this identity cannot decrypt as a
+	// placeholder with DecryptError set, instead of failing the listing.
+	KeepUndecryptable bool
+}
+
+type MailConversationParams struct {
+	ConversationID string
+	Limit          int
+	// KeepUndecryptable is as for InboxParams.
+	KeepUndecryptable bool
 }
 
 func (c *Client) MailConversation(ctx context.Context, conversationID string, limit int) (*InboxResponse, error) {
-	conversationID = strings.TrimSpace(conversationID)
+	return c.MailConversationWithParams(ctx, MailConversationParams{ConversationID: conversationID, Limit: limit})
+}
+
+func (c *Client) MailConversationWithParams(ctx context.Context, p MailConversationParams) (*InboxResponse, error) {
+	conversationID := strings.TrimSpace(p.ConversationID)
 	if conversationID == "" {
 		return nil, errors.New("aweb: conversation_id is required")
 	}
 	path := "/v1/messages/conversations/" + urlPathEscape(conversationID)
-	if limit > 0 {
-		path += "?limit=" + itoa(limit)
+	if p.Limit > 0 {
+		path += "?limit=" + itoa(p.Limit)
 	}
 	var out InboxResponse
 	if err := c.Get(ctx, path, &out); err != nil {
 		return nil, err
 	}
 	c.markAuthenticatedSenderMessages(&out)
-	return c.normalizeInboxResponse(ctx, &out)
+	return c.normalizeMailRows(ctx, &out, "", p.KeepUndecryptable)
 }
 
 // Message returns one exact message when the authenticated identity is either
@@ -835,7 +853,7 @@ func (c *Client) Inbox(ctx context.Context, p InboxParams) (*InboxResponse, erro
 	if err := c.Get(ctx, path, &out); err != nil {
 		return nil, err
 	}
-	return c.normalizeInboxResponse(ctx, &out)
+	return c.normalizeMailRows(ctx, &out, "", p.KeepUndecryptable)
 }
 
 func (c *Client) markAuthenticatedSenderMessages(out *InboxResponse) {
@@ -850,16 +868,17 @@ func (c *Client) markAuthenticatedSenderMessages(out *InboxResponse) {
 }
 
 func (c *Client) normalizeInboxResponse(ctx context.Context, out *InboxResponse) (*InboxResponse, error) {
-	return c.normalizeMailRows(ctx, out, "")
+	return c.normalizeMailRows(ctx, out, "", false)
 }
 
-func (c *Client) normalizeMailRows(ctx context.Context, out *InboxResponse, managedConversationID string) (*InboxResponse, error) {
+func (c *Client) normalizeMailRows(ctx context.Context, out *InboxResponse, managedConversationID string, keepUndecryptable bool) (*InboxResponse, error) {
 	if out == nil {
 		return out, nil
 	}
 	for i := range out.Messages {
 		m := &out.Messages[i]
 		r := receivedMailMessage(m)
+		r.keepUndecryptable = keepUndecryptable
 		if managedConversationID != "" {
 			r.requestedConversationID = managedConversationID
 			r.providerDecryptable = &m.Decryptable
@@ -923,6 +942,7 @@ func (r *receivedMessage) applyToMail(m *InboxMessage) {
 	m.AttachmentsAvailable = r.attachmentsAvailable
 	m.VerificationStatus = r.status
 	m.IsContact = r.isContact
+	m.DecryptError = r.decryptError
 }
 
 func (c *Client) messageAuthoredByClientDID(fromDID string) bool {

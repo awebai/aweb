@@ -782,14 +782,18 @@ func loadEncryptionPrivateKeyForKeyID(statePath, workingDir, identityHome, keyID
 	if record == nil {
 		return nil, fmt.Errorf("%s records no encryption key %s", statePath, keyID)
 	}
-	if _, err := validateEncryptionRecordPrivateKeyAt(workingDir, identityHome, record); err != nil {
-		return nil, err
-	}
 	privatePath, err := resolveIdentityStoredPath(workingDir, identityHome, record.PrivateKeyPath)
 	if err != nil {
 		return nil, err
 	}
-	return awid.LoadX25519PrivateKey(privatePath)
+	privateKey, err := awid.LoadX25519PrivateKey(privatePath)
+	if err != nil {
+		return nil, fmt.Errorf("private key file %s is missing or unreadable", privatePath)
+	}
+	if got, err := awid.ComputeEncryptionKeyID(privateKey.PublicKey().Bytes()); err != nil || got != strings.TrimSpace(record.KeyID) {
+		return nil, fmt.Errorf("private key file %s does not match encryption key %s", privatePath, record.KeyID)
+	}
+	return privateKey, nil
 }
 
 func validateEncryptionRecordAssertion(identity *awconfig.ResolvedIdentity, record *awconfig.EncryptionKeyRecord, assertion *awid.EncryptionKeyAssertion, material *encryptionRecordKeyMaterial) error {

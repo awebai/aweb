@@ -43,6 +43,15 @@ func formatContactTag(isContact *bool) string {
 }
 
 // formatChatEventLine formats a single chat event as "[HH:MM:SS] agent: body" with tags.
+// messageText is a listed message's body, or its undecryptable marker when
+// this identity could not decrypt it.
+func messageText(body, decryptError string) string {
+	if code := strings.TrimSpace(decryptError); code != "" {
+		return "[undecryptable: " + termtext.Line(code) + "]"
+	}
+	return termtext.Block(body)
+}
+
 func formatChatEventLine(m chat.Event) string {
 	tags := formatVerificationTag(m.VerificationStatus) + formatContactTag(m.IsContact)
 	from := preferredIdentityDisplayLabel(m.FromAgent, m.FromAddress, m.FromStableID, m.FromDID, "")
@@ -53,9 +62,9 @@ func formatChatEventLine(m chat.Event) string {
 		}
 	}
 	if ts != "" {
-		return fmt.Sprintf("[%s] %s%s: %s\n", ts, termtext.Line(from), tags, termtext.Block(m.Body))
+		return fmt.Sprintf("[%s] %s%s: %s\n", ts, termtext.Line(from), tags, messageText(m.Body, m.DecryptError))
 	}
-	return fmt.Sprintf("%s%s: %s\n", termtext.Line(from), tags, termtext.Block(m.Body))
+	return fmt.Sprintf("%s%s: %s\n", termtext.Line(from), tags, messageText(m.Body, m.DecryptError))
 }
 
 func preferredIdentityDisplayLabel(alias string, address string, stableID string, did string, fallback string) string {
@@ -200,7 +209,7 @@ func formatMailInbox(v any) string {
 			subj = " — " + subj
 		}
 		tags := formatVerificationTag(msg.VerificationStatus) + formatContactTag(msg.IsContact)
-		sb.WriteString(fmt.Sprintf("- %s%s%s: %s\n", termtext.Line(preferredIdentityDisplayLabel(msg.FromAlias, msg.FromAddress, msg.FromStableID, msg.FromDID, "")), subj, tags, termtext.Block(msg.Body)))
+		sb.WriteString(fmt.Sprintf("- %s%s%s: %s\n", termtext.Line(preferredIdentityDisplayLabel(msg.FromAlias, msg.FromAddress, msg.FromStableID, msg.FromDID, "")), subj, tags, messageText(msg.Body, msg.DecryptError)))
 		for _, attachment := range msg.Attachments {
 			sb.WriteString(fmt.Sprintf("  Attachment %s: %s (%s, %d bytes, expires %s)\n", termtext.Line(attachment.ID), termtext.Line(attachment.Filename), termtext.Line(attachment.MediaType), attachment.Size, termtext.Line(attachment.ExpiresAt)))
 		}
@@ -320,7 +329,7 @@ func formatMailShowResponse(resp *awid.InboxResponse, notice string) string {
 			subj = " — " + subj
 		}
 		tags := formatVerificationTag(msg.VerificationStatus) + formatContactTag(msg.IsContact)
-		sb.WriteString(fmt.Sprintf("- %s%s%s: %s\n", termtext.Line(preferredIdentityDisplayLabel(msg.FromAlias, msg.FromAddress, msg.FromStableID, msg.FromDID, "")), subj, tags, termtext.Block(msg.Body)))
+		sb.WriteString(fmt.Sprintf("- %s%s%s: %s\n", termtext.Line(preferredIdentityDisplayLabel(msg.FromAlias, msg.FromAddress, msg.FromStableID, msg.FromDID, "")), subj, tags, messageText(msg.Body, msg.DecryptError)))
 		for _, attachment := range msg.Attachments {
 			sb.WriteString(fmt.Sprintf("  Attachment %s: %s (%s, %d bytes, expires %s)\n", termtext.Line(attachment.ID), termtext.Line(attachment.Filename), termtext.Line(attachment.MediaType), attachment.Size, termtext.Line(attachment.ExpiresAt)))
 		}
@@ -664,6 +673,10 @@ func formatChatPending(v any) string {
 	sb.WriteString(fmt.Sprintf("CHATS: %d unread conversation(s)\n\n", len(result.Pending)))
 
 	for _, p := range result.Pending {
+		undecryptable := ""
+		if code := strings.TrimSpace(p.LastDecryptError); code != "" {
+			undecryptable = " " + messageText("", code)
+		}
 		openHint := ""
 		displayFrom := preferredPendingSenderLabel(p, "")
 		openTarget := pendingOpenTarget(p)
@@ -676,9 +689,9 @@ func formatChatPending(v any) string {
 			if p.TimeRemainingSeconds != nil && *p.TimeRemainingSeconds < 60 && *p.TimeRemainingSeconds > 0 {
 				timeInfo = fmt.Sprintf(" (%ds left)", *p.TimeRemainingSeconds)
 			}
-			sb.WriteString(fmt.Sprintf("  CHAT WAITING: %s%s (unread: %d)%s\n", displayFrom, timeInfo, p.UnreadCount, openHint))
+			sb.WriteString(fmt.Sprintf("  CHAT WAITING: %s%s (unread: %d)%s%s\n", displayFrom, timeInfo, p.UnreadCount, undecryptable, openHint))
 		} else {
-			sb.WriteString(fmt.Sprintf("  CHAT: %s (unread: %d)%s\n", displayFrom, p.UnreadCount, openHint))
+			sb.WriteString(fmt.Sprintf("  CHAT: %s (unread: %d)%s%s\n", displayFrom, p.UnreadCount, undecryptable, openHint))
 		}
 	}
 

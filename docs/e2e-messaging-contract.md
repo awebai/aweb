@@ -812,6 +812,24 @@ private keys locally for old messages. New sends use the newest valid key.
 Recipients should attempt decryption with the key id named by the matching wrap,
 not by trying every key silently.
 
+Assertion times have one-second resolution, so a rotation creates its assertion
+in a whole second strictly after its predecessor's `created_at`, reading the
+real clock and never dating ahead of it. If the clock cannot pass that second,
+rotation refuses before creating, activating or publishing a key.
+
+Listings (`aw mail inbox`, `aw mail show --conversation-id`, `aw chat history`
+without `--message-id`) keep a message this identity cannot decrypt in its
+place with its identifiers. The listing blanks its subject, body and
+attachments, marks it `verification_status: "failed"`, and sets a locally
+derived `decrypt_error`: `encryption_key_missing` when the key its wrap names
+is not available, or `decrypt_failed`. Text output shows
+`[undecryptable: <code>]`, and the listing exits 0. `aw chat pending` blanks an
+undecryptable preview and sets `last_decrypt_error`. A placeholder is not
+acknowledged automatically, and supplies no reply target, verified sender or
+prompt content. Exact reads of one message, replies and follow-ups still fail
+with the typed error. Only row-local decryption failures are kept this way.
+Request, transport and custody authority failures fail the command.
+
 ## Support, Billing, Abuse, And Retention
 
 Usage, billing, abuse detection, retention, and support for v2 E2E must use

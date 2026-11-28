@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -219,5 +221,178 @@ func TestRealServerRotationRefusesWhenClockCannotAdvance(t *testing.T) {
 	message := world.requireReadableMail(t, bob, world.sendE2EEMail(t, alice, "bob", "after-refused-rotation", "still the original key"), "still the original key")
 	if wraps := deliveryWrapKeyIDs(message); len(wraps) != 1 || wraps[0] != predecessor.EncryptionKeyID {
 		t.Fatalf("refused rotation changed the discovered key: %v", wraps)
+	}
+}
+
+func (world *realCommandWorld) runTextInIdentityHome(home string, args ...string) (string, error) {
+	command := exec.CommandContext(world.Context, world.Binary, append([]string{"--identity-home", home}, args...)...)
+	command.Dir = filepath.Dir(home)
+	command.Env = append(idCreateCommandEnv(world.UserHome), "AWID_REGISTRY_URL="+world.Stack.RegistryURL, "AW_NO_UPDATE_CHECK=1")
+	out, err := command.CombinedOutput()
+	return string(out), err
+}
+
+func decodeJSONObject(t *testing.T, out string) map[string]any {
+	t.Helper()
+	var value map[string]any
+	if err := json.Unmarshal([]byte(out), &value); err != nil {
+		t.Fatalf("decode %v\n%s", err, out)
+	}
+	return value
+}
+
+func jsonRows(t *testing.T, out, field string) []map[string]any {
+	t.Helper()
+	raw, _ := decodeJSONObject(t, out)[field].([]any)
+	rows := make([]map[string]any, 0, len(raw))
+	for _, item := range raw {
+		row, ok := item.(map[string]any)
+		if !ok {
+			t.Fatalf("%s row is not an object: %v", field, item)
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func rowIndex(rows []map[string]any, key, value string) int {
+	for i, row := range rows {
+		if row[key] == value {
+			return i
+		}
+	}
+	return -1
+}
+
+// requireLostKeyRefusal requires a command to fail with the typed lost-key code.
+func (world *realCommandWorld) requireLostKeyRefusal(t *testing.T, member commandMember, what string, args ...string) {
+	t.Helper()
+	out, err := world.runInIdentityHome(member.Home, args...)
+	var refused cliErrorEnvelope
+	if err == nil || json.Unmarshal([]byte(out), &refused) != nil || refused.Error.Code != "encryption_key_missing" {
+		t.Fatalf("%s of a lost-key message: want an encryption_key_missing refusal, got err=%v\n%s", what, err, out)
+	}
+}
+
+func requirePlaceholderRow(t *testing.T, where string, row map[string]any, code string) {
+	t.Helper()
+	if body, present := row["body"]; present && body != "" {
+		t.Fatalf("%s: placeholder kept a body: %v", where, row)
+	}
+	if row["decrypt_error"] != code || row["verification_status"] != string(awid.Failed) || row["attachments_available"] != false || row["attachments"] != nil {
+		t.Fatalf("%s: want an undecryptable placeholder with %s, got %v", where, code, row)
+	}
+	if subject, present := row["subject"]; present && subject != "" {
+		t.Fatalf("%s: placeholder kept a subject: %v", where, row)
+	}
+}
+
+func requireReadableRow(t *testing.T, where string, row map[string]any, body string) {
+	t.Helper()
+	if row["body"] != body || row["decrypt_error"] != nil {
+		t.Fatalf("%s: want readable %q, got %v", where, body, row)
+	}
+}
+
+// docs/e2e-messaging-contract.md "Key Loss And Rotation": losing an archived
+// key makes only the messages wrapped to it unrecoverable. Listings keep that
+// row as an undecryptable placeholder and go on; exact reads still fail.
+func TestRealServerListingsKeepUndecryptableRows(t *testing.T) {
+	world := newRealCommandWorld(t)
+	alice, bob, carol := world.addLocalMember(t, "alice"), world.addLocalMember(t, "bob"), world.addLocalMember(t, "carol")
+
+	plain := decodeJSONObject(t, world.requireCommand(t, alice.Home, "mail", "send", "--to", "bob", "--subject", "plain-neighbour", "--body", "readable plaintext"))["message_id"].(string)
+	sealed := world.sendE2EEMail(t, alice, "bob", "sealed-to-first-key", "lost with the first key")
+	sealedConversation := world.requireReadableMail(t, alice, sealed, "lost with the first key").ConversationID
+	world.requireCommand(t, carol.Home, "chat", "send-and-leave", "bob", "carol chat lost with the first key", "--start-conversation", "--e2ee")
+	aliceChat := decodeJSONObject(t, world.requireCommand(t, alice.Home, "chat", "send-and-leave", "bob", "alice chat lost with the first key", "--start-conversation", "--e2ee"))
+	aliceSession := aliceChat["session_id"].(string)
+
+	state, first := activeEncryptionAssertion(t, bob)
+	firstRecord := state.RecordForKeyID(first.EncryptionKeyID)
+	rotated := rotateEncryptionKey(t, world, bob)
+	followUp := decodeJSONObject(t, world.requireCommand(t, alice.Home, "mail", "send", "--conversation-id", sealedConversation, "--body", "readable after rotation"))["message_id"].(string)
+	if wraps := deliveryWrapKeyIDs(world.requireReadableMail(t, bob, followUp, "readable after rotation")); len(wraps) != 1 || wraps[0] != rotated.KeyID {
+		t.Fatalf("follow-up wrapped to %v, want the rotated key %s", wraps, rotated.KeyID)
+	}
+	world.requireCommand(t, alice.Home, "chat", "send-and-leave", "bob", "alice chat readable after rotation")
+
+	// The archived key is lost: only what was wrapped to it is unrecoverable.
+	firstPrivateKey, err := resolveIdentityStoredPath(filepath.Dir(bob.Home), bob.Home, firstRecord.PrivateKeyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(firstPrivateKey); err != nil {
+		t.Fatal(err)
+	}
+
+	// Exact content reads stay typed nonzero failures.
+	world.requireLostKeyRefusal(t, bob, "exact mail read", "mail", "show", "--message-id", sealed)
+
+	// Chat pending: the preview is blank with its own error; the listing goes on.
+	pending := jsonRows(t, world.requireCommand(t, bob.Home, "chat", "pending"), "pending")
+	var carolPending, alicePending map[string]any
+	for _, row := range pending {
+		if row["session_id"] == aliceSession {
+			alicePending = row
+		} else {
+			carolPending = row
+		}
+	}
+	if carolPending == nil || carolPending["last_message"] != "" || carolPending["last_decrypt_error"] != "encryption_key_missing" {
+		t.Fatalf("pending preview of a lost-key chat: %v", pending)
+	}
+	if alicePending == nil || alicePending["last_message"] != "alice chat readable after rotation" || alicePending["last_decrypt_error"] != nil {
+		t.Fatalf("pending preview of a readable chat: %v", pending)
+	}
+
+	// Chat history: the unreadable row keeps its place before the readable one.
+	history := jsonRows(t, world.requireCommand(t, bob.Home, "chat", "history", "alice"), "messages")
+	if len(history) != 2 {
+		t.Fatalf("chat history rows: %v", history)
+	}
+	requirePlaceholderRow(t, "chat history", history[0], "encryption_key_missing")
+	requireReadableRow(t, "chat history", history[1], "alice chat readable after rotation")
+	world.requireLostKeyRefusal(t, bob, "exact chat read", "chat", "history", "--session-id", aliceSession, "--message-id", history[0]["message_id"].(string))
+
+	// Conversation view: oldest first, the unreadable row before its readable neighbour.
+	conversation := jsonRows(t, world.requireCommand(t, bob.Home, "mail", "show", "--conversation-id", sealedConversation), "messages")
+	if len(conversation) != 2 || conversation[0]["message_id"] != sealed || conversation[1]["message_id"] != followUp {
+		t.Fatalf("conversation rows: %v", conversation)
+	}
+	requirePlaceholderRow(t, "conversation", conversation[0], "encryption_key_missing")
+	requireReadableRow(t, "conversation", conversation[1], "readable after rotation")
+
+	// Text inbox marks the row and exits 0 (and acknowledges only readable rows).
+	text, err := world.runTextInIdentityHome(bob.Home, "mail", "inbox")
+	if err != nil || !strings.Contains(text, "[undecryptable: encryption_key_missing]") || !strings.Contains(text, "readable plaintext") || !strings.Contains(text, "readable after rotation") {
+		t.Fatalf("text inbox: err=%v\n%s", err, text)
+	}
+	unread := jsonRows(t, world.requireCommand(t, bob.Home, "mail", "inbox"), "messages")
+	if len(unread) != 1 || unread[0]["message_id"] != sealed {
+		t.Fatalf("after presentation only the placeholder stays unread: %v", unread)
+	}
+	requirePlaceholderRow(t, "unread inbox", unread[0], "encryption_key_missing")
+
+	// The full listing keeps every row; the unreadable one sorts before an older readable one.
+	all := jsonRows(t, world.requireCommand(t, bob.Home, "mail", "inbox", "--show-all"), "messages")
+	sealedAt, plainAt, followUpAt := rowIndex(all, "message_id", sealed), rowIndex(all, "message_id", plain), rowIndex(all, "message_id", followUp)
+	if sealedAt < 0 || plainAt < 0 || followUpAt < 0 || sealedAt > plainAt {
+		t.Fatalf("show-all rows: %v", all)
+	}
+	requirePlaceholderRow(t, "show-all", all[sealedAt], "encryption_key_missing")
+	requireReadableRow(t, "show-all", all[plainAt], "readable plaintext")
+
+	// A placeholder supplies no reply target, and a follow-up on its conversation refuses.
+	world.requireLostKeyRefusal(t, bob, "reply", "mail", "reply", sealed, "--body", "must not send")
+	world.requireLostKeyRefusal(t, bob, "follow-up", "mail", "send", "--conversation-id", sealedConversation, "--body", "must not send")
+	if strings.Contains(world.requireCommand(t, alice.Home, "mail", "inbox", "--show-all"), "must not send") {
+		t.Fatal("a refused reply was delivered")
+	}
+
+	// Explicit acknowledgement stays available for the placeholder.
+	world.requireCommand(t, bob.Home, "mail", "ack", sealed)
+	if unread := jsonRows(t, world.requireCommand(t, bob.Home, "mail", "inbox"), "messages"); len(unread) != 0 {
+		t.Fatalf("explicitly acknowledged placeholder is still unread: %v", unread)
 	}
 }

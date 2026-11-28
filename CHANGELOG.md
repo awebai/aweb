@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+- `aw` reads encrypted mail and chat sealed to an encryption key it has since
+  rotated away from. It uses the archived private key that the message's wrap
+  names, and never tries other keys. Before this, every message sent before an
+  `aw id encryption-key rotate` failed with "not a recipient". Released
+  clients keep failing on such messages until they upgrade. No server or wire
+  change is involved.
+- `aw id encryption-key rotate` creates its new assertion in a later second
+  than the key it replaces. A rotation within the same second as its
+  predecessor tied in the newest-key projections, and senders could keep
+  encrypting to the replaced key. When the clock cannot pass the
+  predecessor's second within 3 seconds, rotate refuses and creates no key.
+  Keys that released clients have already published with a tied time are
+  handled by a separate server and AWID release.
+- `aw mail inbox`, `aw mail show --conversation-id`, `aw chat history` and
+  `aw chat pending` no longer fail as a whole when one message cannot be
+  decrypted. The row stays in place with empty content,
+  `verification_status: "failed"` and a new optional `decrypt_error`
+  (`last_decrypt_error` for a pending preview): `encryption_key_missing` or
+  `decrypt_failed`. Text output shows `[undecryptable: <code>]`. Such a row is
+  not acknowledged automatically. Exact reads of one message, replies and
+  follow-ups still fail with the typed error. The Go `awid` client opts in
+  with `KeepUndecryptable` on `InboxParams` and `ChatHistoryParams`, or through
+  `MailConversationWithParams` and `ChatPendingWithParams`. Existing calls keep
+  their behaviour.
+
 - The Go packages `wake` (with `wake/session`), `hookevent`, `a2a`, `a2agw`,
   `strictjson`, `canonicaljson`, `logschain` and `signaturewire` were never part
   of the documented Go library and are now internal to the `aw` module, under

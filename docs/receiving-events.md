@@ -387,7 +387,7 @@ surface presents content or an explicit command acknowledges it.
 | --- | --- |
 | `aw events stream` | None; signal only. |
 | `aw mail show` | None; read-only exact/history fetch. |
-| `aw mail inbox` | Acknowledges unread messages returned and displayed. |
+| `aw mail inbox` | Acknowledges unread messages returned and displayed. An undecryptable placeholder presents no content and stays unread. |
 | `aw mail reply` | Sends the reply, then best-effort acknowledges its source message. |
 | `aw mail ack <message-id>` | Explicitly marks one mail message read. |
 | Claude channel | Channel notification is the presentation point. |

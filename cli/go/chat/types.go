@@ -45,6 +45,8 @@ type Event struct {
 	ReplacementAnnouncement *awid.ReplacementAnnouncement `json:"replacement_announcement,omitempty"`
 	VerificationStatus      awid.VerificationStatus       `json:"verification_status,omitempty"`
 	IsContact               *bool                         `json:"is_contact,omitempty"`
+	// DecryptError marks a history placeholder this identity could not decrypt.
+	DecryptError string `json:"decrypt_error,omitempty"`
 }
 
 // How a chat send ended: the values of SendResult.Status.
@@ -129,6 +131,9 @@ type PendingConversation struct {
 	LastActivity         string   `json:"last_activity"`
 	SenderWaiting        bool     `json:"sender_waiting"`
 	TimeRemainingSeconds *int     `json:"time_remaining_seconds"`
+	// LastDecryptError marks a last-message preview this identity could not
+	// decrypt; LastMessage is then empty.
+	LastDecryptError string `json:"last_decrypt_error,omitempty"`
 }
 
 // ExtendWaitResult is the result of an extend-wait acknowledgment.

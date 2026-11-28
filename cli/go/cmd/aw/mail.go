@@ -771,8 +771,9 @@ func presentAndAcknowledgeMailInbox(
 		return fmt.Errorf("present mail inbox: %w", err)
 	}
 	// Acknowledgements remain best effort, but cannot precede presentation.
+	// An undecryptable placeholder presented nothing, so it stays unread.
 	for _, msg := range resp.Messages {
-		if msg.ReadAt == nil && msg.MessageID != "" {
+		if msg.ReadAt == nil && msg.MessageID != "" && msg.DecryptError == "" {
 			_, _ = client.AckMessage(ctx, msg.MessageID)
 		}
 	}
@@ -834,9 +835,10 @@ var mailInboxCmd = &cobra.Command{
 			return err
 		}
 		resp, err := c.Inbox(ctx, awid.InboxParams{
-			UnreadOnly: !mailInboxShowAll,
-			Limit:      mailInboxLimit,
-			Cursor:     mailInboxCursor,
+			UnreadOnly:        !mailInboxShowAll,
+			Limit:             mailInboxLimit,
+			Cursor:            mailInboxCursor,
+			KeepUndecryptable: true,
 		})
 		if err != nil {
 			return err
@@ -848,7 +850,8 @@ var mailInboxCmd = &cobra.Command{
 		logPolicy := localLogPolicyForSelection(sel)
 		for _, msg := range resp.Messages {
 			// Only log unread messages to avoid duplicates on repeated inbox calls.
-			if msg.ReadAt != nil {
+			// A placeholder has no content and stays unread.
+			if msg.ReadAt != nil || msg.DecryptError != "" {
 				continue
 			}
 			from := preferredIdentityDisplayLabel(
@@ -1000,7 +1003,7 @@ var mailShowCmd = &cobra.Command{
 		if messageID != "" {
 			resp, err = c.Message(ctx, messageID)
 		} else {
-			resp, err = c.MailConversation(ctx, conversationID, mailShowLimit)
+			resp, err = c.MailConversationWithParams(ctx, awid.MailConversationParams{ConversationID: conversationID, Limit: mailShowLimit, KeepUndecryptable: true})
 		}
 		if err != nil {
 			if conversationID != "" {
