@@ -1410,7 +1410,7 @@ func appendWorktreeStep(steps []initNextStep, workingDir string) []initNextStep 
 	if _, err := currentGitWorktreeRootFromDir(workingDir); err != nil {
 		return steps
 	}
-	return append(steps, initNextStep{"aw workspace add-worktree <role>", "Or add a git worktree of this repo as another agent"})
+	return append(steps, initNextStep{"aw workspace add-worktree", "Or add a git worktree of this repo as another agent"})
 }
 
 // formatInitNextSteps renders the next steps block for text output, with the

@@ -168,7 +168,6 @@ async def test_global_inviter_without_registry_pins_uses_real_discovery(
                 str(source_cli_binary),
                 "workspace",
                 "add-worktree",
-                "developer",
                 "--name",
                 "discovery-child",
                 "--json",
