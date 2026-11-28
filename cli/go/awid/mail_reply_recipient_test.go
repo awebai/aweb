@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -129,7 +130,7 @@ func TestMailReplyRecipientBindsSource(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if got.DID != current.did || got.StableID != sender.stableID || got.EncryptionKey != current.assertion {
+				if got.DID != current.did || got.StableID != sender.stableID || got.EncryptionKey == nil || !reflect.DeepEqual(*got.EncryptionKey, *current.assertion) {
 					t.Fatalf("wrong recipient: %+v", got)
 				}
 			}

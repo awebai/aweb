@@ -1237,6 +1237,8 @@ func (s *custodyService) storedMailReplyRecipient(ctx context.Context, req *awid
 	if err != nil {
 		return refuse("stored_message_signature_invalid")
 	}
+	// Every later decision reads the envelope whose signature was verified.
+	stored = signed.Envelope()
 	if stored.From.Address != "" {
 		return refuse("reply_requires_address_resolution")
 	}

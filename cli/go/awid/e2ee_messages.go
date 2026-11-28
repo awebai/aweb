@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -173,11 +174,14 @@ func (c *Client) DecryptE2EEEnvelopeWithContext(ctx context.Context, envelope *E
 }
 
 // decryptE2EEEnvelope opens envelope through this client's custody host or
-// its own keys. signed, when given, is envelope with its signature already
-// verified by the caller.
+// its own keys. signed, when given, is the caller's verified copy, and is
+// what is opened.
 func (c *Client) decryptE2EEEnvelope(ctx context.Context, envelope *E2EEMessageEnvelope, signed *SignedE2EEEnvelope) (*E2EEInnerPayload, error) {
 	if c == nil {
 		return nil, fmt.Errorf("missing client")
+	}
+	if signed != nil {
+		envelope = signed.envelope
 	}
 	if c.e2eePrivateKey == nil {
 		if custody := c.e2eeCustody(); custody != nil {
@@ -242,20 +246,53 @@ func OpenE2EEMessage(envelope *E2EEMessageEnvelope, identity E2EEDecryptIdentity
 	return signed.Open(identity, archived)
 }
 
-// SignedE2EEEnvelope is an envelope whose sender signature was verified, so
-// a caller that checks the signature before other refusals can open it
-// without verifying the signature again. The envelope must not change after
-// verification.
+// SignedE2EEEnvelope holds its own copy of an envelope whose sender signature
+// was verified, so a caller that checks the signature before other refusals
+// can authorize from it and open it without verifying the signature again.
+// Changes to the caller's envelope after verification do not reach it.
 type SignedE2EEEnvelope struct {
 	envelope *E2EEMessageEnvelope
 }
 
-// VerifySignedE2EEEnvelope verifies envelope's sender signature.
+// VerifySignedE2EEEnvelope copies envelope and verifies the copy's sender
+// signature.
 func VerifySignedE2EEEnvelope(envelope *E2EEMessageEnvelope) (*SignedE2EEEnvelope, error) {
-	if err := VerifyE2EEMessageEnvelopeSignature(envelope); err != nil {
+	snapshot := cloneE2EEEnvelope(envelope)
+	if err := VerifyE2EEMessageEnvelopeSignature(snapshot); err != nil {
 		return nil, err
 	}
-	return &SignedE2EEEnvelope{envelope: envelope}, nil
+	return &SignedE2EEEnvelope{envelope: snapshot}, nil
+}
+
+// Envelope returns a copy of the verified envelope.
+func (s *SignedE2EEEnvelope) Envelope() *E2EEMessageEnvelope {
+	return cloneE2EEEnvelope(s.envelope)
+}
+
+// cloneE2EEEnvelope returns a copy of envelope that shares no mutable storage
+// with it; strings are immutable and shared.
+func cloneE2EEEnvelope(envelope *E2EEMessageEnvelope) *E2EEMessageEnvelope {
+	if envelope == nil {
+		return nil
+	}
+	clone := *envelope
+	clone.Recipients = slices.Clone(envelope.Recipients)
+	clone.KeyWraps = slices.Clone(envelope.KeyWraps)
+	if key := envelope.SenderEncryptionKey; key != nil {
+		keyClone := *key
+		keyClone.IdentityStableID = cloneStringPointer(key.IdentityStableID)
+		keyClone.PreviousEncryptionKeyID = cloneStringPointer(key.PreviousEncryptionKeyID)
+		clone.SenderEncryptionKey = &keyClone
+	}
+	return &clone
+}
+
+func cloneStringPointer(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	clone := *value
+	return &clone
 }
 
 // Open checks the rest of the envelope's evidence (version, ciphertext and

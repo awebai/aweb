@@ -371,11 +371,11 @@ func (c *Client) prepareE2EEMail(ctx context.Context, payload *SendMessageReques
 // MailReplyRecipient binds an encrypted reply to this source message's sender.
 // Conversation participant lists and display aliases are not key authority.
 func (c *Client) MailReplyRecipient(ctx context.Context, source InboxMessage) (E2EERecipientKey, error) {
-	envelope := source.Encrypted
-	signed, err := VerifySignedE2EEEnvelope(envelope)
+	signed, err := VerifySignedE2EEEnvelope(source.Encrypted)
 	if err != nil {
 		return E2EERecipientKey{}, fmt.Errorf("cannot reply to unverified encrypted mail: %w", err)
 	}
+	envelope := signed.Envelope()
 	plain, err := c.decryptE2EEEnvelope(ctx, envelope, signed)
 	if err != nil {
 		return E2EERecipientKey{}, fmt.Errorf("cannot reply to unverified encrypted mail: %w", err)
