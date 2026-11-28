@@ -26,7 +26,6 @@ from pydantic import BaseModel, Field
 
 from awid.pagination import encode_cursor, validate_pagination_params
 from awid.team_ids import parse_team_id
-from aweb.agent_health import agent_health
 from aweb.claims import list_active_claims
 from aweb.coordination.tasks_service import list_tasks_paginated
 from aweb.awid_error_handling import (
@@ -107,24 +106,9 @@ def _state_redis(request: Request):
 
     Read from app.state rather than injected, so an embedding application that
     calls these route functions in process with (request, team_id, db) gets
-    the same health observations as an HTTP caller.
+    the same presence observations as an HTTP caller.
     """
     return getattr(request.app.state, "redis", None)
-
-
-def _is_dashboard_reader(request: Request, team_id: str) -> bool:
-    """Whether the request carries a dashboard token valid for this team.
-
-    A public team's directory is readable anonymously; facts disclosed only to
-    the team's dashboard readers check this rather than the route's access.
-    """
-    if not request.headers.get("X-Dashboard-Token"):
-        return False
-    try:
-        _verify_dashboard_auth(request, team_id)
-    except HTTPException:
-        return False
-    return True
 
 
 async def _get_team_visibility(request: Request, team_id: str) -> str:
@@ -178,7 +162,6 @@ class AgentSummary(BaseModel):
     last_seen: Optional[str]
     workspace_path: Optional[str]
     created_at: str
-    health: dict[str, Any]
 
 
 class AgentDetail(BaseModel):
@@ -193,7 +176,6 @@ class AgentDetail(BaseModel):
     human_name: str
     agent_type: str
     created_at: str
-    health: dict[str, Any]
 
 
 class TaskSummary(BaseModel):
@@ -384,15 +366,6 @@ async def list_team_agents(request: Request, team_id: str, db=Depends(get_db)) -
         failure_policy=GrantLivenessFailurePolicy.OMIT_UNPROVEN,
     )
     selected = latest_workspace_activity(workspace_rows, activity)
-    health = await agent_health(
-        aweb_db,
-        _state_redis(request),
-        request,
-        team_id=team_id,
-        agent_ids=[r["agent_id"] for r in rows],
-        now=datetime.now(timezone.utc),
-        show_connection=_is_dashboard_reader(request, team_id),
-    )
 
     return {
         "agents": [
@@ -417,7 +390,6 @@ async def list_team_agents(request: Request, team_id: str, db=Depends(get_db)) -
                 if str(r["agent_id"]) in selected
                 else None,
                 created_at=r["created_at"].isoformat(),
-                health=health[str(r["agent_id"])],
             ).model_dump()
             for r in rows
         ]
@@ -466,15 +438,6 @@ async def get_team_agent(
     )
     if not row:
         raise HTTPException(status_code=404, detail="Agent not found")
-    health = await agent_health(
-        aweb_db,
-        _state_redis(request),
-        request,
-        team_id=team_id,
-        agent_ids=[row["agent_id"]],
-        now=datetime.now(timezone.utc),
-        show_connection=_is_dashboard_reader(request, team_id),
-    )
 
     return AgentDetail(
         agent_id=str(row["agent_id"]),
@@ -488,7 +451,6 @@ async def get_team_agent(
         human_name=row["human_name"],
         agent_type=effective_agent_type(row),
         created_at=row["created_at"].isoformat(),
-        health=health[str(row["agent_id"])],
     ).model_dump()
 
 

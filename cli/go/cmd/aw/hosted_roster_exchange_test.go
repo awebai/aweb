@@ -28,17 +28,11 @@ import (
 // chain verification run the production exchange, with no substituted signer.
 func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 	for _, scenario := range []string{
-		"three children",
-		"three children workspace key add",
-		"three children workspace key extend",
-		"workspace key wrong team",
-		"three children discovered creator",
 		"join-from stored key",
 		"implicit init workspace key refuses external home",
 		"cert-only worktree",
 		"cert-only revoked parent",
-		"revoked parent",
-		"different preview parent",
+		"join-from different preview parent",
 		"join-from workspace",
 		"join-from identity home",
 		"join-from revoked parent",
@@ -57,7 +51,6 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 		"further-team own chain retry",
 		"further-team explicit condition echo",
 		"further-team explicit condition missing echo",
-		"global provision chained actor",
 		"join-from retry preview",
 		"join-from retry accept",
 		"join-from retry connect",
@@ -201,7 +194,7 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 						revoked.Store(true)
 					}
 					pinned := parent
-					if scenario == "different preview parent" {
+					if scenario == "join-from different preview parent" {
 						pinned = v.Keys["alice"].DIDKey
 					}
 					var requiredHuman any
@@ -324,41 +317,6 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 			}
 			writeTeamCertificateWorkspaceForTest(t, root, workspace, &testSelectionFixture{SigningKey: parentKey, IdentityScope: "local"})
 			writeWorkspaceBindingForTest(t, root, workspace)
-			if scenario == "workspace key wrong team" {
-				err := runTeamHumanAddWithOptions(authTestCmd(&bytes.Buffer{}), nil, teamHumanAddRunOptions{Specs: []teamAgentSpec{{Raw: "child:local", Name: "child", Scope: "local"}}})
-				want := "This workspace belongs to backend:example.com, not other:example.com. " + creationA5
-				if err == nil || err.Error() != want || accepts != 0 || previews != 0 {
-					t.Fatalf("wrong-team authority: %v previews=%d accepts=%d", err, previews, accepts)
-				}
-				if _, err := os.Stat(filepath.Join(root, "agents")); !os.IsNotExist(err) {
-					t.Fatalf("wrong-team wrote child state: %v", err)
-				}
-				return
-			}
-			assertNotice := func() {
-				if strings.Contains(scenario, "workspace key") {
-					raw, err := os.ReadFile(warningLog.Name())
-					if err != nil {
-						t.Fatal(err)
-					}
-					if strings.Count(string(raw), creationWorkspaceNotice+"\n") != 1 {
-						t.Fatalf("notice must occur once: %q", raw)
-					}
-				}
-			}
-			if scenario == "global provision chained actor" {
-				_, err := createProvisionedTeamMember(teamMemberCreation{SourceDir: root, HomeDir: childDir, Name: "child", Scope: awid.IdentityScopeGlobal})
-				if err == nil || !strings.Contains(err.Error(), "aw id team add-member") || !strings.Contains(err.Error(), "parent") {
-					t.Fatalf("global creation should refuse before effects: %v", err)
-				}
-				if _, err := os.Stat(filepath.Join(childDir, ".aw")); !os.IsNotExist(err) {
-					t.Fatalf("global child written before refusal: %v", err)
-				}
-				if creates != 0 || accepts != 0 {
-					t.Fatalf("hosted effects before refusal: %d/%d", creates, accepts)
-				}
-				return
-			}
 			if furtherTeam {
 				oldJSON, oldAlias, oldLocal, oldGlobal, oldHome := jsonFlag, teamAcceptAlias, teamAcceptLocal, teamAcceptGlobal, activeIdentityHome
 				t.Cleanup(func() {
@@ -722,6 +680,12 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 						t.Fatalf("minted %d invitations instead of resuming", creates)
 					}
 				}
+				if scenario == "join-from different preview parent" {
+					if joinErr == nil || accepts != 0 {
+						t.Fatalf("a preview pinned to another parent was accepted: err=%v accepts=%d", joinErr, accepts)
+					}
+					return
+				}
 				if scenario == "join-from revoked parent" {
 					if joinErr == nil || accepts != 0 {
 						t.Fatalf("revoked source accepted: err=%v accepts=%d", joinErr, accepts)
@@ -735,7 +699,6 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 				if joinErr != nil {
 					t.Fatalf("hosted join-from failed: %v", joinErr)
 				}
-				assertNotice()
 				wantAccepts, wantPreviews := 1, 1
 				if scenario == "join-from retry accept" {
 					wantAccepts = 2
@@ -802,73 +765,7 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 				}
 				return
 			}
-			specs := []teamAgentSpec{{Raw: "alice", Name: "alice", Scope: "local"}, {Raw: "bob", Name: "bob", Scope: "local"}, {Raw: "charlie", Name: "charlie", Scope: "local"}}
-			var err error
-			if scenario == "three children discovered creator" {
-				log, logErr := os.CreateTemp(t.TempDir(), "stderr")
-				if logErr != nil {
-					t.Fatal(logErr)
-				}
-				old := os.Stderr
-				os.Stderr = log
-				withTestWorkingDir(t, deployment, func() {
-					err = runTeamHumanExtend(authTestCmd(&bytes.Buffer{}), []string{"alice:local", "bob:local", "charlie:local"})
-				})
-				os.Stderr = old
-				log.Close()
-				raw, readErr := os.ReadFile(log.Name())
-				if readErr != nil || !strings.Contains(string(raw), "Using agent workspace "+root+" as the creator.\n") {
-					t.Fatalf("missing creator: %q %v", raw, readErr)
-				}
-			} else if scenario == "three children workspace key add" {
-				err = runTeamHumanAddWithOptions(authTestCmd(&bytes.Buffer{}), nil, teamHumanAddRunOptions{Specs: specs})
-			} else if scenario == "three children workspace key extend" {
-				teamHumanExtendAPIKey = "aw_sk_selected_agent"
-				err = runTeamHumanExtend(authTestCmd(&bytes.Buffer{}), []string{"alice:local", "bob:local", "charlie:local"})
-			} else {
-				err = runTeamHumanCreateRosterAdd(specs)
-			}
-			if !strings.HasPrefix(scenario, "three children") {
-				if err == nil || accepts != 0 {
-					t.Fatalf("unsafe parent accepted: err=%v accepts=%d", err, accepts)
-				}
-				home := filepath.Join(root, "agents", "instances", "alice", ".aw")
-				assertHostedPendingChildKey(t, home)
-				return
-			}
-			if err != nil {
-				invitations, _ := (awconfig.IDInvitationFileStore{Dir: awconfig.IdentityInvitationsDir(filepath.Join(root, ".aw"))}).Invitations()
-				for _, inv := range invitations {
-					if inv.Request != nil {
-						t.Logf("parent request state %s", inv.Request.State)
-					}
-				}
-				t.Fatalf("normal hosted roster failed: %v", err)
-			}
-			assertNotice()
-			if accepts != 3 || previews != 3 {
-				t.Fatalf("accepts=%d previews=%d; each child must use its first preview/key", accepts, previews)
-			}
-			for _, spec := range specs {
-				home := filepath.Join(rosterRoot, "agents", "instances", spec.Name)
-				chain, err := awconfig.LoadInstalledIDChain(filepath.Join(home, ".aw"))
-				if err != nil || chain == nil {
-					t.Fatalf("%s has no child chain: %v", spec.Name, err)
-				}
-				certificates := chain.Bundle["certificates"].([]any)
-				leaf := certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)
-				if leaf["parent"].(map[string]any)["id"] != parent {
-					t.Fatalf("wrong creator: %+v", leaf)
-				}
-				key, _ := awid.LoadSigningKey(filepath.Join(home, ".aw", "signing.key"))
-				verdict, err := executeWho(context.Background(), whoOptions{WorkingDir: home})
-				if err != nil || verdict.Outcome != "nearest_human" || verdict.HumanID == nil || *verdict.HumanID != v.Keys["alice"].DIDAW {
-					t.Fatalf("%s ancestry=%+v err=%v", spec.Name, verdict, err)
-				}
-				if verdict.ID != awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)) {
-					t.Fatal("issued identity differs from child key")
-				}
-			}
+			t.Fatalf("scenario %q reached no assertion", scenario)
 		})
 	}
 }

@@ -28,13 +28,6 @@ from aweb.lifecycle import (
 from aweb.mcp.signing import HostedMessageSigningResult, canonical_signed_payload
 from mcp_runtime_fixtures import mounted_mcp
 from messaging_actor_support import admit_messaging_actor
-from test_agent_status_host_http import _controller_request
-from test_agent_status_publish_http import (
-    _designate,
-    _document,
-    _open_rate_window,
-    _publish,
-)
 from test_dashboard import _JWT_SECRET, _make_jwt
 from test_dashboard_privacy import TEAM
 from test_dashboard_privacy import privacy_app as privacy_app
@@ -79,8 +72,6 @@ class Operation(StrEnum):
     ROOM = "room-fanout"
     NOTICE_COUNT = "room-notice-count"
     CONTROL = "control-target"
-    STATUS_HOST = "status-host-target"
-    STATUS_PUBLISH = "status-publish-target"
     HANDLE = "handle-contact"
 
 
@@ -146,8 +137,6 @@ CASES = (
             Operation.STATUS,
             Operation.ROOM,
             Operation.CONTROL,
-            Operation.STATUS_HOST,
-            Operation.STATUS_PUBLISH,
         )
     ]
     + [Case(Operation.HANDLE, Surface.MCP, Selector.ADDRESS)]
@@ -337,7 +326,7 @@ async def _effect_counts(env):
     )
 
 
-async def _probe(env, case, sender, target, *, phase, team_key):
+async def _probe(env, case, sender, target, *, phase):
     op, ref = case.operation, _reference(target, case.selector)
     if op in (Operation.MAIL, Operation.CHAT):
         if case.surface is Surface.MCP:
@@ -442,22 +431,6 @@ async def _probe(env, case, sender, target, *, phase, team_key):
             f"/v1/agents/{target.alias}/control",
             {"signal": "pause"},
         )
-    if op is Operation.STATUS_HOST:
-        return await _controller_request(
-            env,
-            target.alias,
-            host_did=sender.did,
-            previous_host_did="" if phase == 0 else sender.did,
-            signer=team_key,
-        )
-    if op is Operation.STATUS_PUBLISH:
-        await _open_rate_window(env, target.alias)
-        return await _publish(
-            env,
-            sender.alias,
-            target.alias,
-            _document(env, target.alias, sender.alias, seq=phase + 1),
-        )
     if op is Operation.HANDLE:
         return await _tool(
             env, sender, "read_contact_messages", {"contact_id": env.matrix_contact_id}
@@ -546,8 +519,6 @@ def _expected_refusal(case, target):
         Operation.TASK: (422, None, "Assignee agent not found in this team"),
         Operation.DASHBOARD_DETAIL: (404, None, "Agent not found"),
         Operation.CONTROL: (404, None, "Agent not found"),
-        Operation.STATUS_HOST: (404, None, "agent_not_found: Agent not found"),
-        Operation.STATUS_PUBLISH: (404, None, "agent_not_found: Agent not found"),
         Operation.HANDLE: (404, None, "No active agent found for handle contact"),
     }[op]
 
@@ -696,8 +667,6 @@ async def test_selector_and_surface_recheck_membership_after_product_change(
             {"inbound_mode": "team_and_contacts"},
         )
         assert restricted.status_code == 200, restricted.text
-    if case.operation is Operation.STATUS_PUBLISH:
-        await _designate(env, target.alias, sender.alias)
 
     async def signer(**kwargs):
         payload = dict(kwargs["payload"])
@@ -735,7 +704,7 @@ async def test_selector_and_surface_recheck_membership_after_product_change(
             assert sent.status_code == 200, sent.text
             env.matrix_target_identity = await _capture_room_actor(env, target)
         key = (env.team_sk, env.team_did)
-        before = await _probe(env, case, sender, target, phase=0, team_key=key)
+        before = await _probe(env, case, sender, target, phase=0)
         _check(before, case, target, current=True, phase=0)
         await _assert_send_effect(env, before, case, sender, target)
         if case.change is MembershipChange.ARCHIVE:
@@ -769,7 +738,7 @@ async def test_selector_and_surface_recheck_membership_after_product_change(
             key = await _change_key(env)
             await _readmit(env, target if case.superseded_sender else sender, key)
         counts = await _effect_counts(env)
-        after = await _probe(env, case, sender, target, phase=1, team_key=key)
+        after = await _probe(env, case, sender, target, phase=1)
         _check(after, case, target, current=case.global_residence, phase=1)
         await _assert_send_effect(env, after, case, sender, target)
         if not case.global_residence and case.operation in (
@@ -784,7 +753,7 @@ async def test_selector_and_surface_recheck_membership_after_product_change(
         await _readmit(env, sender if case.superseded_sender else target, key)
         if case.operation is Operation.NOTICE_COUNT:
             env.matrix_target_identity = await _capture_room_actor(env, target)
-        restored = await _probe(env, case, sender, target, phase=2, team_key=key)
+        restored = await _probe(env, case, sender, target, phase=2)
         _check(restored, case, target, current=True, phase=2)
         await _assert_send_effect(env, restored, case, sender, target)
 
@@ -815,15 +784,13 @@ async def test_address_residence_alone_does_not_admit_a_team_restricted_target(
         redis=env.redis,
         registry_client=application_registry_client(env.app.state),
     ):
-        before = await _probe(
-            env, case, sender, target, phase=0, team_key=(env.team_sk, env.team_did)
-        )
+        before = await _probe(env, case, sender, target, phase=0)
         _check(before, case, target, current=True, phase=0)
         await _assert_send_effect(env, before, case, sender, target)
         key = await _change_key(env)
         await _readmit(env, sender, key)
         effects = await _effect_counts(env)
-        refused = await _probe(env, case, sender, target, phase=1, team_key=key)
+        refused = await _probe(env, case, sender, target, phase=1)
         if surface is Surface.HTTP:
             assert refused.status_code == 403, refused.text
             data = refused.json()

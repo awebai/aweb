@@ -54,23 +54,3 @@ func HasSingleMarkedBlock(content string) bool {
 		strings.Count(content, MarkerEnd) == 1 &&
 		strings.Index(content, MarkerStart) < strings.Index(content, MarkerEnd)
 }
-
-// PreserveMarkedBlock carries the existing coordination-owned region into newly
-// generated profile content. An unmarked document remains unmarked.
-func PreserveMarkedBlock(existing, generated string) string {
-	start := strings.Index(existing, MarkerStart)
-	if start == -1 {
-		return generated
-	}
-	endOffset := strings.Index(existing[start+len(MarkerStart):], MarkerEnd)
-	if endOffset == -1 {
-		return generated
-	}
-	end := start + len(MarkerStart) + endOffset + len(MarkerEnd)
-	block := existing[start:end]
-	base := strings.TrimRight(generated, "\n")
-	if base == "" {
-		return block + "\n"
-	}
-	return base + "\n\n" + block + "\n"
-}

@@ -823,7 +823,9 @@ The two are deliberately separate:
   - `membership.connected` (the `connect` projection) and
     `membership.workspace_retired` (the lifecycle cascade).
   - Excluded, with reasons in the vector: reservations, which are operational
-    locks, and `agent.status`, which is health reporting.
+    locks, and `agent.status`, the health-reporting event of agent status
+    publishing, which aweb has since removed and no longer emits; the frozen
+    vector keeps the entry.
 - **Certificate issuance and revocation.** Membership authority is effected at
   AWID by the controller's signature. AWID has no outbox, and core persists no
   membership effect (§1). Decision 6 chooses **M3**: core runs a registry observer

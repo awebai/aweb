@@ -205,7 +205,6 @@ def _planned_mutations(request: LifecycleCascadeRequest) -> tuple[str, ...]:
         "session_admission_leases.release",
         "grant_liveness.clear",
         "control_signals.consume",
-        "agent_status.clear",
         "chat_waiting.clear",
         "task_unclaim_events.publish",
         "presence.clear",
@@ -1795,7 +1794,6 @@ async def apply_lifecycle_cascade(
                 "session_admission_leases.release",
                 "grant_liveness.clear",
                 "control_signals.consume",
-                "agent_status.clear",
             )
         )
     if disposition_count:

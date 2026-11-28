@@ -6,37 +6,35 @@ terminal-status rules are a protocol decision and change only by review.
 
 A client of `GET /v1/events/stream` is a process that must hear about mail,
 chat and control signals for as long as it runs. This page states one policy
-for how such a client connects, reconnects and reports its state. Three
+for how such a client connects, reconnects and reports its state. Two
 clients implement the stream today, each with its own rules:
 
 - `channel-core/src/api/events.ts` (the Claude Code plugin and the Pi
   extension);
 - `cli/go/internal/wake/stream.go` (the `aw wake` broker, one stream per identity; the
   channel-core child it runs for each instance does not open the stream, it
-  is fed the broker's events);
-- `cli/go/run/eventbus.go` (`aw run`).
+  is fed the broker's events).
 
-## What the three clients do today
+## What the two clients do today
 
-| | channel-core | wake broker | `aw run` |
-|---|---|---|---|
-| Backoff | 1 s doubling to 5 s; a failed open waits 5 s | 1 s doubling to 15 s | 250 ms doubling to 2 s |
-| Jitter | none | between half and all of the delay | none |
-| `Retry-After` | ignored on the stream | ignored | ignored |
-| 401, 403, 404, 422 on open | retried every 5 s for ever | stream stops until the daemon restarts ("quarantined") | stream stops for the life of the process |
-| Other 4xx on open (408, 409, 429) | retried every 5 s | bounded retry | stream stops for the life of the process |
-| Grant terminal events (`grant_expired`, `grant_revoked`, `grant_subject_inactive`, `grant_issuer_revoked`) | retried every 5 s for ever | as the source reports them | as the source reports them |
-| Planned close | reconnects at once after 4 minutes | closes itself at 4 minutes, reconnects at once | local deadline of 10 minutes |
-| Silence on an open stream | reconnects after two missed heartbeats plus 15 s (75 s) | none of its own | none of its own |
+| | channel-core | wake broker |
+|---|---|---|
+| Backoff | 1 s doubling to 5 s; a failed open waits 5 s | 1 s doubling to 15 s |
+| Jitter | none | between half and all of the delay |
+| `Retry-After` | ignored on the stream | ignored |
+| 401, 403, 404, 422 on open | retried every 5 s for ever | stream stops until the daemon restarts ("quarantined") |
+| Other 4xx on open (408, 409, 429) | retried every 5 s | bounded retry |
+| Grant terminal events (`grant_expired`, `grant_revoked`, `grant_subject_inactive`, `grant_issuer_revoked`) | retried every 5 s for ever | as the source reports them |
+| Planned close | reconnects at once after 4 minutes | closes itself at 4 minutes, reconnects at once |
+| Silence on an open stream | reconnects after two missed heartbeats plus 15 s (75 s) | none of its own |
 
-Two of these are defects with a visible effect. An `aw run` agent that
-receives one 429 or 408 while opening its stream hears nothing more until it
-is restarted. A wake broker stream that receives one 401, for example because
-the host clock was briefly wrong, stays stopped until the daemon restarts,
-while the broker goes on reporting that identity as admitted.
+One of these is a defect with a visible effect. A wake broker stream that
+receives one 401, for example because the host clock was briefly wrong, stays
+stopped until the daemon restarts, while the broker goes on reporting that
+identity as admitted.
 
 The differences also matter together: after a server restart every client
-reconnects within its own window, and the two without jitter reconnect in
+reconnects within its own window, and a client without jitter reconnects in
 step.
 
 ## Policy
@@ -99,12 +97,12 @@ So a refused stream is **quarantined**:
   same jitter as section 3.
 - Before each retry it reads its credentials again from where they are kept,
   so a renewed certificate or grant is used without a restart.
-- `aw run` and the wake broker also look, before each retry, for the mount of
+- The wake broker also looks, before each retry, for the mount of
   the stored server URL that answers as the API (the stored URL itself, or the
-  same origin with or without `/api`), and sign the retry for that mount. See
+  same origin with or without `/api`), and signs the retry for that mount. See
   [Server URL and API mount](configuration.md#server-url-and-api-mount).
 - An explicit request for the stream (a registration with the wake broker, a
-  new `aw run` session, a restart of the channel) retries at once and, if
+  restart of the channel) retries at once and, if
   refused again, continues from the 1-minute delay.
 - The first successful, confirmed stream ends the quarantine: the client's
   state is no longer `refused` (section 8 says who is told).
@@ -175,25 +173,25 @@ once per retry. Who is told what depends on the client:
   event, or the planned close of an open stream. A server that accepts the
   open and refuses again therefore does not produce a notice per cycle. The
   model gets no notice on leaving; the next real event shows the recovery.
-- `aw run` logs the same two transitions.
 
 A retry that is refused again changes the time of the next attempt and says
 nothing.
 
 ## What changes in each client
 
-| | channel-core | wake broker | `aw run` |
-|---|---|---|---|
-| Backoff ceiling | 5 s becomes 15 s | follows the policy | follows the policy |
-| Jitter | added | follows the policy | follows the policy |
-| `Retry-After` | honoured | follows the policy | follows the policy |
-| Refusals | every 5 s becomes 1 to 15 minutes, reported as refused | follows the policy | follows the policy |
-| 408, 409, 429 | unchanged | follows the policy | follows the policy |
-| Planned close | jittered | follows the policy | follows the policy |
-| Silence | unchanged | follows the policy | follows the policy |
+| | channel-core | wake broker |
+|---|---|---|
+| Backoff ceiling | 5 s becomes 15 s | follows the policy |
+| Jitter | added | follows the policy |
+| `Retry-After` | honoured | follows the policy |
+| Refusals | every 5 s becomes 1 to 15 minutes, reported as refused | follows the policy |
+| 408, 409, 429 | unchanged | follows the policy |
+| Planned close | jittered | follows the policy |
+| Silence | unchanged | follows the policy |
 
-The two Go clients share one implementation of sections 2 to 6. The
-TypeScript client has its own and is tested against the same table of cases.
+The wake broker implements sections 2 to 6 in
+`cli/go/internal/eventstream/policy.go`. The TypeScript client has its own and
+is tested against the same table of cases.
 
 ## Decisions recorded at review
 
@@ -202,5 +200,3 @@ TypeScript client has its own and is tested against the same table of cases.
    refusal.
 3. The quarantine delays (1 to 15 minutes) and the `Retry-After` cap
    (5 minutes) are as written.
-4. `aw run`'s planned close moves from a local deadline of 10 minutes to
-   between 3 minutes 30 seconds and 4 minutes.

@@ -14,7 +14,7 @@ import (
 // Invite redemption writes the team's aweb_url to teams.yaml before the
 // workspace connection is attempted. That cache remains the recovery source
 // after `aw team join --no-connect` or a failed default connection. When that
-// member later runs `aw team admin add`, the invite-mint URL resolver must still
+// member later mints an invite, the invite-mint URL resolver must still
 // find the hosted aweb URL from teams.yaml. If it only consults workspace.yaml
 // it returns "", the mint decision falls through to the local-team-key branch,
 // and a legitimately entitled hosted member fails with "no team key".

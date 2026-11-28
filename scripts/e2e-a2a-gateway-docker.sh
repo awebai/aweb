@@ -306,7 +306,7 @@ assert_eq "team id" "demo:a2a.test.local" "$team_id"
 capture_success gateway_invite "gateway invite" run_aw_in "$GATEWAY_DIR" id team invite \
   --team demo \
   --namespace a2a.test.local \
-  --global \
+  --member-global \
   --json
 gateway_token="$(echo "$gateway_invite" | json_field token)"
 capture_success gateway_accept "gateway accept invite" run_aw_in "$GATEWAY_DIR" id team accept-invite "$gateway_token" \
@@ -316,7 +316,7 @@ capture_success gateway_accept "gateway accept invite" run_aw_in "$GATEWAY_DIR" 
 capture_success personal_invite "personal invite" run_aw_in "$GATEWAY_DIR" id team invite \
   --team demo \
   --namespace a2a.test.local \
-  --global \
+  --member-global \
   --json
 personal_token="$(echo "$personal_invite" | json_field token)"
 capture_success personal_accept "personal accept invite" run_aw_in "$PERSONAL_DIR" id team accept-invite "$personal_token" \

@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
+	"github.com/spf13/cobra"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -2154,4 +2155,14 @@ func TestInitJoinFromControllerKeyRetryBeforeCertificate(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertInitJoinTarget(t, target, team, "target", cert.MemberDIDKey, before, source)
+}
+
+// cobraCommandClone is a copy of a command whose flags a test can clear
+// without touching the registered command.
+type cobraCommandClone struct {
+	Command cobra.Command
+}
+
+func (c *cobraCommandClone) ResetFlagsForTest() {
+	c.Command.ResetFlags()
 }

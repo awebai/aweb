@@ -88,7 +88,7 @@ func init() {
 	teamHumanReplaceKeyCmd.Flags().BoolVar(&teamHumanReplaceKeyGenerateNewKey, "generate-new-key", false, "Generate a replacement signing key in --home when signing.key is absent (cannot be combined with --new-did-key)")
 	teamHumanReplaceKeyCmd.Flags().StringVar(&teamHumanReplaceKeyAwebURL, "aweb-url", "", "Aweb service URL override")
 	teamHumanReplaceKeyCmd.Flags().StringVar(&teamHumanReplaceKeyRegistryURL, "registry", "", "AWID registry URL override")
-	registerTeamAdminCommand(teamHumanReplaceKeyCmd, teamAdminGroupOperations)
+	addTeamAdminCommand(teamHumanReplaceKeyCmd, teamAdminGroupOperations)
 }
 
 func runTeamHumanReplaceKey(cmd *cobra.Command, args []string) (runErr error) {

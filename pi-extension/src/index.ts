@@ -1,8 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
-  type ActivityEmitter,
-  createActivityEmitter,
-  endActivity,
   createChannelClient,
   createChannelCredentialReload,
   createRegistryResolver,
@@ -33,7 +30,6 @@ import {
   installWakeDiagnostics,
   type WakeDispatcher,
 } from "./wake.js";
-import { registerActivityHandlers } from "./activity.js";
 
 interface AwResolution {
   command: string;
@@ -108,12 +104,6 @@ export function tmuxCommandGuardReason(command: string): string | undefined {
       );
       if (operation) {
         return `Blocked tmux ${operation}. Agent runtimes may not tear down tmux; use a committed, reviewed, guard-enforced migration or dogfood harness.`;
-      }
-    }
-    if (executable === "aw") {
-      const tail = words.slice(index + 1, index + 12);
-      if (tail.includes("team") && tail.includes("up") && tail.includes("--recreate")) {
-        return "Blocked aw team admin up --recreate. Agent runtimes may not tear down tmux; use a committed, reviewed, guard-enforced harness.";
       }
     }
   }
@@ -278,8 +268,6 @@ export function createPiAwakeningHandler(wakeDispatcher: WakeDispatcher | undefi
 
 export default function awebPiExtension(pi: ExtensionAPI) {
   let abortController: AbortController | undefined;
-  let activity: ActivityEmitter | undefined;
-  registerActivityHandlers(pi, () => activity);
   let channelLoop: Promise<void> | undefined;
   let wakeDispatcher: WakeDispatcher | undefined;
   const wakeLog = createWakeLogger();
@@ -302,9 +290,6 @@ export default function awebPiExtension(pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", async () => {
-    const ending = activity;
-    activity = undefined;
-    await endActivity(ending);
     abortController?.abort();
     abortController = undefined;
     wakeDispatcher?.close(new Error("Pi session shut down before wake delivery"));
@@ -313,9 +298,6 @@ export default function awebPiExtension(pi: ExtensionAPI) {
   });
 
   pi.on("session_start", async (_event, ctx) => {
-    const replaced = activity;
-    activity = undefined;
-    await endActivity(replaced);
     abortController?.abort();
     wakeDispatcher?.close(new Error("Pi session replaced before wake delivery"));
     wakeDispatcher = undefined;
@@ -361,14 +343,6 @@ export default function awebPiExtension(pi: ExtensionAPI) {
         display: true,
       });
       return;
-    }
-
-    // Activity publishes whichever way chat is delivered; it is attributed only
-    // when this extension presents the chat wake itself.
-    try {
-      activity = createActivityEmitter(config, client, { workRoot: ctx.cwd, log: (line) => console.warn(line) });
-    } catch (error) {
-      console.warn(`aweb activity is off for this session: ${error instanceof Error ? error.message : String(error)}`);
     }
 
     const announceWelcome = () => {
@@ -450,10 +424,9 @@ export default function awebPiExtension(pi: ExtensionAPI) {
       teamID: config.teamID,
       workdir: ctx.cwd,
       onAwakening: (awakening) => createPiAwakeningHandler(wakeDispatcher)(awakening),
-      onChatPresented: (sessionID, options) => activity?.chatWakeDelivered(sessionID, options),
       onStreamState: (state) => handlePiStreamState(state, ctx),
       reloadCredentials: createChannelCredentialReload({
-        client, config, load: () => loadChannelConfig(ctx.cwd), self, trust, receipt, activity: () => activity,
+        client, config, load: () => loadChannelConfig(ctx.cwd), self, trust, receipt,
       }),
       streamObserver: receipt,
       log: (message) => {

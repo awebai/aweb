@@ -2,12 +2,74 @@
 
 ## Unreleased
 
+- aw's own agent orchestration is removed: `aw run`, `aw blueprint`,
+  `aw agent`, and `aw team admin up|adopt|refresh|add|extend` with their hidden
+  `aw team <command>` aliases. Materializing and launching agents is OATS's job.
+  `aw team admin create <name>` still creates a team workspace and its first
+  agent identity. Its `--agent`, `--profile`, `--blueprint`, `--home`,
+  `--runtime` and `--library-url` flags are gone, and so are the
+  `profile_mode`, `no_library`, `no_profile`, `identity_only` and
+  `profile_source` fields of its JSON output. `aw plugin library materialize`
+  no longer writes the returned profile into a local home; like every other
+  plugin verb, it prints the Library's answer. aw no longer installs
+  `~/.config/aw/guard-bin/tmux`. The app ids `agent`, `blueprint` and `run`
+  stay reserved, since released `aw` binaries still carry those commands. Two
+  exports leave the documented Go library: the package
+  `github.com/awebai/aw/run` and `awconfig.DefaultRunConfigPath` (the path of
+  `aw run`'s defaults file). The documented library is now `aw`, `awid`,
+  `awconfig` and `chat`, and no other export changes. Before removing them we
+  measured their importers: pkg.go.dev lists one importing module of
+  `aw/run`, our own awebai/bdh, which pins a March 2026 aw and whose current
+  code imports nothing from `aw/run`; a code search across the awebai
+  organization finds no other importer. The event stream client policy the
+  `aw wake` broker uses is in `cli/go/internal/eventstream`. Dropping `run` also drops its terminal
+  rendering dependencies (glamour, lipgloss, goldmark) and the goldmark
+  vulnerability exception they carried. Released `aw` binaries keep their
+  commands; the server is unchanged.
+
+- aw drops second routes to acts that already have one:
+  - `aw id team add <token>`: use `aw id team accept-invite --global <token>`
+    or `aw team join --global <token>`;
+  - the hidden `aw team agent-status`, `aw team remove-agent` and
+    `aw team replace-key`: use `aw team admin <command>`;
+  - the deprecated flags `aw init --local-name` (use `--name`) and
+    `--persistent` (use `--global`), `aw team create --alias` (use
+    `--first-agent-name`), `aw team invite --local`/`--global` and
+    `aw id team invite --local`/`--global`/`--ephemeral`/`--persistent` (use
+    `--member-local`/`--member-global`), `aw team join --alias` (use `--name`),
+    and `aw id team add-member --lifetime` (use `--global` or `--local`).
+
+  The server drops `DELETE /v1/events/subscriptions/{subscription_id}`, which
+  no client called. Team service registration now names
+  `aw workspace connect` as its next step.
+
+- Live agent activity is removed: `aw activity enable|disable|show`,
+  `aw activity hook install --codex`, the activity publishers in the Claude
+  channel, pi and channel-core, `POST /v1/agents/me/activity`, the chat
+  stream's `include=agent_activity` frames and the `agent-activity-v1`
+  vector. Released channels, pi and `aw` treat the missing route as absent
+  and stop publishing quietly. `aw activity hook` remains as a hidden command
+  that reads and discards its event and exits 0, because Codex hosts that ran
+  the installer still call it on every turn event. On such a host, delete the
+  `aw activity hook` entries from `$CODEX_HOME/hooks.json` (or use `/hooks`
+  in Codex); once those hosts have done so, the command can go.
+
+- Agent status publishing is removed. `aw status publish` and
+  `aw status-host set|clear|show` are gone, and so are the server routes
+  `PUT /v1/agents/{alias}/status`, `GET|PUT|DELETE /v1/agents/me/status-host`
+  and `PUT /v1/agents/{alias}/status-host`, the `agent.status` hook event and
+  team stream event, and the `health` field of the dashboard agent routes with
+  its event-stream listening record. Migration 058 drops the `agent_status`
+  and `agent_status_hosts` tables. A released `aw` that calls the removed
+  routes gets 404.
+
 - The Go packages `wake` (with `wake/session`), `hookevent`, `a2a`, `a2agw`,
   `strictjson`, `canonicaljson`, `logschain` and `signaturewire` were never part
   of the documented Go library and are now internal to the `aw` module, under
-  `cli/go/internal/`. The documented library is `aw`, `awid`, `awconfig`,
-  `chat` and `run`; none of its exported API changes. An outside importer of
-  the moved packages must vendor the code it needs.
+  `cli/go/internal/`. The documented library is `aw`, `awid`, `awconfig` and
+  `chat`; this move changes none of its exported API (the removal of `run` and
+  `awconfig.DefaultRunConfigPath` is its own entry above). An outside importer
+  of the moved packages must vendor the code it needs.
 
 - Certificate requests from a member that left a team and reconnected with
   the same key are admitted again. Since server 1.27.51 the native member read
@@ -2238,7 +2300,7 @@ re-init requires both releases.
   first shipped in server 1.27.26. `aw activity hook install --codex` adds
   the hook to `$CODEX_HOME/hooks.json` for hosts that OATS does not manage; Codex runs
   it only after you trust it with `/hooks`. See
-  [agent activity](docs/agent-activity.md).
+  `docs/agent-activity.md`.
 - **The app id `activity` is reserved** for the new command, a stated
   narrowing: the server refuses it at app registration and in app event types.
   Production had zero uses of `activity` in apps, registry entries, event
@@ -2324,7 +2386,7 @@ the hosted deployment that runs server 1.27.26 or later.
   the chat whose wake started it. A grant seat signs with its grant session
   key and needs `chat.send`. Events coalesce to at most one per 500 ms, honour
   the server's rate limit, and stop quietly against a server without the
-  route. See [agent activity](docs/agent-activity.md).
+  route. See `docs/agent-activity.md`.
 
 ### Release preparation: awid-service 0.5.27
 
@@ -2354,7 +2416,7 @@ Changes are since `server-v1.27.25`.
   `include=agent_activity` carries the other participants' activity, including
   the server-derived `busy_elsewhere` and `cleared` frames. Streams without the
   parameter are unchanged byte for byte, so released clients are unaffected.
-  See [agent activity](docs/agent-activity.md).
+  See `docs/agent-activity.md`.
 
 - **Request decoding preserves application failures:** after sending a bounded
   500 when needed, the outer request-decompression wrapper re-raises unexpected
@@ -2444,7 +2506,7 @@ Server changes are since `server-v1.27.23`; client changes are since
   `020_agent_status_hosts.sql`). The team controller can set or clear it with
   a signed `PUT /v1/agents/{alias}/status-host`, given the current host as a
   precondition. Grant callers are refused. Retiring the agent removes the
-  designation. See [agent health](docs/agent-health.md); the signed status
+  designation. See `docs/agent-health.md`; the signed status
   document's bytes are frozen in `docs/vectors/agent-status-v1.json`.
 - **The status host publishes a signed agent status:**
   `PUT /v1/agents/{alias}/status` stores the latest signed status document for
@@ -2457,7 +2519,7 @@ Server changes are since `server-v1.27.23`; client changes are since
   the team event stream.
 - **Dashboard agent routes show health:** `GET /v1/teams/{team_id}/agents`
   and `/agents/{alias}` carry an additive `health` object
-  ([agent health](docs/agent-health.md#reading)). An agent with a stored
+  (`docs/agent-health.md`). An agent with a stored
   status shows the signed report, `source: "host"`, with `stale` computed on
   every read; a designated host that has not reported yet shows
   `reachable: "unknown"`; any other agent, including one whose host has left
@@ -2467,7 +2529,7 @@ Server changes are since `server-v1.27.23`; client changes are since
 - **Health shows aweb's own observations when no host reports:** for an agent
   without a status host or stored report, or whose host has left the team,
   `health` is `{"source": "aweb", "listening", "listening_since",
-  "last_active", "connection"}` ([agent health](docs/agent-health.md#fallback-for-agents-without-a-status-host)).
+  "last_active", "connection"}` (`docs/agent-health.md`).
   `listening` says whether the agent holds an open `GET /v1/events/stream`,
   recorded by the stream itself in Redis; `listening_since` is when the
   current state began. `last_active` is the newest of heartbeat presence,
@@ -2483,7 +2545,7 @@ Server changes are since `server-v1.27.23`; client changes are since
   preserves refusal codes, messages and retry hints; offline `--print-signed`
   supports vector testing. Claude channel **1.7.17** and Pi **0.3.15** add
   atomic, mode-0600 receive receipts refreshed only on successful stream reads.
-  See [agent health clients](docs/agent-health-clients.md).
+  See `docs/agent-health-clients.md`.
 
 ### Release preparation: server 1.27.23
 

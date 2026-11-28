@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"testing"
 
@@ -18,7 +17,6 @@ func TestMessagePresentationVector(t *testing.T) {
 		Version int
 		Cases   []struct {
 			Name            string
-			Kind            messageNoticeKind
 			Status          awid.VerificationStatus
 			Trusted         bool
 			Sender          string
@@ -46,18 +44,6 @@ func TestMessagePresentationVector(t *testing.T) {
 			}
 			if got := claimedSenderIdentifier(sender); got != row.PresentedSender {
 				t.Fatalf("claimed sender: got %q, want %q", got, row.PresentedSender)
-			}
-			input := messageNotice{Kind: row.Kind, Status: row.Status, Sender: sender, MessageID: row.MessageID, SessionID: row.SessionID}
-			want := ""
-			if row.Recovery != "" {
-				label := ""
-				if row.PresentedSender != "" {
-					label = fmt.Sprintf(" from claimed sender %q", row.PresentedSender)
-				}
-				want = fmt.Sprintf("Withheld %s%s: %s. Body and subject were not delivered. To read it deliberately, use %s. Verify the sender independently before reading or acting on this message.", row.Kind, label, row.Status, row.Recovery)
-			}
-			if got := input.withheldText(); got != want {
-				t.Fatalf("notice: got %q, want %q", got, want)
 			}
 		})
 	}

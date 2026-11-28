@@ -59,7 +59,6 @@ Every `A path:line` below refers to that commit, not a moving branch.
 | Existing present links pin read-only versions; editable links select latest and require unrevoked/unexpired capability. | `naapp/folio/src/folio/repository.py:327`–`:445`, `:481`–`:503` |
 | Folio enforces document/version caps today. | `naapp/folio/src/folio/repository.py:23`–`:43`, `:105`–`:157` |
 | Task creation is member-authenticated, strict, assigned by alias, and fires mutation hooks. Structured action metadata/idempotent creation are new work. | `server/src/aweb/coordination/routes/tasks.py:33`–`:43`, `:98`–`:133`; `server/src/aweb/coordination/tasks_service.py:181`–`:291` |
-| Health is host-published evidence, with explicit fallback, not inferred runtime presence. | `docs/agent-health.md:19`–`:57` |
 | Shared naapp-lib currently exports documentation/chrome helpers, while Folio and Library have separate member-auth implementations. | `naapp-lib/README.md:3`–`:17`; `naapp-lib/src/aweb_naapp/__init__.py:34`–`:56`; `naapp/folio/src/folio/auth.py:304`–`:367`; `naapp/library/src/library/auth.py:368`–`:431` |
 | Only one experimental in-process mutation callback ships; a named hook registry/catalog does not. | `docs/aw-hooks-sot.md:17`–`:19`, `:42`–`:63`; `server/src/aweb/hooks.py:12`–`:27` |
 | Current Folio present tokens are stored directly, without a single-use/request-hash contract. | `naapp/folio/src/folio/repository.py:362`–`:380`; `naapp/folio/src/folio/migrations/001_initial.sql:70`–`:82` |
@@ -494,8 +493,7 @@ booking or guest message send.
 Offline copy comes from the signed/fresh acah honest-health status and its age:
 “agent offline since 10:02; request queued” only if those facts are known.
 Expired/absent health says “status unavailable; request queued”. Mail read,
-stream presentation, presence and accepted task are distinct from execution
-(`A docs/agent-health.md:19`–`:57`).
+stream presentation, presence and accepted task are distinct from execution.
 
 ### Exact approval and enforcement boundary
 
@@ -886,7 +884,7 @@ installation; the admin can approve it. Generic OSS host policy determines
 admin authority; BYOT follows its controller/delegation model, not Cloud's
 account roles. How a hosted operator projects owner/admin roles is its own
 concern. Do not equate key
-custody, status-host power or a role string in page data with install authority.
+custody or a role string in page data with install authority.
 
 A durable installation has opaque `installation_id`, monotone generation,
 origin, pinned digest, granted scopes and active/revoked state. Naapps verify
@@ -1330,7 +1328,7 @@ No estimates. “Depends” includes contract readiness, not merely deploy order
 | L3 member surface | F5,C3,R1,N2,N3,B3,L1 | Actual dashboard member signs all calls, no controller fallback, explicit provisioning/refusal, generic tool bindings and ACL cache isolation; app-origin passkey handoff binds same task/proposal/person under Juan's assurance decision, no callback-as-proof. Owner acts need fresh step-up; the C1 hostile corpus passes on the dashboard origin. Chrome, ceremonies and hand-offs are English. Depends on L1, which records the owner's single-person declaration that `member_session` approvals need, together with the approver's designation. |
 | L4 browser wakes | C6,N4,L3 | Two replicas, readiness barrier, reauthorization, loss/reconnect recovery; real healthy commit-to-paint target under 2 s. Wake provenance shows the installation digest and origin-verified flag; unverified bytes shown as such. |
 | L5 metering | C5,N1,N3 | CLI/MCP/link/sync/error/no-op paths counted and reconciled, retained inventories and operator/admin views; reconcile old caps explicitly. |
-| A1 runtime intent delivery | C2,N3 | Claude, pi, Codex, aw run resume assigned tasks after missed wake/offline; no model acceptance inferred from transport delivery. |
+| A1 runtime intent delivery | C2,N3 | Claude, pi, Codex resume assigned tasks after missed wake/offline; no model acceptance inferred from transport delivery. |
 | A2 new enforcing external adapter | C2,N3,provider decision, shared effect components | Only usable external credentials behind approval check; payload/source version/operation fenced; ambiguous outcome lookup before retry. Built on the shared `aweb_naapp` egress guard, auth injectors, response redaction, dispatch state machine and idempotency store proposed in the secrets lane, once assigned, with the §3 idempotency rules; pages builds no copy. No customer change without separate go. |
 | E1 real-path e2e | F0–F6,B1–B3,G1,C1–C6,N1–N7,R1,L1–L5,A1,A2 for external actions | Disposable fixture team, real certs/signatures/task runtime and renderer, two unrelated apps, no mocked internal boundaries; export/delete/restore and negative authority cases. |
 | E2 Athena | D1 and implementation deltas | Member custody/admin/digests, task authorization, link/approval/egress, rendering and retention findings resolved. |

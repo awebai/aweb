@@ -19,6 +19,8 @@ const initInviteRecoveryFile = "init-invite.json"
 
 // Private: Token is a bearer credential and must never appear in diagnostics.
 type initInviteRecovery struct {
+	// Roster marks a record a released `aw team admin add` or `extend` wrote
+	// for its child. This aw cannot finish that operation (loadInitInviteRecovery).
 	Roster           bool   `json:"roster,omitempty"`
 	ParentFromSource bool   `json:"parent_from_source"`
 	MintedKey        bool   `json:"minted_key"`
@@ -50,8 +52,13 @@ func loadInitInviteRecovery(path string) (*initInviteRecovery, error) {
 		return nil, err
 	}
 	var s initInviteRecovery
-	if json.Unmarshal(raw, &s) != nil || s.TeamID == "" || (!s.Roster && s.Token == "") ||
-		(s.Roster && (s.Scope != awid.IdentityModeGlobal || s.DIDKey == "")) {
+	if json.Unmarshal(raw, &s) != nil {
+		return nil, errors.New("invalid init invite recovery")
+	}
+	if s.Roster {
+		return nil, usageError("this identity home holds an interrupted agent provisioning started by a released aw (`aw team admin add` or `extend`); finish it with that released aw and the original command. This aw cannot continue it, and leaves the home unchanged")
+	}
+	if s.TeamID == "" || s.Token == "" {
 		return nil, errors.New("invalid init invite recovery")
 	}
 	return &s, nil
@@ -134,9 +141,6 @@ func runRecoverableJoinFrom(cmd *cobra.Command, wd, joinFrom, joinTeam string) e
 	}
 	alias := resolveAliasValue(resolveInitLocalName())
 	if prior != nil {
-		if prior.Roster {
-			return usageError("this identity has a pending roster invitation; rerun the original aw team admin add or extend command")
-		}
 		if !prior.matchesSelection(initInviteRecovery{Source: source, SourceHome: sourceHome, TeamID: team, Alias: alias, Scope: scope}) {
 			return errors.New("init retry changed the original source, team, name or scope")
 		}

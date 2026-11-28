@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/awebai/aw/internal/eventstream"
 	"github.com/awebai/aw/internal/wake/session"
-	"github.com/awebai/aw/run"
 )
 
 func TestCallReportsTheDaemonIsDownRatherThanFailing(t *testing.T) {
@@ -30,7 +30,7 @@ func TestControlSocketDrivesTheRunningDaemon(t *testing.T) {
 		Store:   store,
 		Session: oats,
 		Log:     logs.log,
-		OpenStream: func(context.Context, string, string) (run.EventStreamOpener, error) {
+		OpenStream: func(context.Context, string, string) (eventstream.EventStreamOpener, error) {
 			return nil, errors.New("no stream in this test")
 		},
 	})
@@ -131,7 +131,7 @@ func TestFallbackFilesAreReconciledByTheDaemon(t *testing.T) {
 		Store:   store,
 		Session: oats,
 		Log:     logs.log,
-		OpenStream: func(context.Context, string, string) (run.EventStreamOpener, error) {
+		OpenStream: func(context.Context, string, string) (eventstream.EventStreamOpener, error) {
 			return nil, errors.New("no stream in this test")
 		},
 	})

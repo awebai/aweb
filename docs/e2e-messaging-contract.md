@@ -778,7 +778,7 @@ plaintext support dumps for v2 E2E messages.
 Server-side content search over E2E subject/body is forbidden. Search must be
 metadata-only or local-client-side after decryption.
 
-## Hosted Surfaces, Notifications, Channel, Pi, And `aw run`
+## Hosted Surfaces, Notifications, Channel, And Pi
 
 Hosted dashboards and server-side support surfaces must remove, hide, or
 downgrade plaintext mail/chat views for self-custodial v2 E2E content. They may
@@ -789,7 +789,7 @@ Server notifications and SSE events may say that an encrypted message arrived,
 who it is from, which conversation it belongs to, and whether action is needed.
 They must not include plaintext subject/body previews.
 
-Local clients such as the channel, Pi, and `aw run` may decrypt locally before
+Local clients such as the channel and Pi may decrypt locally before
 showing plaintext or injecting it into a prompt. The decryption boundary must be
 local to the user's workspace or client process, not the routing service.
 

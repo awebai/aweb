@@ -718,8 +718,6 @@ authority remains the ordered SQL itself; this SOT does not duplicate that DDL.
 - `federation_mutation_outbox`
 - `identity_session_grants`
 - `identity_grant_liveness`
-- `agent_status_hosts`
-- `agent_status`
 - `message_attachments`
 - `team_app_emit_keys`
 - `team_app_event_types`
@@ -789,8 +787,6 @@ router entry.
 <!-- BEGIN SOURCE INVENTORY: aweb-routers -->
 - `attachment`
 - `agents`
-- `agent_status`
-- `agent_activity`
 - `apps`
 - `hook_bindings`
 - `app_hooks`
@@ -977,8 +973,7 @@ activation.
 the agent — never on transport-send alone, and never withheld under a
 never-ack policy.** Presentation is surface-specific but always concrete: the
 Claude MCP channel notification is the presentation (ack at notification); Pi
-acks after `pi.sendMessage` accepts the injection; native `aw run` acks after a
-successful provider run. The failure mode is a rare host-drop between
+acks after `pi.sendMessage` accepts the injection. The failure mode is a rare host-drop between
 transport-send and presentation, and it splits into two sub-cases that recover
 differently. If the transport send itself fails, the ack is skipped, the message
 stays unread, and the next reconnect re-fetches it (the inbox pulls unread only)
@@ -1117,9 +1112,6 @@ transient `did:key`.
 | `PATCH /v1/agents/me` | Update workspace info |
 | `POST /v1/agents/{alias}/replace-key` | Compare-and-swap a local identity key and append the audit record; auth is a request signature by the team's controller `did:key`, not member team-cert auth |
 | `POST /v1/agents/{alias}/control` | Control signals |
-| `GET`/`PUT`/`DELETE /v1/agents/me/status-host` | Read, designate or clear the caller's status host, the one team member whose signed status reports speak for it ([agent health](agent-health.md)); team-cert auth, grant callers refused |
-| `PUT /v1/agents/{alias}/status-host` | Set or clear an agent's status host; auth is a request signature by the team's controller `did:key`, with `previous_host_did` as a compare-and-swap precondition |
-| `PUT /v1/agents/{alias}/status` | Publish the agent's signed status document; auth is team-cert auth by the designated status host, or by the agent itself when none is designated ([agent health](agent-health.md)) |
 | `GET /v1/conversations` | List conversations visible to the authenticated identity across mail and chat. Auth: MessagingAuth (identity-scoped, not team-scoped). |
 | `GET /v1/contacts` | List contacts |
 | `POST /v1/contacts` | Add an identity-bound contact after strict resolution |
@@ -1254,8 +1246,8 @@ selected registry client explicitly to the lifecycle planner and cascade.
 Before a remote membership revocation,
 the host checks the workspace with the shared planner and preserves its
 refusal. The lifecycle planner, cascade and agent list use the same activity
-owner, as do HTTP/MCP workspace status, online lists, dashboard snapshots and
-agent-health observations. Omitted heartbeat metadata is preserved; narrow
+owner, as do HTTP/MCP workspace status, online lists and dashboard
+snapshots. Omitted heartbeat metadata is preserved; narrow
 heartbeats renew only the current metadata's Redis indices. Dashboard streams
 are read-only: the shared native/HOST maintenance operation reconciles presence
 without viewers, atomically recording a transition and publishing its canonical
@@ -1355,8 +1347,8 @@ upstream operator that holds `AWEB_DASHBOARD_JWT_SECRET`.
 
 | Route | Purpose |
 |-------|---------|
-| `GET /v1/teams/{team_id}/agents` | List active agents in team, each with its `health` object ([agent health](agent-health.md#reading)) |
-| `GET /v1/teams/{team_id}/agents/{alias}` | Agent detail, with the same `health` object |
+| `GET /v1/teams/{team_id}/agents` | List active agents in team |
+| `GET /v1/teams/{team_id}/agents/{alias}` | Agent detail |
 | `GET /v1/teams/{team_id}/tasks` | Task list with query params `status`, `assignee_alias`, `task_type`, `priority` (`P0`-`P4`), `labels`, `q`, `limit`, and `cursor`. Returns `{tasks, has_more, next_cursor}`. |
 | `GET /v1/teams/{team_id}/claims` | Active task claims |
 | `GET /v1/teams/{team_id}/events/stream` | Authenticated dashboard SSE, including for public teams. Subscribe to `team-events:{team_id}` before building the initial snapshot, then stream task, reservation and presence events. No mail/chat events or participant metadata. First frames are `connected` then `snapshot` with current `online_aliases` and `active_claims`. |
@@ -1629,19 +1621,17 @@ relies on are:
 
 | Command | Purpose |
 |---------|---------|
-| `aw run <provider>` | Primary human entrypoint; guided onboarding + provider loop |
 | `aw init` | Bind the current workspace using the active certificate from `.aw/team-certs/` (`POST /v1/connect`) |
 | `aw connect --bootstrap-token TOKEN [--address ADDRESS]` | Unsupported bootstrap-token command retained for this release; use a dashboard setup key or `aw init --join-from` |
 | `aw id team create --name X --namespace Y` | Create team at awid |
-| `aw id team invite [--team X --namespace Y] [--member-global]` | Create invite token; defaults to the active team and a local invite. `--member-local` is the explicit default; the old `--global` and `--local` spellings are deprecated hidden aliases |
+| `aw id team invite [--team X --namespace Y] [--member-global]` | Create invite token; defaults to the active team and a local invite. `--member-local` is the explicit default |
 | `aw id team accept-invite <token>` | Accept a hosted `aw_inv_` or local-controller invite, receive certificate; hosted local accepts into an explicit external `--identity-home` auto-connect that root when the invite names a service |
-| `aw id team add <token>` | Deprecated alias for `aw id team accept-invite --global <token>`; use `aw team join --global <token>` or `aw id team accept-invite --global <token>` |
 | `aw id team switch <team_id>` | Change the active local team membership for this workspace |
 | `aw id team list` | Show local team memberships stored in `.aw/teams.yaml` |
 | `aw id team leave <team_id>` | Remove one local team membership and its cert from this workspace only |
 | `aw id team add-member --team X --namespace Y --member Z` | Add member directly by signing an AWID certificate with a local team controller key; no cloud runtime projection side effect |
 | `aw id team register --service URL --team X:Y` | Register or sync a customer-controlled AWID team with a service using the team controller signature; no private controller keys are uploaded |
-| `aw service init --service URL --team X:Y`; `aw workspace connect --service URL --team X:Y` | Connect the current certified worktree, or an explicitly selected external `--identity-home`, to a service projection for an existing AWID team; does not create identities or mutate AWID membership |
+| `aw workspace connect --service URL --team X:Y` | Connect the current certified worktree, or an explicitly selected external `--identity-home`, to a service projection for an existing AWID team; does not create identities or mutate AWID membership |
 | `aw id team import-request --team X --namespace Y --organization-id ORG` | Compatibility generator for a customer team-controller-signed request to an optional external hosted import adapter; that adapter/endpoint is outside the OSS aweb server contract, and no private controller keys are uploaded |
 | `aw id team fetch-cert --team X --namespace Y --cert-id ID` | Fetch and install a blob-backed certificate after controller approval |
 | `aw id team remove-member --team X --namespace Y --member Z` | Remove member, post revocation |
@@ -1726,9 +1716,8 @@ identity-level team membership view. `workspace.yaml` is an aweb
 coordination binding only: it carries the aweb server URL, per-team
 workspace bindings such as `workspace_id` and `role_name`, and local
 repo/workspace metadata. `role_name` selects the workspace's current operating
-responsibility and team playbook. Setup may initialize it from a materialized
-profile ref, but it is independently mutable and does not change profile
-provenance or grant authority. It does not carry awid-specific URL fields,
+responsibility and team playbook. It is independently mutable and does not
+grant authority. It does not carry awid-specific URL fields,
 hosted-specific URL fields, identity key material, or the active team
 selection.
 
@@ -2027,7 +2016,7 @@ deletes them and prints the same counts with the number deleted.
 The command deletes from no other table. It never deletes a team, an agent, a
 task, a message, an `audit_log` row or an identity session grant, whatever
 their age or activity: aweb defines no retention period for `audit_log`, and
-expired and revoked grants are read by the grant list and by agent health.
+expired and revoked grants are read by the grant list.
 The server deletes no mail or chat message automatically.
 
 Each `DELETE` statement removes at most 1000 rows and commits on its own, so a

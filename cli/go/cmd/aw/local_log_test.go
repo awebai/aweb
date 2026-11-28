@@ -282,7 +282,7 @@ func TestSealedWritesLeaveExistingPlaintextLinesAlone(t *testing.T) {
 	}
 }
 
-func TestSealedInteractionLogDedupsAndGivesNoRecap(t *testing.T) {
+func TestSealedInteractionLogDedupsAndHoldsNoPlaintext(t *testing.T) {
 	f := newLocalLogFixture(t)
 	f.installOwnerKey(t, f.teamKey)
 	key := localLogPolicyForSelection(f.sel)
@@ -302,9 +302,6 @@ func TestSealedInteractionLogDedupsAndGivesNoRecap(t *testing.T) {
 	}
 	if opened := openAllLines(t, path, f.ownerKey); len(opened) != 2 {
 		t.Fatalf("want one line per kind and message, got %d", len(opened))
-	}
-	if recap := loadRunContinueRecap(root, &strings.Builder{}); recap != "" {
-		t.Fatalf("a sealed log gives the agent no recap, got %q", recap)
 	}
 }
 

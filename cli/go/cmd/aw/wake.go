@@ -10,14 +10,16 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/eventstream"
 	"github.com/awebai/aw/internal/wake"
 	"github.com/awebai/aw/internal/wake/session"
-	"github.com/awebai/aw/run"
 	"github.com/spf13/cobra"
 )
 
@@ -466,12 +468,12 @@ func wakeStore() (*wake.Store, error) {
 // path every other identity-home-aware command uses. The broker needs
 // stream-read and presence authority — it never opens a message, so it never
 // needs decryption material for any identity.
-func wakeStreamOpener(ctx context.Context, identityHome, teamID string) (run.EventStreamOpener, error) {
+func wakeStreamOpener(ctx context.Context, identityHome, teamID string) (eventstream.EventStreamOpener, error) {
 	client, _, err := wakeIdentityClient(ctx, identityHome, teamID, resolveAuthenticatedBaseURLContext)
 	if err != nil {
 		return nil, err
 	}
-	return run.NewEventStreamOpener(client.Client), nil
+	return eventstream.NewEventStreamOpener(client.Client), nil
 }
 
 // wakeStreamReload builds one identity's event stream source before a retry
@@ -479,7 +481,7 @@ func wakeStreamOpener(ctx context.Context, identityHome, teamID string) (run.Eve
 // does, and builds the client for the mount of the stored server URL that
 // answers as the API (resolveReloadBaseURLContext); that mount is stored once
 // a stream opens there (reloadedEventStreamOpener).
-func wakeStreamReload(ctx context.Context, identityHome, teamID string) (run.EventStreamOpener, error) {
+func wakeStreamReload(ctx context.Context, identityHome, teamID string) (eventstream.EventStreamOpener, error) {
 	client, sel, err := wakeIdentityClient(ctx, identityHome, teamID, resolveReloadBaseURLContext)
 	if err != nil {
 		return nil, err
@@ -716,4 +718,33 @@ func daemonCommitForStatus() string {
 		return ""
 	}
 	return commit
+}
+
+// reloadedEventStreamOpener returns the stream opener for a client a reload
+// built. When the client was built for another mount than the stored server
+// URL, that mount is stored once a stream signed for it has opened there: the
+// open's 200 is the first signed answer the mount gives. A refused or failed
+// open stores nothing.
+func reloadedEventStreamOpener(client *aweb.Client, sel *awconfig.Selection) eventstream.EventStreamOpener {
+	open := eventstream.NewEventStreamOpener(client.Client)
+	if sel == nil || strings.TrimSpace(os.Getenv("AWEB_URL")) != "" {
+		return open
+	}
+	stored, err := cleanBaseURL(sel.AwebURL)
+	if err != nil || stored == sel.BaseURL {
+		return open
+	}
+	workspacePath, mount := sel.WorkspacePath, sel.BaseURL
+	var store sync.Once
+	return func(ctx context.Context, deadline time.Time) (awid.EventSource, error) {
+		source, err := open(ctx, deadline)
+		if err == nil {
+			store.Do(func() {
+				if err := persistResolvedAwebURL(workspacePath, mount); err != nil {
+					debugLog("store answering mount for %s: %v", workspacePath, err)
+				}
+			})
+		}
+		return source, err
+	}
 }

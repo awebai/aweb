@@ -1,1 +1,0 @@
-did:key:z6MkfnJhxzucbzZRqPLhwsUbvjhYSfSFTFtsrgCq4Db9baNX

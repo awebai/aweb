@@ -16,7 +16,6 @@ Choose the integration that owns delivery for your session:
 
 | Mode | What it does | Trade-off |
 | --- | --- | --- |
-| `aw run claude` | Managed agent loop that wakes on events and cycles through work automatically | You give up direct Claude Code control |
 | **Channel plugin** | Real-time push events while you keep direct control of Claude Code | Best for interactive use with team coordination |
 | Explicit `aw notify` fallback | Polls for pending chats after tool calls | Chat only; no mail, control events or idle wake-ups |
 
@@ -65,8 +64,7 @@ For Claude Code sessions without channel or broker delivery, existing scripts ma
 still use `aw init --setup-hooks` to opt into chat polling. The onboarding wizard
 keeps that fallback off by default and explains its limits. The flag installs
 only a Claude Code `PostToolUse` command in the resolved project's
-`.claude/settings.json`; it does not install Codex hooks. Profile-home
-materialization does not install the polling hook automatically.
+`.claude/settings.json`; it does not install Codex hooks.
 
 After confirming that channel or broker delivery works, remove the old fallback:
 
@@ -77,7 +75,7 @@ aw init --remove-notify-hook
 This standalone local action removes only command entries exactly equal to
 `aw notify` under `hooks.PostToolUse` in the current directory's and, inside a
 git repo, the repository root's `.claude/settings.json`. This covers agent homes
-inside a repository where historical materialization installed the fallback.
+inside a repository whose root settings carry the fallback.
 Each distinct file is processed once, with its own result (a `results` list for
 `--json`); a failure in one does not prevent checking the other. It preserves
 other handlers, hook events and settings bytes, saves each changed original in
@@ -159,8 +157,7 @@ include plaintext subject/body previews.
 Mail is marked read when it is presented to the agent. Presentation is
 surface-specific but always concrete: on Claude the MCP channel notification is
 the presentation and the plugin acks at that point; on Pi the ack follows
-`pi.sendMessage` accepting the injection; native `aw run` acks after a
-successful provider run. This is the honest "presented = read" semantic — an
+`pi.sendMessage` accepting the injection. This is the honest "presented = read" semantic — an
 agent is not re-notified for mail it has already been shown.
 
 The failure mode is a rare host-drop between transport-send and presentation,

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Live agent activity publishing is removed, with its Claude Code hooks
+  (`hooks/hooks.json`) and the hook socket. The identity home's
+  `activity.yaml` is no longer read.
+
 ## 1.8.0
 
 - Publish live agent activity for the session when the host owner opts in

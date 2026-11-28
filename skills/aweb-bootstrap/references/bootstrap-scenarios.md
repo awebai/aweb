@@ -31,8 +31,7 @@ Runtime identity state may exist under `agents/home/*/.aw/` or
    - `aw team invite` / `aw team join` for normal hosted joins;
    - `aw id team request`, controller-side `aw id team add-member`, and
      `aw id team fetch-cert` for BYOT cross-machine joins;
-   - `aw init`, `aw workspace connect`, or `aw service init` for service
-     binding;
+   - `aw init` or `aw workspace connect` for service binding;
    - `git worktree add` or `aw workspace add-worktree` for extra same-repo
      worktrees.
 4. Move reusable role/instruction/home files into current team blueprints or

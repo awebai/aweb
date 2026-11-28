@@ -216,7 +216,6 @@ The server's app-id/origin conflict has no CLI override.
 ```http
 POST /v1/events/subscriptions
 GET /v1/events/subscriptions
-DELETE /v1/events/subscriptions/{subscription_id}
 ```
 
 Create or update body:

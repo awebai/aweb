@@ -837,7 +837,7 @@ func TestExecuteTeamRegisterSignsAndPostsServicePayload(t *testing.T) {
 	if !ed25519.Verify(world.TeamKey.Public().(ed25519.PublicKey), []byte(out.CanonicalPayload), signature) {
 		t.Fatal("controller signature does not verify")
 	}
-	connectCommand := fmt.Sprintf("aw service init --service %s --team %s", world.Stack.ServerURL, world.TeamID)
+	connectCommand := fmt.Sprintf("aw workspace connect --service %s --team %s", world.Stack.ServerURL, world.TeamID)
 	if len(out.NextSteps) == 0 || out.NextSteps[0].Command != connectCommand || !out.NextSteps[0].Required {
 		t.Fatalf("real service connection guidance not preserved: %+v", out.NextSteps)
 	}
@@ -1439,7 +1439,7 @@ func testTeamInviteAndAcceptInviteFlow(t *testing.T, tokenStdin bool) {
 	runInvite := exec.CommandContext(ctx, bin, "id", "team", "invite",
 		"--team", "backend",
 		"--namespace", domain,
-		"--persistent",
+		"--member-global",
 		"--json")
 	runInvite.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
 	runInvite.Dir = tmp
@@ -2919,7 +2919,7 @@ func TestTeamInviteWithoutServiceContextDoesNotUseHostedFallback(t *testing.T) {
 	runInvite := exec.CommandContext(ctx, bin, "id", "team", "invite",
 		"--team", "alpha",
 		"--namespace", "alpha.test.local",
-		"--global",
+		"--member-global",
 		"--json")
 	runInvite.Env = idCreateCommandEnv(tmp)
 	runInvite.Dir = tmp
@@ -2931,7 +2931,7 @@ func TestTeamInviteWithoutServiceContextDoesNotUseHostedFallback(t *testing.T) {
 	if !strings.Contains(text, "no team key for alpha.test.local/alpha") {
 		t.Fatalf("expected local-controller key error, got:\n%s", text)
 	}
-	if strings.Contains(text, "--global is not supported for hosted team invites") {
+	if strings.Contains(text, "--member-global is not supported for hosted team invites") {
 		t.Fatalf("non-hosted invite without service context used hosted fallback:\n%s", text)
 	}
 }
@@ -2956,10 +2956,9 @@ func TestTeamInviteWithLocalTeamKeySupportsGlobalWithoutServiceContext(t *testin
 		leadingJSON bool
 		missingKey  bool
 	}{
-		{"folio-leading-json", "--global", true, false},
-		{"trailing-json", "--global", false, false},
-		{"current-scope-flag", "--member-global", true, false},
-		{"error-after-warning", "--global", true, true},
+		{"folio-leading-json", "--member-global", true, false},
+		{"trailing-json", "--member-global", false, false},
+		{"missing-key", "--member-global", true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			team := "alpha"
@@ -2998,9 +2997,6 @@ func TestTeamInviteWithLocalTeamKeySupportsGlobalWithoutServiceContext(t *testin
 				}
 			} else if got["status"] != "created" || got["token"] == nil || got["token"] == "" {
 				t.Fatalf("invite missing from output: %v", got)
-			}
-			if tc.scope == "--global" && !strings.Contains(stderr.String(), "Flag --global has been deprecated, use --member-global") {
-				t.Fatalf("missing deprecation warning on stderr: %q", stderr.String())
 			}
 		})
 	}
@@ -4659,7 +4655,7 @@ func TestTeamAddMemberByDIDIssuesGlobalCertificateWhenStableFieldsProvided(t *te
 		"--namespace", "acme.com",
 		"--did", memberDID,
 		"--name", "alice",
-		"--lifetime", "persistent",
+		"--global",
 		"--did-aw", memberDIDAW,
 		"--address", "acme.com/alice",
 		"--json")
@@ -4667,7 +4663,7 @@ func TestTeamAddMemberByDIDIssuesGlobalCertificateWhenStableFieldsProvided(t *te
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
-		t.Fatalf("add-member by did global compatibility path failed: %v\n%s", err, string(out))
+		t.Fatalf("add-member by did global path failed: %v\n%s", err, string(out))
 	}
 
 	var got map[string]any
@@ -5166,10 +5162,10 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(keyBefore, keyAfter) {
-		t.Fatal("signing.key changed during aw id team add")
+		t.Fatal("signing.key changed during aw id team accept-invite --global")
 	}
 	if !bytes.Equal(identityBefore, identityAfter) {
-		t.Fatal("identity.yaml changed during aw id team add")
+		t.Fatal("identity.yaml changed during aw id team accept-invite --global")
 	}
 
 	teamState, err := awconfig.LoadTeamState(tmp)
@@ -5191,7 +5187,7 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 		t.Fatalf("accepted certificate mismatch: %+v", acceptedCert)
 	}
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "workspace.yaml")); !os.IsNotExist(err) {
-		t.Fatalf("workspace.yaml should not be created by aw id team add, stat err=%v", err)
+		t.Fatalf("workspace.yaml should not be created by aw id team accept-invite --global, stat err=%v", err)
 	}
 
 	runList := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "id", "team", "list", "--json")

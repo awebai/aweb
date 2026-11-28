@@ -33,24 +33,6 @@ class CoordinationContext:
 
 
 @dataclass(frozen=True, kw_only=True)
-class AgentStatusContext(CoordinationContext):
-    """Producer projection for agent.status."""
-
-    event_type: ClassVar[MutationEventType] = MutationEventType.AGENT_STATUS
-    team_id: str | None | AbsentContextField = AbsentContextField.ABSENT
-    agent_id: str | None | AbsentContextField = AbsentContextField.ABSENT
-    alias: str | None | AbsentContextField = AbsentContextField.ABSENT
-    publisher_did: str | None | AbsentContextField = AbsentContextField.ABSENT
-    reachable: str | None | AbsentContextField = AbsentContextField.ABSENT
-    reason_code: str | None | AbsentContextField = AbsentContextField.ABSENT
-    reason_text: str | None | AbsentContextField = AbsentContextField.ABSENT
-    fixing_by: str | None | AbsentContextField = AbsentContextField.ABSENT
-    fixing_text: str | None | AbsentContextField = AbsentContextField.ABSENT
-    observed_at: str | None | AbsentContextField = AbsentContextField.ABSENT
-    valid_until: str | None | AbsentContextField = AbsentContextField.ABSENT
-
-
-@dataclass(frozen=True, kw_only=True)
 class ReservationAcquiredContext(CoordinationContext):
     """Producer projection for reservation.acquired."""
 

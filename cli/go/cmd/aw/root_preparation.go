@@ -27,9 +27,6 @@ func init() {
 	// These capabilities apply to a command's descendants unless a leaf
 	// declares another mode. They do not alter its own admission or authority.
 	for command, mode := range map[*cobra.Command]rootPreparationMode{
-		activityCmd:          rootPreparationLocalOnly,
-		statusCmd:            rootPreparationLocalOnly,
-		statusHostCmd:        rootPreparationLocalOnly,
 		teamInstallCertCmd:   rootPreparationLocalOnly,
 		teamInviteInspectCmd: rootPreparationNoRenewal,
 	} {

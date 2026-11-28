@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Live agent activity publishing is removed. The identity home's
+  `activity.yaml` is no longer read.
+- The bash tool guard no longer has a rule for `aw team admin up --recreate`:
+  aw no longer has that command. The guard still blocks `tmux kill-server` and
+  `tmux kill-session`.
+
 ## 0.4.0
 
 - Publish live agent activity for the session when the host owner opts in

@@ -5,8 +5,6 @@ import { homedir } from "node:os";
 import { appendFile, mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { lock } from "proper-lockfile";
 
-import type { ActivityEmitter } from "./activity/emitter.js";
-import { activitySigner } from "./activity/runtime.js";
 import { APIClient } from "./api/client.js";
 import type { AgentConfig } from "./config.js";
 import type { ReceiveStreamReceipt } from "./receive.js";
@@ -107,12 +105,6 @@ export interface ChannelLoopOptions {
    */
   reloadCredentials?: EventStreamOptions["reloadCredentials"];
   onTrace?: (entry: ChannelTraceEntry) => void;
-  /**
-   * A chat message of this session is about to be presented to the agent, so
-   * the agent's next turn serves it (docs/agent-activity.md, "Attribution").
-   * encrypted is whether the message arrived end-to-end encrypted.
-   */
-  onChatPresented?: (sessionID: string, options: { encrypted: boolean }) => void;
 }
 
 export async function loadPinStore(path: string = DEFAULT_PIN_STORE_PATH): Promise<PinStore> {
@@ -416,8 +408,6 @@ export interface ChannelCredentialReloadOptions {
   /** The sender trust check the channel loop dispatches with. */
   trust: SenderTrustManager;
   receipt?: ReceiveStreamReceipt;
-  /** The session's activity emitter, when it has one. */
-  activity?: () => ActivityEmitter | undefined;
 }
 
 /**
@@ -431,7 +421,7 @@ export interface ChannelCredentialReloadOptions {
  *
  * A key rotation changes the identity's did:key. Everything that holds it
  * beside the client is given the one read: the reader identity, the sender
- * trust check, the receive receipt and the activity signer.
+ * trust check and the receive receipt.
  */
 export function createChannelCredentialReload(options: ChannelCredentialReloadOptions): (signal: AbortSignal) => Promise<void> {
   return async (signal) => {
@@ -445,7 +435,6 @@ export function createChannelCredentialReload(options: ChannelCredentialReloadOp
     options.self.did = renewed.did;
     options.trust.renewSelfDID(renewed.did);
     options.receipt?.renewDID(renewed.did);
-    options.activity?.()?.renewSigner(activitySigner(renewed));
   };
 }
 
@@ -952,12 +941,10 @@ async function dispatchChatEvent(
 
     const transport: Record<string, string> = { session_id: event.session_id, message_id: msg.message_id };
     if (conversationID) transport.conversation_id = conversationID;
-    const encrypted = isEncryptedMessage(msg);
     emitTrace(options, "decrypt_started", messageEvent, lane);
     const decrypt = await resolveChatForDelivery(options, event.session_id, msg);
     emitTrace(options, "decrypt_completed", messageEvent, lane);
     if (!decrypt) {
-      options.onChatPresented?.(event.session_id, { encrypted });
       await deliverAwakening(options, presentMessageAwakening({
         kind: "chat",
         content: "",
@@ -994,7 +981,6 @@ async function dispatchChatEvent(
     if (msg.sender_leaving) meta.sender_leaving = "true";
 
     emitTrace(options, "notification_started", messageEvent, lane);
-    options.onChatPresented?.(event.session_id, { encrypted });
     await deliverAwakening(options, presentMessageAwakening({
       kind: "chat",
       content: msg.body,

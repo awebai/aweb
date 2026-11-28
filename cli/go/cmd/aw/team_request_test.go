@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os/exec"
@@ -146,5 +147,73 @@ func TestTeamRequestRequiresSigningKey(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "current identity has no local signing key") {
 		t.Fatalf("unexpected output:\n%s", string(out))
+	}
+}
+
+// A deprecation warning goes to stderr only: --json output stays one JSON
+// document on stdout, wherever --json is placed and when the command fails.
+func TestDeprecatedFlagWarningKeepsJSONOutputOneDocument(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	_, memberKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(tmp), memberKey); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name        string
+		team        string
+		leadingJSON bool
+		fails       bool
+	}{
+		{"leading-json", "backend:acme.com", true, false},
+		{"trailing-json", "backend:acme.com", false, false},
+		{"error-after-warning", "nocolon", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := []string{"id", "team", "request", "--team", tc.team, "--alias", "laptop"}
+			if tc.leadingJSON {
+				args = append([]string{"--json"}, args...)
+			} else {
+				args = append(args, "--json")
+			}
+			run := exec.CommandContext(ctx, bin, args...)
+			run.Env = testCommandEnv(tmp)
+			run.Dir = tmp
+			var stdout, stderr bytes.Buffer
+			run.Stdout, run.Stderr = &stdout, &stderr
+			err := run.Run()
+			if tc.fails {
+				if exitCode(err) != 2 {
+					t.Fatalf("expected usage refusal, got %v\nstdout=%s\nstderr=%s", err, stdout.String(), stderr.String())
+				}
+			} else if err != nil {
+				t.Fatalf("team request failed: %v\nstdout=%s\nstderr=%s", err, stdout.String(), stderr.String())
+			}
+			if !strings.Contains(stderr.String(), "Flag --alias has been deprecated, use --name") {
+				t.Fatalf("missing deprecation warning on stderr: %q", stderr.String())
+			}
+			assertOneJSONDocument(t, stdout.Bytes())
+			var got map[string]any
+			if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+				t.Fatalf("invalid stdout JSON: %v\n%s", err, stdout.String())
+			}
+			if tc.fails {
+				if _, ok := got["error"].(map[string]any); !ok {
+					t.Fatalf("missing JSON failure after warning: %v", got)
+				}
+			} else if got["name"] != "laptop" {
+				t.Fatalf("request output lost the name: %v", got)
+			}
+		})
 	}
 }

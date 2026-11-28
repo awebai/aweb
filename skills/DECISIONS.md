@@ -32,9 +32,7 @@ customer-facing default skill. It was removed once its runbook was deleted: it
 taught Library-first, raw-tmux and process/session ownership mechanics that aweb
 does not own. Current authority for staffing this team's local agents is the OATS
 operating capability its souls declare (`oats.core`: `oats spawn`, `oats
-retire`, `oats status`), which is distinct from the aw product primitives
-documented in `docs/running-agents.md`, `docs/runtime-support.md`, and
-`cli/go/cmd/aw/team_up.go` / `team_human.go` with their tests.
+retire`, `oats status`).
 
 The packaging contract survives it. Every canonical skill directory must be
 either in the shipped set or in the explicit internal set, so adding

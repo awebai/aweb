@@ -17,10 +17,10 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/eventstream"
 	"github.com/awebai/aw/internal/manualclock"
 	"github.com/awebai/aw/internal/wake"
 	"github.com/awebai/aw/internal/wake/session"
-	awrun "github.com/awebai/aw/run"
 )
 
 // A server whose API is mounted under /api while the workspace stores the
@@ -213,7 +213,7 @@ func requireNotFoundNamingMount(t *testing.T, err error, mount string) {
 	}
 }
 
-func openStreamOnce(opener awrun.EventStreamOpener) error {
+func openStreamOnce(opener eventstream.EventStreamOpener) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	source, err := opener(ctx, time.Now().Add(time.Minute))
@@ -443,63 +443,6 @@ func TestServerSentAnsweringMountHeaderIsNotRenderedByClientsThatDoNotProbe(t *t
 	})
 }
 
-// `aw run`: the client built at start is signed for the stored server URL and
-// is refused with 404. The retry goes through runEventStreamReload, which
-// finds the mount that answers and builds a client that signs for it. The
-// stored server URL changes once that stream has opened.
-func TestRunEventStreamSignsForTheAnsweringMountAfterAReload(t *testing.T) {
-	server := newMovedMountServer(t)
-	workingDir, workspacePath := movedMountWorkspace(t, server.URL)
-
-	client, _, err := runResolveClientForDir(workingDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	clock := manualclock.New(time.Now())
-	bus := awrun.NewEventBus(awrun.EventBusConfig{
-		Stream: awrun.NewEventStreamOpener(client.Client),
-		Reload: runEventStreamReload(workingDir),
-		Now:    clock.Now,
-		Policy: awrun.StreamPolicyConfig{Timer: clock.Timer, Rand: clock.Random},
-	})
-	ctx, cancel := context.WithCancel(context.Background())
-	bus.Start(ctx)
-	defer func() {
-		cancel()
-		bus.Stop()
-	}()
-
-	// First attempt: planned-close timer, then the wait after the refusal.
-	if !clock.AwaitStarted(2, 1) {
-		t.Fatal("the bus is not waiting to retry after the first refusal")
-	}
-	if bus.State() != awrun.ConnRefused {
-		t.Fatalf("state=%s after the stored server URL answered 404", bus.State())
-	}
-	if stored := storedAwebURL(t, workspacePath); stored != server.URL {
-		t.Fatalf("stored aweb_url=%q after the refusal, want it unchanged at %q", stored, server.URL)
-	}
-
-	clock.Advance(time.Minute)
-	waitForCondition(t, "the stream to be accepted at the mount that answers", func() bool { return bus.State() == awrun.ConnStreaming })
-
-	want := []signedRequestSeen{
-		{Path: "/v1/events/stream", SignedForIt: true},
-		{Path: "/api/v1/events/stream", SignedForIt: true},
-	}
-	got := server.signedSeen()
-	for i := range got {
-		if !strings.HasPrefix(got[i].SignedForWhich, got[i].Path+"?deadline=") {
-			t.Fatalf("request at %s carried a payload signed for %q", got[i].Path, got[i].SignedForWhich)
-		}
-		got[i].SignedForWhich = ""
-	}
-	if fmt.Sprint(got) != fmt.Sprint(want) {
-		t.Fatalf("signed requests the server saw: %+v, want exactly %+v", got, want)
-	}
-	waitForCondition(t, "the answering mount to be stored", func() bool { return storedAwebURL(t, workspacePath) == server.URL+"/api" })
-}
-
 // The wake broker: the stream's first open is signed for the stored server
 // URL and refused with 404. Before the retry the broker calls its reload,
 // which finds the mount that answers and builds a client that signs for it.
@@ -521,7 +464,7 @@ func TestWakeBrokerSignsForTheAnsweringMountAfterAReload(t *testing.T) {
 		Session:      session.NewFake(session.Inspection{Home: instanceHome, Backend: "herdr", Present: true, State: session.StateIdle, RawState: "idle"}),
 		OpenStream:   wakeStreamOpener,
 		ReloadStream: wakeStreamReload,
-		StreamPolicy: awrun.StreamPolicyConfig{Now: clock.Now, Timer: clock.Timer, Rand: clock.Random},
+		StreamPolicy: eventstream.StreamPolicyConfig{Now: clock.Now, Timer: clock.Timer, Rand: clock.Random},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -576,12 +519,11 @@ func TestWakeBrokerSignsForTheAnsweringMountAfterAReload(t *testing.T) {
 	waitForCondition(t, "the answering mount to be stored", func() bool { return storedAwebURL(t, workspacePath) == server.URL+"/api" })
 }
 
-// The two reloads that find the answering mount: `aw run`'s and the wake
-// broker's, which the broker calls before a refused retry.
-func answeringMountReloads(workingDir string) map[string]awrun.StreamReload {
-	return map[string]awrun.StreamReload{
-		"aw run": runEventStreamReload(workingDir),
-		"wake broker": func(ctx context.Context) (awrun.EventStreamOpener, error) {
+// The reload that finds the answering mount: the wake broker's, which the
+// broker calls before a refused retry.
+func answeringMountReloads(workingDir string) map[string]eventstream.StreamReload {
+	return map[string]eventstream.StreamReload{
+		"wake broker": func(ctx context.Context) (eventstream.EventStreamOpener, error) {
 			return wakeStreamReload(ctx, awconfig.WorktreeIdentityHome(workingDir), "")
 		},
 	}
@@ -590,7 +532,7 @@ func answeringMountReloads(workingDir string) map[string]awrun.StreamReload {
 // The answering mount is stored only after a stream signed for it has opened
 // there. A refused open and an open that fails store nothing.
 func TestReloadStoresTheAnsweringMountOnlyAfterItsStreamOpens(t *testing.T) {
-	for _, name := range []string{"aw run", "wake broker"} {
+	for _, name := range []string{"wake broker"} {
 		for _, failing := range []struct {
 			name   string
 			answer int
@@ -635,7 +577,7 @@ func TestReloadStoresTheAnsweringMountOnlyAfterItsStreamOpens(t *testing.T) {
 // A reload that finds no other mount builds for the stored server URL and
 // stores nothing.
 func TestReloadWithNoOtherMountBuildsForTheStoredServerURL(t *testing.T) {
-	for _, name := range []string{"aw run", "wake broker"} {
+	for _, name := range []string{"wake broker"} {
 		t.Run(name, func(t *testing.T) {
 			server := newMovedMountServer(t)
 			server.set(func(ms *movedMountServer) { ms.noAPIMount = true })
@@ -662,7 +604,7 @@ func TestReloadWithNoOtherMountBuildsForTheStoredServerURL(t *testing.T) {
 // The reload looks for the answering mount within the context it is given:
 // stopping the stream's owner does not wait for the probe.
 func TestReloadProbeForTheAnsweringMountEndsWithItsContext(t *testing.T) {
-	for _, name := range []string{"aw run", "wake broker"} {
+	for _, name := range []string{"wake broker"} {
 		t.Run(name, func(t *testing.T) {
 			probed := make(chan struct{}, 8)
 			release := make(chan struct{})

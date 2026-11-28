@@ -186,16 +186,6 @@ func formatTeamCleanupCloud(v any) string {
 	return sb.String()
 }
 
-func formatTeamAdd(v any) string {
-	out := v.(teamAddOutput)
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Status:      %s\n", out.Status))
-	sb.WriteString(fmt.Sprintf("Team:        %s\n", out.TeamID))
-	sb.WriteString(fmt.Sprintf("Name:        %s\n", out.Alias))
-	sb.WriteString(fmt.Sprintf("Certificate: %s\n", out.CertPath))
-	return sb.String()
-}
-
 func formatTeamSwitch(v any) string {
 	out := v.(teamSwitchOutput)
 	if strings.TrimSpace(out.Status) == "already_active" {

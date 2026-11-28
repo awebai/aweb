@@ -74,7 +74,7 @@ help:
 	@echo "  check-go-vulnerability-audit Audit Go dependencies (pinned toolchain)"
 	@echo "  test-a2a     Run A2A conformance, gateway, AWID lookup, and CLI command gates"
 	@echo "  test-oats-proof-helpers Run attached-principal proof filesystem guard tests"
-	@echo "  test-tmux-guard Run the guarded tmux migration and PATH-alias regressions"
+	@echo "  test-tmux-guard Run the tmux guard refusal and PATH-alias regressions"
 	@echo "  test-e2e     Run the end-to-end user journey and its mutation guard (requires Docker)"
 	@echo "  test-federation-harness Validate the 51-row direct-core historical inventory and mutations"
 	@echo "  test-federation-e2e Run the direct/non-ingress historical topology and OSS federation journeys (requires Docker)"
@@ -541,7 +541,7 @@ test-oats-proof-helpers: prepare-oats-test-root
 	OATS_TEST_ROOT="$(OATS_TEST_ROOT)" python3 scripts/e2e/test_oats_pinned_checkout.py
 
 test-tmux-guard:
-	PATH="$(CURDIR)/scripts/guard-bin:$$PATH" ./scripts/test-migrate-agent-tmux.sh
+	PATH="$(CURDIR)/scripts/guard-bin:$$PATH" ./scripts/test-tmux-guard.sh
 
 test-a2a:
 	cd cli/go && GOCACHE=/tmp/go-build go test ./internal/conformance ./internal/a2a ./internal/a2agw ./awid ./tools/a2a-gateway-check-workspace -count=1 -timeout 20m

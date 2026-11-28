@@ -8,7 +8,7 @@
 #   3. Registers a namespace, creates a team, invites bob
 #   4. Both agents connect to aweb via certificate auth
 #   5. Registers an externally controlled AWID team with the aweb service
-#   6. Initializes existing team members through aw service init
+#   6. Connects existing team members through aw workspace connect
 #   7. Exercises mail, chat, tasks, locks
 #   8. Revokes bob's membership and verifies rejection
 #
@@ -963,7 +963,7 @@ echo "=== Phase 4: Alice joins team ==="
 capture_success alice_invite_out "alice_invite_out" run_aw_in "$ALICE_DIR" id team invite \
   --team devteam \
   --namespace test.local \
-  --global \
+  --member-global \
   --json
 
 ALICE_INVITE_TOKEN="$(echo "$alice_invite_out" | jq_field token)"
@@ -1060,7 +1060,7 @@ assert_not_empty "bob did_aw" "$BOB_DID_AW"
 capture_success bob_invite_out "bob_invite_out" run_aw_in "$ALICE_DIR" id team invite \
   --team devteam \
   --namespace test.local \
-  --global \
+  --member-global \
   --json
 
 BOB_INVITE_TOKEN="$(echo "$bob_invite_out" | jq_field token)"
@@ -1738,10 +1738,10 @@ capture_success service_register_apply "service_register_apply" run_aw_in "$SERV
   --service "$AWEB_URL" \
   --json
 service_register_status="$(echo "$service_register_apply" | jq_field status)"
-service_register_next_init="$(echo "$service_register_apply" | python3 -c "import sys,json; text=sys.stdin.read(); start=text.find('{'); d=json.loads(text[start:]); print(next((s.get('command','') for s in d.get('next_steps',[]) if 'service init' in s.get('command','')), ''))" 2>/dev/null || echo "")"
+service_register_next_connect="$(echo "$service_register_apply" | python3 -c "import sys,json; text=sys.stdin.read(); start=text.find('{'); d=json.loads(text[start:]); print(next((s.get('command','') for s in d.get('next_steps',[]) if 'workspace connect' in s.get('command','')), ''))" 2>/dev/null || echo "")"
 service_register_next_claim="$(echo "$service_register_apply" | python3 -c "import sys,json; text=sys.stdin.read(); start=text.find('{'); d=json.loads(text[start:]); print(next((s.get('command','') for s in d.get('next_steps',[]) if 'claim-human' in s.get('command','')), ''))" 2>/dev/null || echo "")"
 assert_eq "service register apply status" "created" "$service_register_status"
-assert_contains "service register returns service init next step" "$service_register_next_init" "aw service init --service $AWEB_URL --team $SERVICE_TEAM_ID"
+assert_contains "service register returns workspace connect next step" "$service_register_next_connect" "aw workspace connect --service $AWEB_URL --team $SERVICE_TEAM_ID"
 assert_contains "service register returns claim-human next step" "$service_register_next_claim" "aw claim-human --email you@example.com"
 
 service_team_rows="$(psql_scalar "SELECT COUNT(*) FROM aweb.teams WHERE team_id = '$SERVICE_TEAM_ID' AND team_did_key = '$SERVICE_TEAM_DID';")"
@@ -1751,8 +1751,8 @@ assert_eq "service register creates team projection" "1" "$service_team_rows"
 assert_eq "service register creates no agents" "0" "$service_agents_before"
 assert_eq "service register creates no workspaces" "0" "$service_workspaces_before"
 
-run_success "service alpha init" run_aw_in "$SERVICE_ALPHA_DIR" service init --service "$AWEB_URL" --team "$SERVICE_TEAM_ID"
-run_success "service beta init" run_aw_in "$SERVICE_BETA_DIR" service init --service "$AWEB_URL" --team "$SERVICE_TEAM_ID"
+run_success "service alpha workspace connect" run_aw_in "$SERVICE_ALPHA_DIR" workspace connect --service "$AWEB_URL" --team "$SERVICE_TEAM_ID"
+run_success "service beta workspace connect" run_aw_in "$SERVICE_BETA_DIR" workspace connect --service "$AWEB_URL" --team "$SERVICE_TEAM_ID"
 service_alpha_active="$(yaml_field "$SERVICE_ALPHA_DIR/.aw/teams.yaml" active_team)"
 service_beta_active="$(yaml_field "$SERVICE_BETA_DIR/.aw/teams.yaml" active_team)"
 service_alpha_workspace_alias="$(workspace_membership_field "$SERVICE_ALPHA_DIR/.aw/workspace.yaml" "$SERVICE_TEAM_ID" alias)"
@@ -1764,13 +1764,13 @@ assert_eq "service beta workspace membership" "beta" "$service_beta_workspace_al
 
 service_agents_after="$(psql_scalar "SELECT COUNT(*) FROM aweb.agents WHERE team_id = '$SERVICE_TEAM_ID' AND deleted_at IS NULL;")"
 service_workspaces_after="$(psql_scalar "SELECT COUNT(*) FROM aweb.workspaces WHERE team_id = '$SERVICE_TEAM_ID' AND deleted_at IS NULL;")"
-assert_eq "service init creates two agents" "2" "$service_agents_after"
-assert_eq "service init creates two workspaces" "2" "$service_workspaces_after"
+assert_eq "workspace connect creates two agents" "2" "$service_agents_after"
+assert_eq "workspace connect creates two workspaces" "2" "$service_workspaces_after"
 
 run_success "service registered team mail send --plaintext" run_aw_in "$SERVICE_ALPHA_DIR" mail send --plaintext \
   --to beta \
   --subject "Service registered team e2e" \
-  --body "service init path works"
+  --body "workspace connect path works"
 capture_success service_beta_inbox "service_beta_inbox" run_aw_in "$SERVICE_BETA_DIR" mail inbox --json --show-all
 service_beta_subject="$(echo "$service_beta_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('subject','') for m in msgs if m.get('subject')=='Service registered team e2e'), ''))" 2>/dev/null || echo "")"
 assert_eq "service registered team mail works" "Service registered team e2e" "$service_beta_subject"
@@ -1909,52 +1909,6 @@ assert_eq "bob→alice chat reply exit" "0" "$chat_reply_exit"
 
 capture_success alice_history "alice_history" run_aw_in "$ALICE_DIR" chat history bob
 assert_contains "alice sees bob's reply" "$alice_history" "Chat reply from bob"
-echo ""
-
-# ---------------------------------------------------------------------------
-# Phase 12a: Agent activity from the Codex hook
-# ---------------------------------------------------------------------------
-echo "=== Phase 12a: Agent activity from the Codex hook ==="
-
-codex_hook_event() {
-  local name="$1" turn="$2" extra="${3:-}"
-  printf '{"hook_event_name":"%s","session_id":"e2e-codex","turn_id":"%s","cwd":"%s","model":"gpt-5","permission_mode":"default","transcript_path":"/dev/null"%s}' \
-    "$name" "$turn" "$ALICE_DIR" "$extra" | run_aw_in "$ALICE_DIR" activity hook
-}
-activity_redis() {
-  (cd "$SERVER_DIR" && compose exec -T redis sh -lc "$1")
-}
-
-capture_success activity_show_out "activity show" run_aw_in "$ALICE_DIR" activity show --json
-assert_eq "activity is off by default" "off" "$(echo "$activity_show_out" | jq_field activity)"
-codex_hook_event UserPromptSubmit e2e-codex-off
-activity_revs_off="$(activity_redis "redis-cli --scan --pattern 'agent-activity-rev:*' | wc -l | tr -d ' '")"
-assert_eq "the hook publishes nothing while off" "0" "$activity_revs_off"
-
-capture_success activity_enable_out "activity enable" run_aw_in "$ALICE_DIR" activity enable --json
-assert_eq "activity enable" "status" "$(echo "$activity_enable_out" | jq_field activity)"
-codex_hook_event UserPromptSubmit e2e-codex-turn-1
-sleep 0.7
-codex_hook_event PreToolUse e2e-codex-turn-1 ',"tool_name":"Bash","tool_use_id":"call_1","tool_input":{"command":"pytest -x"}'
-sleep 0.7
-codex_hook_event Stop e2e-codex-turn-1 ',"stop_hook_active":false,"last_assistant_message":"done"'
-
-activity_rev_keys="$(activity_redis "redis-cli --scan --pattern 'agent-activity-rev:*'")"
-assert_eq "one agent published activity" "1" "$(printf '%s\n' "$activity_rev_keys" | grep -c .)"
-activity_agent_id="${activity_rev_keys#agent-activity-rev:}"
-activity_agent_id="$(printf '%s' "$activity_agent_id" | tr -d '\r\n')"
-assert_eq "the server relayed all three events" "3" \
-  "$(activity_redis "redis-cli GET agent-activity-rev:$activity_agent_id" | tr -d '\r\n')"
-activity_latest="$(activity_redis "redis-cli GET agent-activity:$activity_agent_id")"
-activity_latest_check="$(printf '%s' "$activity_latest" | python3 -c '
-import json, sys
-state = json.load(sys.stdin)
-event = state["event"]
-print(state["rev"], state["alias"], event["turn_id"], event["seq"], event["phase"], event["session_id"])
-')"
-assert_eq "the latest state is alice's turn end" "3 alice e2e-codex-turn-1 3 turn_ended None" "$activity_latest_check"
-capture_success activity_disable_out "activity disable" run_aw_in "$ALICE_DIR" activity disable --json
-assert_eq "activity disable" "off" "$(echo "$activity_disable_out" | jq_field activity)"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -2129,7 +2083,7 @@ assert_eq "partner bob address" "partner.local/bob" "$PARTNER_BOB_ADDRESS"
 capture_success partner_bob_invite_out "partner_bob_invite_out" run_aw_in "$PARTNER_CONTROLLER_DIR" id team invite \
   --team main \
   --namespace partner.local \
-  --global \
+  --member-global \
   --json
 PARTNER_BOB_INVITE_TOKEN="$(echo "$partner_bob_invite_out" | jq_field token)"
 assert_not_empty "partner bob invite token" "$PARTNER_BOB_INVITE_TOKEN"
@@ -2147,7 +2101,7 @@ assert_eq "partner bob init exit" "0" "$partner_bob_init_exit"
 capture_success partner_alice_invite_out "partner_alice_invite_out" run_aw_in "$PARTNER_CONTROLLER_DIR" id team invite \
   --team main \
   --namespace partner.local \
-  --global \
+  --member-global \
   --json
 PARTNER_ALICE_INVITE_TOKEN="$(echo "$partner_alice_invite_out" | jq_field token)"
 assert_not_empty "partner alice invite token" "$PARTNER_ALICE_INVITE_TOKEN"

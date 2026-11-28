@@ -168,7 +168,7 @@ export async function resolveConfig(workdir: string, options: ResolveConfigOptio
   if (identityHome.external) preflightFile(workspacePath, "workspace config");
   const workspace = await readYAML<WorkspaceConfig>(workspacePath);
   if (!workspace) {
-    throw new Error("current directory is not initialized for aw; run `aw init` or `aw run` first");
+    throw new Error("current directory is not initialized for aw; run `aw init` first");
   }
 
   const baseURL = (workspace.aweb_url || "").trim();
@@ -182,7 +182,7 @@ export async function resolveConfig(workdir: string, options: ResolveConfigOptio
   if (identityHome.external) preflightFile(teamsPath, "team state");
   const teamState = await readYAML<TeamStateConfig>(teamsPath);
   if (!teamState) {
-    throw new Error("worktree team state is missing .aw/teams.yaml; run `aw init` or `aw id team add` first");
+    throw new Error("worktree team state is missing .aw/teams.yaml; run `aw init` or `aw team join <token>` first");
   }
   const activeTeam = (options.teamID || teamState.active_team || "").trim();
   const teamMembership = (teamState.memberships || []).find((item) => (item.team_id || "").trim() === activeTeam);

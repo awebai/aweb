@@ -83,17 +83,6 @@ func TestDirectTrustRequestsDoNotFollowRedirects(t *testing.T) {
 				return err
 			},
 		},
-		{
-			name: "public runnable profile",
-			invoke: func(sourceURL string) error {
-				_, err := fetchPublicLibraryProfile(context.Background(), libraryProfileSelector{
-					LibraryURL:         sourceURL,
-					SourceBlueprintRef: "aweb.team",
-					ProfileRef:         "developer",
-				})
-				return err
-			},
-		},
 	}
 
 	for _, test := range tests {
@@ -152,10 +141,6 @@ func TestDirectTrustRequestsEnforcePinnedBoundAndStrictJSON(t *testing.T) {
 		}},
 		{name: "API key workspace init", invoke: func(sourceURL string) error {
 			_, err := postAPIKeyWorkspaceInit(context.Background(), sourceURL, "secret-api-key", apiKeyBootstrapRequest{}, testWorkspaceInitKey)
-			return err
-		}},
-		{name: "public runnable profile", responsePrefix: `{"blueprint_ref":"aweb.team","blueprint_version":"1","profile_ref":"developer","version":"1","digest":"digest","files":[{"path":"AGENTS.md","content_utf8":"x"}]}`, invoke: func(sourceURL string) error {
-			_, err := fetchPublicLibraryProfile(context.Background(), libraryProfileSelector{LibraryURL: sourceURL, SourceBlueprintRef: "aweb.team", ProfileRef: "developer"})
 			return err
 		}},
 	}

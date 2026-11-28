@@ -268,7 +268,7 @@ with tempfile.TemporaryDirectory(prefix="awfw-", dir="/tmp") as td:
             "dev",
             "--namespace",
             namespace,
-            "--global",
+            "--member-global",
         )["token"]
         aw(name, "id", "team", "accept-invite", invite, "--global", "--alias", name)
         aw(name, "init", "--url", SERVER)
@@ -764,7 +764,7 @@ with tempfile.TemporaryDirectory(prefix="awfw-", dir="/tmp") as td:
         "ops",
         "--namespace",
         other_namespace,
-        "--global",
+        "--member-global",
     )["token"]
     aw("carol", "id", "team", "accept-invite", invite, "--global", "--alias", "carol")
     aw("carol", "init", "--url", SERVER)

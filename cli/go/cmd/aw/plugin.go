@@ -1379,13 +1379,6 @@ func executeInstalledManifestTool(name string, args []string) (*installedManifes
 	if err != nil {
 		return nil, true, err
 	}
-	effectiveArgs, err := effectiveLibraryManifestMaterializeArgs(name, verb, parsedArgs, spec.Body)
-	if err != nil {
-		return nil, true, err
-	}
-	if isLibraryManifestLocalMaterialize(name, verb, effectiveArgs) && (!spec.Mutation || spec.Auth == "none") {
-		return nil, true, fmt.Errorf("library materialize --target local requires a signed mutation tool")
-	}
 	parsedURL, err := url.Parse(spec.URL)
 	if err != nil {
 		return nil, true, err
@@ -1424,11 +1417,6 @@ func executeInstalledManifestTool(name string, args []string) (*installedManifes
 			return nil, true, err
 		}
 		installedResult = &installedManifestToolResult{Status: result.Status, Body: result.Body}
-	}
-	if installedResult.Status >= http.StatusOK && installedResult.Status < http.StatusMultipleChoices {
-		if err := applyLibraryManifestLocalMaterialize(name, verb, effectiveArgs, installedResult.Body); err != nil {
-			return nil, true, err
-		}
 	}
 	return installedResult, true, nil
 }
@@ -1714,9 +1702,22 @@ func sortedReservedRootCommandNames() []string {
 	return names
 }
 
+// reservedRootCommandNames is the set no app id or plugin may take: the
+// built-in root commands plus the names released aw binaries still carry as
+// commands, since an app with one of those ids would collide with that command
+// for their users.
 func reservedRootCommandNames() map[string]bool {
+	reserved := builtinRootCommandNames()
+	for _, name := range []string{"agent", "blueprint", "run"} {
+		reserved[name] = true
+	}
+	return reserved
+}
+
+// builtinRootCommandNames is this aw's own root commands and aliases, with help.
+func builtinRootCommandNames() map[string]bool {
 	rootCmd.InitDefaultCompletionCmd()
-	reserved := map[string]bool{
+	builtins := map[string]bool{
 		"help": true,
 	}
 	for _, cmd := range rootCmd.Commands() {
@@ -1724,13 +1725,13 @@ func reservedRootCommandNames() map[string]bool {
 			continue
 		}
 		if n := strings.TrimSpace(cmd.Name()); n != "" {
-			reserved[n] = true
+			builtins[n] = true
 		}
 		for _, alias := range cmd.Aliases {
 			if alias = strings.TrimSpace(alias); alias != "" {
-				reserved[alias] = true
+				builtins[alias] = true
 			}
 		}
 	}
-	return reserved
+	return builtins
 }

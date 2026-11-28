@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -326,107 +325,6 @@ func TestExternalIdentityHomeRoutesMailAndRegistrySigningAuthority(t *testing.T)
 	}
 	if authority.SubjectDID != did {
 		t.Fatalf("registry authority DID=%q want %q", authority.SubjectDID, did)
-	}
-}
-
-func TestRunBinaryUsesExternalPrincipalWorkspaceAndPropagatesIdentityHome(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("shell provider fixture is unix-only")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	root, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	bin := filepath.Join(root, "aw")
-	buildAwBinary(t, ctx, bin)
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if strings.Contains(r.URL.Path, "events") {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		_, _ = w.Write([]byte(`{}`))
-	}))
-	principalParent := filepath.Join(root, "principal")
-	instance := filepath.Join(root, "instance")
-	providerBin := filepath.Join(root, "provider-bin")
-	if err := os.MkdirAll(instance, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(providerBin, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	pub, key, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	writeSelectionFixtureForTest(t, principalParent, testSelectionFixture{
-		AwebURL: server.URL, TeamID: "backend:aweb.ai", Alias: "attached",
-		WorkspaceID: "workspace-attached", DID: awid.ComputeDIDKey(pub), StableID: awid.ComputeStableID(pub),
-		Address: "aweb.ai/attached", Custody: awid.CustodySelf,
-		IdentityScope: awid.IdentityModeGlobal, SigningKey: key,
-	})
-	identityHome, err := filepath.EvalSymlinks(filepath.Join(principalParent, ".aw"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	capturePath := filepath.Join(root, "provider-identity-home")
-	stdinCapturePath := filepath.Join(root, "provider-stdin")
-	provider := filepath.Join(providerBin, "claude")
-	script := "#!/bin/sh\nprintf '%s' \"$AWEB_IDENTITY_HOME\" > \"$RUN_IDENTITY_CAPTURE\"\ncat > \"$RUN_STDIN_CAPTURE\"\nprintf '%s\\n' '{\"type\":\"result\",\"duration_ms\":1,\"session_id\":\"attached-session\"}'\n"
-	if err := os.WriteFile(provider, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "run", "claude", "--prompt", "done", "--max-runs", "1", "--wait", "0", "--idle-wait", "0")
-	cmd.Dir = instance
-	cmd.Env = append(testCommandEnv(filepath.Join(root, "user-home")),
-		"PATH="+providerBin+string(os.PathListSeparator)+os.Getenv("PATH"),
-		"RUN_IDENTITY_CAPTURE="+capturePath,
-		"RUN_STDIN_CAPTURE="+stdinCapturePath,
-		awconfig.IdentityHomeEnv+"=",
-	)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("attached run failed: %v\n%s", err, out)
-	}
-	captured, err := os.ReadFile(capturePath)
-	if err != nil {
-		t.Fatalf("provider was not invoked: %v", err)
-	}
-	if got := strings.TrimSpace(string(captured)); got != identityHome {
-		t.Fatalf("provider %s=%q want %q", awconfig.IdentityHomeEnv, got, identityHome)
-	}
-	stdin, err := os.ReadFile(stdinCapturePath)
-	if err != nil {
-		t.Fatalf("provider did not receive stdin: %v", err)
-	}
-	if got := string(stdin); got != "done" {
-		t.Fatalf("provider stdin=%q want %q", got, "done")
-	}
-	if _, err := os.Lstat(filepath.Join(instance, ".aw", "workspace.yaml")); !os.IsNotExist(err) {
-		t.Fatalf("run copied principal workspace into instance: %v", err)
-	}
-}
-
-func TestRunPropagatesCanonicalExternalIdentityHomeToChildren(t *testing.T) {
-	root, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv(awconfig.IdentityHomeEnv, "")
-	restore, err := propagateResolvedIdentityHomeForRun(awconfig.IdentityHome{Root: root, Source: awconfig.IdentityHomeFlag})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer restore()
-	child := exec.Command("/usr/bin/env")
-	out, err := child.Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(out), awconfig.IdentityHomeEnv+"="+root) {
-		t.Fatalf("child environment missing canonical identity home:\n%s", string(out))
 	}
 }
 

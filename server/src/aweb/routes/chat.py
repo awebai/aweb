@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from aweb.identity_binding import verified_key_sql
 
 from aweb.messaging.kinds import ContentMode
 
@@ -71,7 +70,6 @@ from aweb.messaging.chat import (
     wake_chat_session_participants,
 )
 from aweb.messaging.chat_read import mark_chat_read
-from aweb.messaging.activity_stream import SessionActivity
 from aweb.messaging.contacts import (
     get_contact_addresses,
     is_address_in_contacts,
@@ -92,7 +90,6 @@ from aweb.grant_streams import (
     grant_terminal_sse,
     require_valid_stream_grant,
 )
-from aweb.member_team_key import current_member_sql
 from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL
 
 logger = logging.getLogger(__name__)
@@ -691,7 +688,6 @@ async def _sse_events(
     cursor: int,
     receipts_after: int,
     delivery_team_id: str | None = None,
-    include_activity: bool = False,
 ) -> AsyncIterator[str]:
     aweb_db = db.get_manager("aweb")
     session_id_str = str(session_id)
@@ -730,31 +726,14 @@ async def _sse_events(
     backoff = ReconnectBackoff(initial_delay=0.1, maximum_delay=5.0)
 
     try:
-        # DID participation was already authorized. Activity channels are only
-        # a display projection, resolved in the conversation's team when absent.
         participant_rows = await aweb_db.fetch_all(
-            f"""
-            SELECT p.did, p.alias, p.address, p.agent_id,
-                   activity_agent.agent_id AS activity_agent_id
-            FROM {{{{tables.chat_participants}}}} p
-            LEFT JOIN LATERAL (
-                SELECT a.agent_id
-                FROM {{{{tables.agents}}}} a
-                WHERE $3::boolean AND {current_member_sql("a")}
-                  AND CASE WHEN {verified_key_sql("a")}
-                           THEN COALESCE(NULLIF(a.did_aw, ''), a.did_key)
-                           ELSE a.did_key END = p.did
-                  AND ((p.agent_id IS NOT NULL AND a.agent_id = p.agent_id)
-                       OR (p.agent_id IS NULL AND a.team_id = $2))
-                ORDER BY a.agent_id
-                LIMIT 1
-            ) activity_agent ON TRUE
+            """
+            SELECT p.did, p.alias, p.address
+            FROM {{tables.chat_participants}} p
             WHERE p.session_id = $1
             ORDER BY p.alias ASC
             """,
             session_id,
-            delivery_team_id,
-            include_activity and redis is not None,
         )
         if not participant_rows:
             yield f"event: error\ndata: {json.dumps({'error': 'Session not found'})}\n\n"
@@ -770,36 +749,6 @@ async def _sse_events(
         if viewer_row is None:
             yield f"event: error\ndata: {json.dumps({'error': 'Session not found'})}\n\n"
             return
-        # The other participant agents' activity, for a stream that asked for it.
-        activity = None
-        if include_activity and redis is not None:
-            activity = SessionActivity(
-                session_id_str,
-                {
-                    str(row["activity_agent_id"]): row["alias"]
-                    for row in participant_rows
-                    if row.get("activity_agent_id") is not None
-                    and row is not viewer_row
-                },
-            )
-
-        async def _open_activity(ps: PubSub) -> tuple[list[str], bool]:
-            """Subscribe, confirm, snapshot, then drain what arrived meanwhile.
-
-            Returns the frames to send and whether a session wake arrived.
-            """
-            pending = await activity.subscribe(ps)
-            frames = await activity.snapshot(redis)
-            woken = False
-            for queued in pending:
-                if activity.owns(queued["channel"]):
-                    frame = activity.accept(queued["data"])
-                    if frame is not None:
-                        frames.append(frame)
-                else:
-                    woken = True
-            return frames, woken
-
         contact_addrs = await get_contact_addresses(db, owner_dids=contact_owner_dids)
 
         async def _connect_pubsub() -> PubSub:
@@ -824,21 +773,6 @@ async def _sse_events(
             yield grant_terminal_sse(reason)
             return
 
-        if activity is not None and pubsub is not None:
-            try:
-                frames, _ = await _open_activity(pubsub)
-            except (RedisError, TimeoutError):
-                logger.info(
-                    "Chat session activity subscribe failed; retrying with the pubsub",
-                    exc_info=True,
-                )
-                await _close_session_pubsub(pubsub, channel)
-                pubsub = None
-                backoff.schedule(time.monotonic())
-            else:
-                for frame in frames:
-                    yield frame
-
         # cursor is the session number this stream has delivered up to: every
         # message and read receipt with a greater number is delivered, in number
         # order; read receipts only above receipts_after as well. The first
@@ -860,12 +794,6 @@ async def _sse_events(
             if redis is not None and pubsub is None and (backoff.due(now_mono)):
                 try:
                     pubsub = await _connect_pubsub()
-                    if activity is not None:
-                        frames, woken = await _open_activity(pubsub)
-                        for frame in frames:
-                            yield frame
-                        if woken:
-                            last_db_poll = 0.0
                     backoff.reset()
                     last_pubsub_ping = time.monotonic()
                 except (RedisError, TimeoutError):
@@ -910,12 +838,7 @@ async def _sse_events(
                         backoff.schedule(time.monotonic())
                         message = None
                     if message is not None and message["type"] == "message":
-                        if activity is not None and activity.owns(message["channel"]):
-                            frame = activity.accept(message["data"])
-                            if frame is not None:
-                                yield frame
-                        else:
-                            should_poll = True
+                        should_poll = True
                 else:
                     await asyncio.sleep(wait_timeout)
 
@@ -1134,7 +1057,6 @@ async def stream(
     deadline: str = Query(..., min_length=1),
     after: str | None = Query(None),
     after_seq: int | None = Query(None, ge=0),
-    include: str | None = Query(None),
     db=Depends(get_db),
     redis=Depends(get_redis),
     auth: MessagingAuth = Depends(get_messaging_auth),
@@ -1218,8 +1140,6 @@ async def stream(
             # A timestamp replays messages only; read receipts start live.
             receipts_after=live_cursor if after_dt is not None else cursor,
             delivery_team_id=sess.get("team_id"),
-            include_activity="agent_activity"
-            in {value.strip() for value in (include or "").split(",")},
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},

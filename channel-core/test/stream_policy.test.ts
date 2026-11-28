@@ -9,7 +9,7 @@ import {
 } from "../src/api/stream_policy.js";
 
 // These tests state docs/event-stream-client-policy.md one rule at a time, case
-// for case with cli/go/run/streampolicy_test.go where the rule is decided by
+// for case with cli/go/internal/eventstream/policy_test.go where the rule is decided by
 // the policy module. Rules that need a connection (timers, the silence
 // watchdog, the wait, stopping) are stated in events.test.ts.
 

@@ -1,9 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/awebai/aw/awconfig"
@@ -25,7 +25,7 @@ func TestAppendInteractionLogForDirDedupesByMessageID(t *testing.T) {
 	appendInteractionLogForDir(tmp, localLogPolicy{}, entry)
 	appendInteractionLogForDir(tmp, localLogPolicy{}, entry)
 
-	entries, err := readInteractionLog(interactionLogPath(tmp), 0)
+	entries, err := readInteractionLog(interactionLogPath(tmp))
 	if err != nil {
 		t.Fatalf("readInteractionLog: %v", err)
 	}
@@ -51,49 +51,23 @@ func TestInteractionLogUsesInstanceRootFromSubdirectoryDespiteIdentityHome(t *te
 	}
 }
 
-func TestFormatInteractionRecapRendersConversationLikeSummary(t *testing.T) {
-	recap := formatInteractionRecapStyled([]InteractionEntry{
-		{Timestamp: "2026-03-22T10:00:00Z", Kind: interactionKindUser, Text: "please fix the continue UX"},
-		{Timestamp: "2026-03-22T10:01:00Z", Kind: interactionKindAgent, Text: "I can do that with a small local recap."},
-		{Timestamp: "2026-03-22T10:02:00Z", Kind: interactionKindChatIn, From: "rose", Text: "please keep it narrow"},
-		{Timestamp: "2026-03-22T10:03:00Z", Kind: interactionKindMailOut, To: "henry", Subject: "review", Text: "please take a look"},
-	}, 8, false, 0)
-
-	if !strings.Contains(recap, "Recent interactions") {
-		t.Fatalf("expected heading, got %q", recap)
+// readInteractionLog returns the plaintext entries of the log; sealed lines
+// are for the owner and are skipped.
+func readInteractionLog(path string) ([]InteractionEntry, error) {
+	lines, err := readLocalLogLines(path, 0)
+	if err != nil {
+		return nil, err
 	}
-	if strings.Contains(recap, "[10:00]") {
-		t.Fatalf("did not expect timestamps, got %q", recap)
+	var entries []InteractionEntry
+	for _, line := range lines {
+		if isSealedLogLine(line) {
+			continue
+		}
+		var entry InteractionEntry
+		if err := json.Unmarshal(line, &entry); err != nil {
+			continue
+		}
+		entries = append(entries, entry)
 	}
-	if !strings.Contains(recap, "> please fix the continue UX") {
-		t.Fatalf("expected user line, got %q", recap)
-	}
-	if !strings.Contains(recap, "I can do that with a small local recap.") {
-		t.Fatalf("expected agent line, got %q", recap)
-	}
-	if !strings.Contains(recap, "● from rose (chat): please keep it narrow") {
-		t.Fatalf("expected chat line, got %q", recap)
-	}
-	if !strings.Contains(recap, "● to henry (mail): review — please take a look") {
-		t.Fatalf("expected outbound mail line, got %q", recap)
-	}
-}
-
-func TestFormatInteractionRecapWrapsCommLinesWithHangingIndent(t *testing.T) {
-	recap := formatInteractionRecapStyled([]InteractionEntry{
-		{
-			Timestamp: "2026-03-22T10:02:00Z",
-			Kind:      interactionKindMailIn,
-			From:      "dave",
-			Subject:   "Claude UX follow-up",
-			Text:      "Merged to main. Good call on the streaming-safe approach for delta output.",
-		},
-	}, 8, false, 44)
-
-	if !strings.Contains(recap, "● from dave (mail):") {
-		t.Fatalf("expected comm prefix, got %q", recap)
-	}
-	if !strings.Contains(recap, "\n   ") {
-		t.Fatalf("expected wrapped continuation indent, got %q", recap)
-	}
+	return entries, nil
 }

@@ -221,7 +221,7 @@ async def test_open_subscription_owns_its_connection_until_it_returns(
 async def test_a_chat_stream_whose_subscribe_fails_after_connect_returns_its_connection(
     privacy_app, after_connect
 ):
-    from test_agent_activity_http import _session, _stream
+    from chat_stream_support import _session, _stream
 
     env = privacy_app
     session_id = await _session(env, "alice", "bob")

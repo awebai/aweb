@@ -841,9 +841,11 @@ identity-grant `scopes` are grant scope tokens, such as `mail.send`.
 `task.answered` fires once the conditional task answer exists in core.
 `membership.certificate_*` events are registry facts that core **observes** at
 the team's registry; it does not effect them. They carry the registry's own
-timestamp and `observed: true`. Reservations and agent status reports are not
-core mutations for this hook: they are operational locks and health signals.
-The catalog lists them under `excluded_core_events`.
+timestamp and `observed: true`. Reservations are not core mutations for this
+hook: they are operational locks. The catalog lists them under
+`excluded_core_events`. The frozen catalog also lists `agent.status` there, an
+event aweb emitted for agent status reports before status publishing was
+removed; aweb no longer emits it.
 
 ### `post-command-hook`
 

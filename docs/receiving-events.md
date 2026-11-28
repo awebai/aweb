@@ -394,7 +394,6 @@ surface presents content or an explicit command acknowledges it.
 | Pi extension | After `pi.sendMessage` accepts the injection. |
 | Either, with `AWEB_DELIVERY=session` | None; the runtime delivers nothing, so the external wake path owns presentation and acknowledgement. |
 | `aw wake` terminal broker | None, on any path, ever. It types a hint; the instance's own `aw` presents and acknowledges. |
-| Native `aw run` | After a successful provider run presents the communication. |
 
 If transport fails before presentation acknowledgement, mail stays unread and a
 new stream can find it. If a surface acknowledges after accepting presentation

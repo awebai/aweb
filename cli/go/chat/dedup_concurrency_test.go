@@ -20,9 +20,8 @@ import (
 // wrote and the last rename won. The loss was silent: every writer returned nil,
 // so a caller could not detect it even in principle (default-aajc.10).
 //
-// Concurrency here is a normal operating condition, not a corner case: the
-// `aw run` wake loop and any `aw chat` invocation in the same worktree write
-// this same file.
+// Concurrency here is a normal operating condition, not a corner case: any two
+// `aw chat` invocations in the same worktree write this same file.
 
 const barrierEnv = "AW_TEST_DEDUP_BARRIER"
 
@@ -116,8 +115,8 @@ func TestConcurrentWritersKeepEveryDeliveryMark(t *testing.T) {
 }
 
 // The same contention across REAL processes, released together by a barrier.
-// This is the shape that actually occurs: an `aw run` loop and an `aw chat`
-// command writing the same worktree file at once.
+// This is the shape that actually occurs: two `aw chat` commands writing the
+// same worktree file at once.
 func TestConcurrentProcessesKeepEveryDeliveryMark(t *testing.T) {
 	if testing.Short() {
 		t.Skip("spawns subprocesses")

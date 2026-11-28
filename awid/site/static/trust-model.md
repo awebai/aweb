@@ -338,7 +338,7 @@ can authorize the explicit transition:
 ```bash
 aw team admin replace-key alice \
   --old-did-key did:key:OLD \
-  --home agents/instances/alice \
+  --home ~/agents/alice \
   --generate-new-key
 ```
 
@@ -467,8 +467,8 @@ The registry's answer for a team's key is not authority on its own. A relying
 server (the aweb server, and every naapp through `aweb_naapp`) pins the key it
 first admits for a team: the aweb server's `teams.team_did_key`, written at
 admission, and a naapp's `team_key_pins`. Every read that takes authority from
-the team key (certificate checks, controller routes such as key replacement and
-status-host designation, owner acts and app-task authorization) uses the
+the team key (certificate checks, controller routes such as key replacement,
+owner acts and app-task authorization) uses the
 registry's key only when it equals the pin. A different key is accepted only
 with the namespace controller's `rotate_team_key` act, which AWID keeps exactly
 as signed and serves at `GET /v1/namespaces/{domain}/teams/{name}/key-act`.

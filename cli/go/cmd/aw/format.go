@@ -223,7 +223,7 @@ func formatMailInbox(v any) string {
 				{name: "server-name", value: serverFlag},
 			} {
 				if value := strings.TrimSpace(selection.value); value != "" {
-					sb.WriteString(" --" + selection.name + " " + teamUpShellQuoteIfNeeded(value))
+					sb.WriteString(" --" + selection.name + " " + shellQuote(value))
 				}
 			}
 			if mailInboxShowAll {
@@ -232,7 +232,7 @@ func formatMailInbox(v any) string {
 			if mailInboxLimit != 50 {
 				sb.WriteString(fmt.Sprintf(" --limit %d", mailInboxLimit))
 			}
-			sb.WriteString(" --cursor " + teamUpShellQuoteIfNeeded(cursor) + "\n")
+			sb.WriteString(" --cursor " + shellQuote(cursor) + "\n")
 		}
 	}
 	return sb.String()

@@ -13,7 +13,7 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
-// A long-lived caller (aw run's callbacks) holds its policy from before the
+// A long-lived caller holds its policy from before the
 // owner key was installed; its next write must still be sealed.
 func TestSecurityReviewCachedPolicyAfterInstall(t *testing.T) {
 	f := newLocalLogFixture(t)

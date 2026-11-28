@@ -13,8 +13,8 @@ import (
 	"time"
 
 	awid "github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/eventstream"
 	"github.com/awebai/aw/internal/wake/session"
-	"github.com/awebai/aw/run"
 )
 
 func TestInstanceSetPausedBeforeStartAndAfterStopReturns(t *testing.T) {
@@ -157,7 +157,7 @@ func TestBrokerInitialSnapshotWaitsForAppliedRebind(t *testing.T) {
 	logs := &logCapture{}
 	var broker *Broker
 	openedNew := make(chan struct{}, 1)
-	broker, cancel := liveBroker(t, Config{Store: store, Session: session.NewFake(session.Inspection{}), ChannelCore: NewChannelCoreRunner(store), Log: logs.log, OpenStream: func(_ context.Context, identityHome, teamID string) (run.EventStreamOpener, error) {
+	broker, cancel := liveBroker(t, Config{Store: store, Session: session.NewFake(session.Inspection{}), ChannelCore: NewChannelCoreRunner(store), Log: logs.log, OpenStream: func(_ context.Context, identityHome, teamID string) (eventstream.EventStreamOpener, error) {
 		if identityHome != newHome {
 			return func(context.Context, time.Time) (awid.EventSource, error) {
 				return &oneEventSource{event: awid.AgentEvent{Type: awid.AgentEventChannelReconnected}}, nil

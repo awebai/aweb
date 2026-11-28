@@ -19,7 +19,7 @@ from aweb.mcp.server import create_mcp_app
 from aweb.mcp.signing import HostedMessageSigningResult, canonical_signed_payload
 from aweb.messaging import chat, conversations
 from awid.signing import sign_message
-from test_agent_status_host_http import _team_request
+from team_request_support import _team_request
 from test_dashboard import _make_jwt
 from test_dashboard_privacy import TEAM, _request, privacy_app
 from test_messages_http import _make_keypair

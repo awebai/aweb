@@ -31,7 +31,6 @@ account/config file.
 Common files and directories include:
 
 - `~/.config/aw/known_agents.yaml`: TOFU pins for peer identity verification
-- `~/.config/aw/run.json`: optional `aw run` defaults
 - `~/.config/aw/team-invites/`: pending local-controller invite records created on this machine
 - `~/.config/aw/logs/<account>.jsonl`: the local mail and chat log of each identity
 - `~/.config/aw/log-keys/<team>.json`: the installed owner log key record of each team
@@ -75,7 +74,7 @@ can read them back:
 From then on every line the team's agents write is sealed to that key on its
 own (HPKE X25519/HKDF-SHA256/AES-256-GCM, the suite of E2EE key wraps). Each
 write loads and verifies the installed record while holding the team's
-policy lock, which `install` also takes, so a long-running `aw run` follows an
+policy lock, which `install` also takes, so a long-running `aw` process follows an
 install, a replacement or a broken record from its next write.
 
 Lines already in a log are never rewritten. A plaintext line carries no team:
@@ -88,7 +87,7 @@ lines (`local.log_key.plaintext_lines`); the owner decides whether to keep,
 move or delete them.
 
 While a team's log key is installed, the agent does not read its logs back:
-`aw log` refuses and `aw run --continue` shows no recap. Message history stays
+`aw log` refuses. Message history stays
 available from the server. The owner reads copied log files with `aw log read
 <file>...` (add `--json` for the decrypted entries), giving each key's
 passphrase once. Running `create`, `sign` and `install` again rotates the
@@ -164,7 +163,7 @@ Key points:
 
 Multi-team commands:
 
-- `aw id team accept-invite --global <invite-token>` (or `aw team join --global <invite-token>`) adds another team membership to the same global identity; the old `aw id team add <invite-token>` form is deprecated
+- `aw id team accept-invite --global <invite-token>` (or `aw team join --global <invite-token>`) adds another team membership to the same global identity
 - `aw id team switch <team_id>` changes `active_team`
 - `aw id team list` shows all local memberships for the current worktree
 - `aw id team leave <team_id>` removes one local membership and its certificate from this worktree only
@@ -351,7 +350,7 @@ Each client `aw` builds keeps the probe's answer, so a 404 the API itself
 returns costs a command one probe. A mount is only ever looked for on the origin
 of the stored URL: the same scheme, host and port.
 
-The event streams of `aw run` and the `aw wake` broker repair this themselves.
+The event stream of the `aw wake` broker repairs this itself.
 A stream refused at the stored `aweb_url` is retried under the
 [event stream policy](event-stream-client-policy.md); before each retry the
 client probes as above and builds its requests for the mount that answers.
@@ -410,16 +409,6 @@ blackholing), raise `AWEB_HTTP_TIMEOUT` above the 30s default and retry reads
 freely. For a timed-out write (task create/update, mail send), the request may
 have reached the server before the response was lost: check current state with
 the matching read command before retrying, instead of resending blindly.
-
-## Related Runtime Config
-
-`aw run --init` writes a separate runtime config file:
-
-```text
-~/.config/aw/run.json
-```
-
-Use that file for `aw run` prompt defaults and local runtime settings.
 
 ## Operator Config
 

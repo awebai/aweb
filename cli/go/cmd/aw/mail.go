@@ -1220,7 +1220,7 @@ func threadsWithoutSelf(resp *awid.ConversationsResponse, sel *awconfig.Selectio
 
 // Human participation is independent of the current agent workspace. Its
 // communication log is already keyed by human identity; do not add its mail to
-// the agent runtime's interaction log used by aw run.
+// the workspace's interaction log.
 func appendMailInteractionLog(policy localLogPolicy, entry *InteractionEntry) {
 	if activeHuman == nil {
 		appendInteractionLogForCWD(policy, entry)

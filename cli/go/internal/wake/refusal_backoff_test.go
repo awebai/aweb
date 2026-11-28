@@ -13,8 +13,8 @@ import (
 	"time"
 
 	awid "github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/eventstream"
 	"github.com/awebai/aw/internal/wake/session"
-	"github.com/awebai/aw/run"
 )
 
 func TestPersistentRefusalBacksOffAndResumeRecovers(t *testing.T) {
@@ -48,7 +48,7 @@ func TestPersistentRefusalBacksOffAndResumeRecovers(t *testing.T) {
 	}
 	var mu sync.Mutex
 	var opens []time.Time
-	broker, cancel := liveBroker(t, Config{Store: store, Session: &session.ExecClient{Bin: oats}, ChannelCore: NewChannelCoreRunner(store), OpenStream: func(context.Context, string, string) (run.EventStreamOpener, error) {
+	broker, cancel := liveBroker(t, Config{Store: store, Session: &session.ExecClient{Bin: oats}, ChannelCore: NewChannelCoreRunner(store), OpenStream: func(context.Context, string, string) (eventstream.EventStreamOpener, error) {
 		return func(context.Context, time.Time) (awid.EventSource, error) {
 			mu.Lock()
 			opens = append(opens, time.Now())

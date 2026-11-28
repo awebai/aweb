@@ -195,8 +195,15 @@ global.
 
 Current surfaces:
 
-- `aw init` is the everyday bootstrap path; `aw team admin create NAME` is the
-  advanced explicit team-creation and local-orchestration wrapper.
+- `aw init` is the everyday bootstrap path. `aw team admin create NAME` is the
+  explicit team-founding command: it creates the team and enrolls this
+  workspace's first agent, through the local stack, a customer-controlled
+  namespace (`--byot --namespace DOMAIN`), an existing identity in the
+  workspace, a setup key (`AWEB_API_KEY`), or hosted onboarding.
+- `aw team admin create NAME --org ORG` is separate: it creates a hosted team
+  under the signed-in person's organization authority and returns an
+  invitation. It creates no local identity; the invitation is accepted
+  separately.
 - `aw id team create --namespace DOMAIN --name NAME` is the controller/admin
   primitive for creating the AWID team record and remains controller-only.
 - `aw team admin create` accepts `--first-agent-local` (default) and
@@ -207,7 +214,7 @@ Current surfaces:
 
 ### Agent naming contract
 
-When an `aw team admin create --agent` or `aw team admin add` spec omits `NAME`, aw resolves
+When `aw workspace add-worktree` omits a name, aw resolves
 it at commit time through the server-authoritative
 `POST /api/v1/agents/suggest-alias-prefix` endpoint, which queries the live team
 roster. The shared preview sequence for UI clients is the classic list
@@ -294,13 +301,6 @@ An explicit `--parent` is retained in the child home with its exchange. A retry
 may omit it; choosing a different creator refuses. It may be added only before
 any submission could have reached the service. Each child of a multi-use invite
 has its own exchange, and import retries reuse the parent's recorded issuance.
-
-`aw team admin add --global` uses a registered creator's existing parent exchange
-and registers the new child's ID certificate before membership. A local creator
-with an installed chain cannot parent a registered child and refuses before
-creating identity or address state; the controller can instead use the
-unconditional `aw id team add-member` path. Chainless creators keep the existing
-behaviour.
 
 For teams whose key is on the host, this changes `--member-global` invites:
 when their issuer has a verified human, they previously carried no human
@@ -544,17 +544,14 @@ use a setup key from the dashboard or `aw init --join-from`.
 | Create team | Create `name:domain` and enroll the first member | `aw team admin create NAME`; controller primitive `aw id team create --namespace DOMAIN --name NAME` | Team scope is not local/global; first-member scope is local/global. |
 | Invite to team | Produce a join capability for a future member | `aw team invite`; `aw id team invite` | The invite scopes the future member, not the team. |
 | Join team | Enroll a fresh local identity or an existing global identity | `aw team join <token>`; primitive `aw id team accept-invite <token>` | Scope must be explicit; reuse is global-only. |
-| Add local/profile agent home | Materialize an agent home and then perform team join/enrollment | `aw team admin add [NAME@]BLUEPRINT/PROFILE[:local\|global][=RUNTIME]` or `aw team admin add NAME[:local\|global]` | Omitted names use the server-authoritative classic sequence; omitted profile scope comes from `profile.yaml`. |
 | Add existing member by controller | Sign/register a certificate for a supplied identity key | `aw id team add-member` | Controller/admin primitive; not the everyday join verb. |
 | Fetch certificate | Install an already-issued certificate | `aw id team fetch-cert` | Cross-machine BYOT recovery/install path. |
 | Replace local member key | Team-authorized compare-and-swap of a local identity key, old certificate revocation, and replacement certificate issuance | Lost key: `aw team admin replace-key NAME --old-did-key OLD --home AGENT_HOME --generate-new-key`; pre-generated key: pass `--new-did-key NEW` instead | Current OSS CLI path requires the locally held BYOT/team controller key; hosted-authority replacement requires an authorized hosted-operator equivalent. |
 | Remove member | Revoke a team certificate | `aw team admin remove-agent <member-address>`; primitive `aw id team remove-member` | Team-scoped revocation; does not delete a global identity. |
 
-These identity/team verbs do not require Library. `aw team admin create` without an
-`--agent`, `--profile`, or `--blueprint` selector creates an empty-profile team
-workspace; identity enrollment and communication remain complete OSS paths.
-Library-backed materialization is an optional orchestration layer above this
-model.
+These identity/team verbs do not require Library. `aw team admin create` creates
+a team workspace with its first agent identity; identity enrollment and
+communication remain complete OSS paths.
 
 ## Key material and local files
 
@@ -636,7 +633,7 @@ E2E message decryption uses a separate local X25519 keyring, not the Ed25519
 signing key. Self-custodial clients store it in `.aw/encryption.yaml` and
 `.aw/encryption-keys/`. New self-custodial identity and membership paths create
 the local encryption key automatically, including `aw id create`, `aw init`,
-`aw service init`, `aw id team accept-invite`, and `aw id team fetch-cert`.
+`aw workspace connect`, `aw id team accept-invite`, and `aw id team fetch-cert`.
 Run `aw id encryption-key setup` to repair or publish missing key state, and
 `aw id encryption-key rotate` when rotating encryption material. Back up
 `.aw/encryption-keys/`; losing archived encryption keys makes old encrypted

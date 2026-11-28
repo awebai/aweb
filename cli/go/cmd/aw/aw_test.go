@@ -214,11 +214,6 @@ func TestAwTopLevelHelpGroupsCommandsByArchitecture(t *testing.T) {
 		t.Fatalf("expected whoami in Identity group:\n%s", text)
 	}
 
-	runIdx := strings.Index(text, "run")
-	if runIdx < coordinationIdx || runIdx > obsoleteIdx {
-		t.Fatalf("expected run in Coordination & Runtime group:\n%s", text)
-	}
-
 	if strings.Contains(text, "\n  agents") {
 		t.Fatalf("agents command should not appear in top-level help after retirement:\n%s", text)
 	}
@@ -260,13 +255,13 @@ func TestTeamHelpSeparatesEverydayMembershipFromAdministration(t *testing.T) {
 		"leave":  "Remove a team membership",
 		"list":   "List team memberships",
 		"switch": "Switch the active team",
-		"admin":  "Experimental local orchestration and team administration",
+		"admin":  "Team creation and team administration",
 	} {
 		if !helpContainsCommandDescription(teamHelp, command, description) {
 			t.Fatalf("team help missing command %q with description %q:\n%s", command, description, teamHelp)
 		}
 	}
-	for _, hidden := range []string{"add", "adopt", "agent-status", "create", "extend", "refresh", "remove-agent", "replace-key", "up"} {
+	for _, hidden := range []string{"agent-status", "create", "remove-agent", "replace-key"} {
 		if strings.Contains(teamHelp, "\n  "+hidden+" ") {
 			t.Fatalf("team help exposes admin command %q:\n%s", hidden, teamHelp)
 		}
@@ -274,18 +269,17 @@ func TestTeamHelpSeparatesEverydayMembershipFromAdministration(t *testing.T) {
 
 	adminHelp := runHelp("team", "admin", "--help")
 	for _, want := range []string{
-		"Local Agent Orchestration",
 		"Team Administration",
-		"add", "adopt", "agent-status", "create", "extend", "refresh", "remove-agent", "replace-key", "up",
+		"agent-status", "create", "remove-agent", "replace-key",
 	} {
 		if !strings.Contains(adminHelp, want) {
 			t.Fatalf("team admin help missing %q:\n%s", want, adminHelp)
 		}
 	}
 
-	// Every former command path remains executable as a hidden compatibility
+	// This former command path remains executable as a hidden compatibility
 	// alias, with the same flags and handler as its canonical admin path.
-	for _, name := range []string{"add", "adopt", "agent-status", "create", "extend", "refresh", "remove-agent", "replace-key", "up"} {
+	for _, name := range []string{"create"} {
 		legacyHelp := runHelp("team", name, "--help")
 		if !strings.Contains(legacyHelp, "aw team "+name) {
 			t.Fatalf("legacy team %s help does not preserve its command path:\n%s", name, legacyHelp)
@@ -413,14 +407,7 @@ func TestDeprecatedVocabularyFlagsWarn(t *testing.T) {
 		args []string
 		want string
 	}{
-		{name: "persistent to member-global", args: []string{"id", "team", "invite", "--persistent", "--help"}, want: "Flag --persistent has been deprecated, use --member-global"},
-		{name: "ephemeral to member-local", args: []string{"id", "team", "invite", "--ephemeral", "--help"}, want: "Flag --ephemeral has been deprecated, use --member-local"},
-		{name: "lifetime to global", args: []string{"id", "team", "add-member", "--lifetime", "persistent", "--help"}, want: "Flag --lifetime has been deprecated, use --global or --local"},
-		{name: "global to member-global", args: []string{"id", "team", "invite", "--global", "--help"}, want: "Flag --global has been deprecated, use --member-global"},
-		{name: "local to member-local", args: []string{"id", "team", "invite", "--local", "--help"}, want: "Flag --local has been deprecated, use --member-local"},
 		{name: "alias to name", args: []string{"id", "team", "accept-invite", "--alias", "bob", "--help"}, want: "Flag --alias has been deprecated, use --name"},
-		{name: "id team add to accept-invite", args: []string{"id", "team", "add", "--help"}, want: "Command \"add\" is deprecated, use `aw id team accept-invite --global <token>` or `aw team join --global <token>`"},
-		{name: "init local-name to name", args: []string{"init", "--local-name", "bob", "--help"}, want: "Flag --local-name has been deprecated, use --name"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1951,7 +1938,7 @@ func TestAwMailInboxLogsStableIDWhenAddressMissing(t *testing.T) {
 		t.Fatalf("run failed: %v\n%s", err, string(out))
 	}
 
-	entries, err := readInteractionLog(interactionLogPath(tmp), 0)
+	entries, err := readInteractionLog(interactionLogPath(tmp))
 	if err != nil {
 		t.Fatalf("readInteractionLog: %v", err)
 	}
@@ -1962,9 +1949,8 @@ func TestAwMailInboxLogsStableIDWhenAddressMissing(t *testing.T) {
 		t.Fatalf("interaction from=%q want did:aw:monitor", got)
 	}
 
-	recap := formatInteractionRecapStyled(entries, 10, false, 0)
-	if !strings.Contains(recap, "from did:aw:monitor (mail)") {
-		t.Fatalf("interaction recap lost sender identity:\n%s", recap)
+	if line := formatInteractionEntry(entries[0]); !strings.Contains(line, "from did:aw:monitor (mail)") {
+		t.Fatalf("interaction entry lost sender identity:\n%s", line)
 	}
 }
 

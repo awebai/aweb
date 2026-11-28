@@ -29,13 +29,11 @@ from aweb.app_events import (
     AppEventRecord,
     AppEventSubscription,
     current_app_events_for_agent,
-    delete_app_event_subscription,
     emit_app_event,
     list_app_event_subscriptions,
     upsert_app_event_subscription,
     verify_app_event_auth,
 )
-from aweb.agent_health import LISTENING_REFRESH_SECONDS, record_stream_listening
 from aweb.agent_wake import (
     agent_wake_key,
     agent_wake_publisher,
@@ -694,8 +692,6 @@ async def _sse_agent_events(
         last_heartbeat_at = datetime.now(timezone.utc)
 
         yield f"event: connected\ndata: {json.dumps({'agent_id': agent_id, 'team_id': team_id})}\n\n"
-        await record_stream_listening(redis, agent_id, now=datetime.now(timezone.utc))
-        listening_recorded_at = monotonic()
 
         guard = NeverGrantStreamGuard(request, db, identity, grant_expiry_reason)
         reason = await guard.reason()
@@ -740,7 +736,6 @@ async def _sse_agent_events(
             now = monotonic()
             due = [
                 next_reconcile_at,
-                listening_recorded_at + LISTENING_REFRESH_SECONDS,
                 now + (deadline - datetime.now(timezone.utc)).total_seconds(),
                 now
                 + max(
@@ -759,12 +754,6 @@ async def _sse_agent_events(
 
             if datetime.now(timezone.utc) >= deadline:
                 break
-
-            if monotonic() - listening_recorded_at >= LISTENING_REFRESH_SECONDS:
-                await record_stream_listening(
-                    redis, agent_id, now=datetime.now(timezone.utc)
-                )
-                listening_recorded_at = monotonic()
 
             reason = await guard.reason()
             if reason:
@@ -940,26 +929,6 @@ async def list_app_event_subscriptions_route(
     return AppEventSubscriptionsResponse(
         subscriptions=[_subscription_response(item) for item in subscriptions]
     )
-
-
-@router.delete("/subscriptions/{subscription_id}")
-async def delete_app_event_subscription_route(
-    subscription_id: str,
-    request: Request,
-    db=Depends(get_db),
-) -> dict[str, str]:
-    identity = await get_team_identity(request, db)
-    aweb_db = db.get_manager("aweb")
-    with agent_wake_scope(agent_wake_publisher(request.app.state)):
-        deleted = await delete_app_event_subscription(
-            aweb_db,
-            team_id=identity.team_id,
-            agent_id=identity.agent_id,
-            subscription_id=subscription_id,
-        )
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Subscription not found")
-    return {"subscription_id": subscription_id, "status": "deleted"}
 
 
 _missing_wake_hub_reported = False

@@ -528,7 +528,6 @@ func TestPersistentPreRunSkipsOnEnvVar(t *testing.T) {
 func TestPersistentPreRunSkipsOnSkipListCommand(t *testing.T) {
 	for _, path := range [][]string{
 		{"aw", "heartbeat"},
-		{"aw", "run"},
 		{"aw", "events"},
 		{"aw", "lock", "renew"},
 		{"aw", "team", "invite", "inspect"},

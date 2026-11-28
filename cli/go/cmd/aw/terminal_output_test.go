@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,7 +10,6 @@ import (
 	"github.com/awebai/aw/chat"
 	"github.com/awebai/aw/internal/a2a"
 	"github.com/awebai/aw/internal/testcapture"
-	awrun "github.com/awebai/aw/run"
 )
 
 // A hostile sender's name, subject and body: an ANSI escape, a right-to-left
@@ -131,45 +129,10 @@ func requireNoForgedLine(t *testing.T, out string) {
 	}
 }
 
-func TestRunDisplayLinesEscapeTheWakeText(t *testing.T) {
-	dispatcher := newRunDispatcher(awrun.Settings{}, func(context.Context, awid.AgentEvent) (runWakeResolution, error) {
-		return runWakeResolution{CycleContext: hostileName + ": " + hostileSubject + "\n" + hostileBody}, nil
-	})
-	decision, err := dispatcher.Next(context.Background(), true, &awid.AgentEvent{Type: awid.AgentEventActionableMail})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var lines []string
-	for _, line := range decision.DisplayLines {
-		lines = append(lines, line.Text)
-	}
-	requireTerminalSafe(t, strings.Join(lines, "\n"))
-	if !strings.Contains(decision.CycleContext, "\x1b") {
-		t.Fatalf("the provider prompt is not display text and keeps the received bytes: %q", decision.CycleContext)
-	}
-}
-
-func TestRunWorkWakeDisplayEscapesTheTaskTitle(t *testing.T) {
-	var lines []string
-	for _, line := range formatWorkWakeDisplay(awid.AgentEvent{Type: awid.AgentEventWorkAvailable, TaskID: "t1", Title: "fix\x1b[2J\u202e"}) {
-		lines = append(lines, line.Text)
-	}
-	requireTerminalSafe(t, strings.Join(lines, "\n"))
-}
-
 func TestLogLineEscapesThePeerSubjectAndBody(t *testing.T) {
 	out := formatLogLine(&CommLogEntry{Dir: "recv", Channel: "mail", From: hostileName, Subject: "hi" + forgedLine, Body: hostileBody})
 	requireTerminalSafe(t, out)
 	requireNoForgedLine(t, out)
-}
-
-func TestRunRecapEscapesReceivedTextBeforeStyling(t *testing.T) {
-	entries := []InteractionEntry{{Kind: interactionKindMailIn, From: hostileAlias, Subject: hostileSubject, Text: hostileBody}}
-	requireTerminalSafe(t, formatInteractionRecapStyled(entries, 8, false, 0))
-	styled := formatInteractionRecapStyled(entries, 8, true, 0)
-	if strings.Contains(styled, "\x1b]0;") || strings.Contains(styled, "\u202e") {
-		t.Fatalf("styled recap carries a received escape: %q", styled)
-	}
 }
 
 func TestA2ACardAndTaskEscapeTheRemoteAgentText(t *testing.T) {
@@ -246,12 +209,4 @@ func TestRowShapedTextIndentsBodyContinuationLines(t *testing.T) {
 func TestChatSenderIsOneLine(t *testing.T) {
 	out := formatChatSend(&chat.SendResult{Status: "replied", TargetAgent: "bob" + forgedLine, Reply: "ok", Events: []chat.Event{{Type: "message", FromAgent: "bob" + forgedLine, Body: "ok"}}})
 	requireNoForgedLine(t, out)
-}
-
-func TestRunMailDisplayKeepsTheSubjectOnOneLine(t *testing.T) {
-	var lines []string
-	for _, line := range awrun.SplitDisplayText(awrun.DisplayKindCommunication, formatIncomingMailContext("acme.com/bob", "hi"+forgedLine, "body")) {
-		lines = append(lines, line.Text)
-	}
-	requireNoForgedLine(t, strings.Join(lines, "\n"))
 }
