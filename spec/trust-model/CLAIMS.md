@@ -388,11 +388,14 @@ Each item pairs a sentence about the model with one about the real system.
 | README, `Act`, `Act.checks`, `Act.effect`, `run`, `Check`, `firstFailing` | A request, its named checks in the constructor's order, its effect, and what `run` returns | definition | Their bodies; each act's checks list the premises of its `Step` constructor in order |
 | `AskedByIssuer`, `IssuerValid`, `ByMember`, `rootCut`, `AskDecidable`, `Act.Accepted` | Their meaning | definition | Their bodies |
 | README | `lake exe trust-web-cases` followed by the model commit prints the cases, written to the vectors file | process | The entry point at the end of `Emit.lean`, and the lakefile's executable entry |
-| README | The first batch: the acts, no held key, an allowed case per act and a refusal per premise the batch can make fail, each one change from its admitted neighbour | definition | `Emit.cases` |
+| README | The first batch: the acts, no held key, an allowed case per act and a refusal per premise the batch can make fail | definition | `Emit.cases` |
+| README | Each refusal's neighbour is allowed and differs in exactly one of setup, party and arguments, and the generator checks it | definition | `Emit.changes`, `Emit.checkNeighbours`, called by `Emit.document` |
+| README | A refusal is written only if no act on its route allows the same request; which acts share a route | definition, source | `Emit.routeMates` and its use in `Emit.Case.json`; AWID's one identity-revocation route names the subject and the signer, not the constructor |
 | README | `remove`'s last-admin premise can fail only when the team's key is held | act | The premise of `remove` |
-| README | Every request goes through `run`; the generator refuses on a refused setup request or an unintended outcome | definition | `Emit.Case.json` |
+| README | Every request goes through `run`; the generator refuses on a refused setup request, an unintended outcome, a bad neighbour or a route mate that allows the request | definition | `Emit.Case.json`, `Emit.checkNeighbours` |
 | README | So every verdict and premise in the file is the model's by rows 92 and 93 | result | `step_iff_run`, `run_error_premise` |
 | README | What the cases observe | definition | `Emit.Obs`, `Emit.Obs.json` |
+| README | Propagation: after a revocation, except a refused grant mint for a subject not in the team, judged at once because creating authority reads revocation fresh under the planned E7 rule | definition, source | `Emit.Case.json`; the planned E7 fresh read at grant mint, which the runner's seeds pin as immediate |
 | README, `CasesCheck.lean` | The build fails unless the committed file's format, emitter and cases are the generator's output | process | `#cases_file_current` in the `DocCheck` library, which the default build runs |
 | README | The cases are not proved to cover every premise; the code passing them shows agreement on these cases only | definition | No theorem is about coverage |
 | README | Running them against the code is the runner's | source | The runner in the aweb server's tests |

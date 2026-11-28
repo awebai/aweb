@@ -144,6 +144,18 @@ def reqJson (r : Req) : Except String Json := do
   let (name, args) ← actJson r.act
   return Json.mkObj [("who", ← partyJson r.who), ("act", Json.str name), ("args", args)]
 
+/-- The acts that share a route with `a` on the wire: a request names its
+party and its arguments, not the model's constructor. The identity
+revocations name only the subject, so they act on the subject's registered
+certificate when there is one. -/
+def routeMates (s : State) (a : Act) : List Act :=
+  match a with
+  | .revokeSelf c | .revokeChild c | .revokeByOrg c =>
+    let c' := (s.certs.find? (·.subject = c.subject)).getD c
+    [.revokeSelf c', .revokeChild c', .revokeByOrg c']
+  | .registerByRoot c | .registerByParent c => [.registerByRoot c, .registerByParent c]
+  | a => [a]
+
 /-- Run a case and render it, or say why it cannot be emitted. -/
 def Case.json (c : Case) : Except String Json := do
   -- Cases run under `builtRule`: with no held key, no case consults the rule.
@@ -159,15 +171,24 @@ def Case.json (c : Case) : Except String Json := do
       else throw s!"{c.name}: refused on {p}, meant {q}"
     | .ok _, some q => throw s!"{c.name}: allowed, meant refused on {q}"
     | .error p, none => throw s!"{c.name}: refused on {p}, meant allowed"
+  if c.refusedOn.isSome then
+    for mate in routeMates s c.req.act do
+      if let .ok _ := run builtRule s c.req.who [] mate then
+        throw s!"{c.name}: another act on the same route allows the same request"
   let setup ← c.setup.mapM reqJson
   let (actName, args) ← actJson c.req.act
+  -- After a revocation the runner waits for it to reach the server's cache
+  -- ("after"). A grant mint refused because its subject is not in the team is
+  -- judged at once ("immediate"): creating authority reads revocation fresh
+  -- (the planned E7 rule), and after propagation nothing can read the result.
   let revokes := (c.req :: c.setup).any (fun r => revokes r.act)
   let fields : List (String × Json) :=
     [("id", Json.str s!"model-{c.name}"), ("source", Json.str "emitted"),
      ("status", Json.str "implemented"), ("rule", Json.str "any"),
      ("setup", Json.arr setup.toArray), ("who", ← partyJson c.req.who),
      ("act", Json.str actName), ("args", args), ("expect", expect)] ++
-    (if revokes then [("propagation", Json.str "after")] else []) ++
+    (if c.refusedOn = some "mintGrant.InTeam" then [("propagation", Json.str "immediate")]
+     else if revokes then [("propagation", Json.str "after")] else []) ++
     (match c.neighbour with
      | some n => [("neighbour", Json.str s!"model-{n}")]
      | none => []) ++
@@ -189,6 +210,8 @@ def org1 : List Req := [⟨dns 1, .createOrg 1⟩]
 def org12 : List Req := org1 ++ [⟨dns 2, .createOrg 2⟩]
 def withAlice : List Req := org1 ++ [⟨rootOf 1, .registerByRoot (personCert alice)⟩]
 def withBot1 : List Req := withAlice ++ [⟨.id alice, .registerByParent (agentCert bot1 alice)⟩]
+def withGrandchild : List Req := withBot1 ++ [⟨.id bot1, .registerByParent (agentCert bot2 bot1)⟩]
+def withSiblings : List Req := withBot1 ++ [⟨.id alice, .registerByParent (agentCert bot2 alice)⟩]
 def aliceRevoked (setup : List Req) : List Req := setup ++ [⟨.id alice, .revokeSelf (personCert alice)⟩]
 def withCarol : List Req := org1 ++ [⟨teamOf 1 1, .admit (carolIn 1)⟩]
 def withGrant : List Req := withCarol ++ [⟨.id carol, .mintGrant grantS1⟩]
@@ -249,12 +272,14 @@ def cases : List Case := [
   { name := "revoke-self", setup := withAlice,
     req := ⟨.id alice, .revokeSelf (personCert alice)⟩, observe := revokeObs alice .person },
   { name := "revoke-self-unregistered-refused", setup := withAlice,
-    req := ⟨.id carol, .revokeSelf (personCert carol)⟩,
+    req := ⟨.id alice, .revokeSelf (personCert carol)⟩,
     refusedOn := "revokeSelf.Registered", neighbour := "revoke-self",
     observe := [.revoked carol] },
+  { name := "revoke-self-beside-agent", setup := withBot1,
+    req := ⟨.id alice, .revokeSelf (personCert alice)⟩, observe := revokeObs alice .person },
   { name := "revoke-self-by-another-refused", setup := withBot1,
     req := ⟨.id bot1, .revokeSelf (personCert alice)⟩,
-    refusedOn := "revokeSelf.Asker", neighbour := "revoke-self",
+    refusedOn := "revokeSelf.Asker", neighbour := "revoke-self-beside-agent",
     observe := [.revoked alice] },
   -- revokeChild
   { name := "revoke-child-by-parent", setup := withBot1,
@@ -267,13 +292,17 @@ def cases : List Case := [
     req := ⟨.id alice, .revokeChild (agentCert bot2 alice)⟩,
     refusedOn := "revokeChild.Registered", neighbour := "revoke-child-by-parent",
     observe := [.revoked bot2] },
-  { name := "revoke-child-issued-by-root-refused", setup := withBot1,
-    req := ⟨.id alice, .revokeChild (personCert alice)⟩,
-    refusedOn := "revokeChild.Issuer", neighbour := "revoke-child-by-parent",
+  { name := "revoke-child-by-agent-parent", setup := withGrandchild,
+    req := ⟨.id bot1, .revokeChild (agentCert bot2 bot1)⟩, observe := revokeObs bot2 .agent },
+  { name := "revoke-child-issued-by-root-refused", setup := withGrandchild,
+    req := ⟨.id bot1, .revokeChild (personCert alice)⟩,
+    refusedOn := "revokeChild.Issuer", neighbour := "revoke-child-by-agent-parent",
     observe := [.revoked alice] },
-  { name := "revoke-child-by-non-parent-refused", setup := withBot1,
-    req := ⟨.id bot1, .revokeChild (agentCert bot1 alice)⟩,
-    refusedOn := "revokeChild.Asker", neighbour := "revoke-child-by-parent",
+  { name := "revoke-child-beside-sibling", setup := withSiblings,
+    req := ⟨.id alice, .revokeChild (agentCert bot1 alice)⟩, observe := revokeObs bot1 .agent },
+  { name := "revoke-child-by-sibling-refused", setup := withSiblings,
+    req := ⟨.id bot2, .revokeChild (agentCert bot1 alice)⟩,
+    refusedOn := "revokeChild.Asker", neighbour := "revoke-child-beside-sibling",
     observe := [.revoked bot1] },
   -- revokeByOrg
   { name := "revoke-by-org", setup := withAlice,
@@ -282,9 +311,11 @@ def cases : List Case := [
     req := ⟨rootOf 1, .revokeByOrg (personCert carol)⟩,
     refusedOn := "revokeByOrg.Registered", neighbour := "revoke-by-org",
     observe := [.revoked carol] },
+  { name := "revoke-by-org-beside-second-org", setup := withAlice ++ [⟨dns 2, .createOrg 2⟩],
+    req := ⟨rootOf 1, .revokeByOrg (personCert alice)⟩, observe := revokeObs alice .person },
   { name := "revoke-by-other-org-refused", setup := withAlice ++ [⟨dns 2, .createOrg 2⟩],
     req := ⟨rootOf 2, .revokeByOrg (personCert alice)⟩,
-    refusedOn := "revokeByOrg.Authorised", neighbour := "revoke-by-org",
+    refusedOn := "revokeByOrg.Authorised", neighbour := "revoke-by-org-beside-second-org",
     observe := [.revoked alice] },
   -- admit
   { name := "admit-member", setup := org1,
@@ -294,12 +325,14 @@ def cases : List Case := [
     refusedOn := "admit.Authorised", neighbour := "admit-member",
     observe := [.hasTeamCert 1 (.named 1) carol] },
   { name := "admit-to-admin-team-refused", setup := org1,
-    req := ⟨.controller (.team 1 .admin), .admit ⟨1, .admin, carol⟩⟩,
+    req := ⟨teamOf 1 1, .admit ⟨1, .admin, carol⟩⟩,
     refusedOn := "admit.NotAdminTeam", neighbour := "admit-member",
     observe := [.hasTeamCert 1 .admin carol] },
+  { name := "admit-member-to-second-team", setup := org1,
+    req := ⟨teamOf 1 2, .admit (carolIn 2)⟩, observe := [.hasTeamCert 1 (.named 2) carol] },
   { name := "admit-local-member-to-second-team-refused", setup := withCarol,
     req := ⟨teamOf 1 2, .admit (carolIn 2)⟩,
-    refusedOn := "admit.OneTeamIfLocal", neighbour := "admit-member",
+    refusedOn := "admit.OneTeamIfLocal", neighbour := "admit-member-to-second-team",
     observe := [.hasTeamCert 1 (.named 2) carol] },
   -- remove
   { name := "remove-member", setup := withCarol,
@@ -334,8 +367,29 @@ def cases : List Case := [
     refusedOn := "revokeGrant.Stands", neighbour := "revoke-grant", observe := [.grant 1] }
 ]
 
+/-- How many of a case's setup, party and arguments differ from another's. -/
+def changes (a b : Case) : Except String Nat := do
+  let setupA ← a.setup.mapM reqJson
+  let setupB ← b.setup.mapM reqJson
+  let (actA, argsA) ← actJson a.req.act
+  let (actB, argsB) ← actJson b.req.act
+  if actA != actB then throw s!"{a.name}: its neighbour {b.name} is another act"
+  return [setupA != setupB, (← partyJson a.req.who) != (← partyJson b.req.who), argsA != argsB].count true
+
+/-- Every refused case names an allowed neighbour that differs from it in
+exactly one of its setup, its party and its arguments. -/
+def checkNeighbours : Except String Unit := do
+  for c in cases do
+    if let some p := c.refusedOn then
+      let some n := c.neighbour | throw s!"{c.name}: refused on {p} with no neighbour"
+      let some nb := cases.find? (·.name = n) | throw s!"{c.name}: no case {n}"
+      if nb.refusedOn.isSome then throw s!"{c.name}: its neighbour {n} is refused"
+      let k ← changes c nb
+      if k != 1 then throw s!"{c.name}: differs from {n} in {k} things, not one"
+
 /-- The whole file, given the model commit it was generated at. -/
 def document (commit : String) : Except String Json := do
+  checkNeighbours
   let cs ← cases.mapM (·.json)
   return Json.mkObj [
     ("format", Json.str "aweb.trust-web-cases/2"),
