@@ -17,65 +17,29 @@ import pytest_asyncio
 from aweb.federation.activation import build_federation_authority_activation
 from awid.external_authority import SystemTXTOutcomeResolver
 from awid.registry import RegistryClient
-from awid.signing import canonical_json_bytes, sign_message
-from test_dashboard_privacy import privacy_app  # noqa: F401
-from test_messages_http import (
-    _signed_team_headers,
-    _make_certificate,
-    _encode_certificate,
-)
-
-__all__ = ["privacy_app"]
+from awid.team_certificate import decode_team_certificate
+from messaging_actor_support import privacy_actor, register_messaging_actors
+from test_dashboard_privacy import privacy_stack
+from test_messages_http import _signed_team_headers
 
 
 @pytest_asyncio.fixture
-async def local_mail(privacy_app, monkeypatch):
-    env = privacy_app
+async def local_mail_world(shared_test_pool, monkeypatch):
+    async with privacy_stack(shared_test_pool, monkeypatch, aliases=()) as env:
+        yield env
+
+
+@pytest_asyncio.fixture
+async def local_mail(local_mail_world, monkeypatch):
+    env = local_mail_world
     actors = {}
     for domain, names in (("local", ("alice", "bob")), ("company.test", ("carol",))):
         team = f"default:{domain}"
-        await env.db.execute(
-            "INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key) VALUES ($1, $2, 'default', $3)",
-            team,
-            domain,
-            env.team_did,
+        registered = await register_messaging_actors(
+            env, team_id=team, aliases=names, local=True
         )
-        await env.registry_db.execute(
-            "INSERT INTO {{tables.teams}} (domain, name, team_did_key, visibility) VALUES ($1, 'default', $2, 'public')",
-            domain,
-            env.team_did,
-        )
-        await env.registry_db.execute(
-            "INSERT INTO {{tables.dns_namespaces}} (domain, controller_did, verification_status) VALUES ($1, $2, 'verified')",
-            domain,
-            env.team_did,
-        )
-        for name in names:
-            actor = env.actors[name]
-            await env.db.execute(
-                "UPDATE {{tables.agents}} SET team_id = $1 WHERE agent_id = $2",
-                team,
-                actor.id,
-            )
-            await env.db.execute(
-                "UPDATE {{tables.workspaces}} SET team_id = $1 WHERE workspace_id = $2",
-                team,
-                actor.workspace,
-            )
-            cert = _make_certificate(
-                env.team_sk,
-                env.team_did,
-                actor.did,
-                team_id=team,
-                alias=name,
-                identity_scope="local",
-            )
-            # Match the CLI wire format: absent optional local identity fields.
-            for field in ("signature", "member_did_aw", "member_address"):
-                cert.pop(field)
-            cert["signature"] = sign_message(env.team_sk, canonical_json_bytes(cert))
-            certificate = _encode_certificate(cert)
-            actors[name] = (actor, team, certificate)
+        for name, member in registered.items():
+            actors[name] = (privacy_actor(member), team, member.certificate)
     activation = build_federation_authority_activation(
         env.infra, public_origin=env.app.state.public_origin
     )
@@ -153,6 +117,37 @@ async def local_mail(privacy_app, monkeypatch):
     finally:
         env.app.middleware_stack = stack
         await activation.aclose()
+
+
+@pytest.mark.asyncio
+async def test_local_address_actors_have_native_memberships(local_mail):
+    env = local_mail.env
+    registry = env.app.state.awid_registry_client
+    for actor, team, certificate in local_mail.actors.values():
+        fields = decode_team_certificate(certificate)
+        assert "member_did_aw" not in fields
+        assert "member_address" not in fields
+        row = await env.db.fetch_one(
+            """SELECT a.certificate_id, a.accepted_team_did_key
+               FROM {{tables.agents}} a JOIN {{tables.workspaces}} w USING (agent_id)
+               WHERE a.team_id = $1 AND w.team_id = $1
+                 AND a.agent_id = $2 AND w.workspace_id = $3""",
+            team,
+            actor.id,
+            actor.workspace,
+        )
+        assert row is not None
+        assert row["certificate_id"] == fields["certificate_id"]
+        assert row["accepted_team_did_key"] == env.team_did
+        name, domain = team.split(":", 1)
+        certificates = await registry.list_team_certificates(
+            domain, name, active_only=True
+        )
+        assert any(
+            item.certificate_id == row["certificate_id"]
+            and item.member_did_key == actor.did
+            for item in certificates
+        )
 
 
 @pytest.mark.asyncio

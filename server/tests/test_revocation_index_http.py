@@ -6,28 +6,24 @@ import httpx
 import pytest
 
 from awid.registry import CachedRegistryClient, RegistryError
-from test_dashboard_privacy import TEAM, TEAM_NAME, privacy_app  # noqa: F401
+from awid.team_certificate import decode_team_certificate
+from test_dashboard_privacy import TEAM, TEAM_NAME, registered_privacy_app  # noqa: F401
 from test_messages_http import _signed_team_headers
 
-__all__ = ["privacy_app"]
+__all__ = ["registered_privacy_app"]
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("history,strict", [(0, False), (1000, True), (100000, False)])
 async def test_warm_signed_auth_reads_no_full_crl_and_no_registry(
-    privacy_app, monkeypatch, history, strict
+    registered_privacy_app, monkeypatch, history, strict
 ):  # noqa: F811
-    env = privacy_app
+    env = registered_privacy_app
     monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", str(strict).lower())
     actor = env.actors["alice"]
-    await env.registry_db.execute(
-        """
-        INSERT INTO {{tables.team_certificates}} (team_uuid, certificate_id, member_did_key, alias)
-        SELECT team_uuid, 'privacy-alice', $2, 'alice' FROM {{tables.teams}} WHERE name = $1
-    """,
-        TEAM_NAME,
-        actor.did,
-    )
+    certificate_id = decode_team_certificate(actor.certificate)["certificate_id"]
+    # Bulk-load historical revocations to exercise pagination at its ceiling.
+    # The live certificate and its revocation use the registry and connect APIs.
     await env.registry_db.execute(
         """
         INSERT INTO {{tables.team_certificates}} (team_uuid, certificate_id, member_did_key, alias, revoked_at)
@@ -125,10 +121,20 @@ async def test_warm_signed_auth_reads_no_full_crl_and_no_registry(
             flush=True,
         )
 
-        await env.registry_db.execute(
-            "UPDATE {{tables.team_certificates}} SET revoked_at=now() WHERE certificate_id='privacy-alice'"
+        await cached.revoke_team_certificate(
+            "example.test",
+            TEAM_NAME,
+            team_controller_signing_key=env.team_sk,
+            certificate_id=certificate_id,
         )
-        await cached._invalidate_keys(crl_key)
+        assert requests == [
+            (
+                "POST",
+                f"/v1/namespaces/example.test/teams/{TEAM_NAME}/certificates/revoke",
+            )
+        ]
+        crl_keys = (crl_key, crl_key + ":membership", crl_key + ":membership-meta")
+        assert await env.redis.exists(*crl_keys) == 0
         if history == 100000:
             # One more revocation crosses the documented ceiling. A partial
             # list/index must never be installed, even with a service token.
@@ -137,16 +143,8 @@ async def test_warm_signed_auth_reads_no_full_crl_and_no_registry(
             ) as error:
                 await cached.get_team_revocations("example.test", TEAM_NAME)
             assert error.value.status_code == 502
-            assert (
-                await env.redis.exists(
-                    crl_key, crl_key + ":membership", crl_key + ":membership-meta"
-                )
-                == 0
-            )
+            assert await env.redis.exists(*crl_keys) == 0
         else:
-            assert "privacy-alice" in await cached.get_team_revocations(
-                "example.test", TEAM_NAME
-            )
             response = await env.client.get(
                 "/v1/agents",
                 headers=_signed_team_headers(
@@ -154,6 +152,10 @@ async def test_warm_signed_auth_reads_no_full_crl_and_no_registry(
                 ),
             )
             assert response.status_code == 401, response.text
+            assert response.json()["detail"]["code"] == "certificate_revoked"
+            assert certificate_id in await cached.get_team_revocations(
+                "example.test", TEAM_NAME
+            )
     finally:
         env.app.state.awid_registry_client = original
         await cached.aclose()
