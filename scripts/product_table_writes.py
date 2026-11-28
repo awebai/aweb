@@ -16,7 +16,7 @@ import sys
 import tokenize
 from typing import Iterator, Literal, NotRequired, TypedDict
 
-CEILINGS = "tools/product-table-write-ceilings.json"
+CEILINGS = "scripts/product-table-write-ceilings.json"
 METHODS = frozenset(
     {
         "execute",

@@ -502,16 +502,23 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                     capture_output=True,
                     text=True,
                 ).stdout.strip()
-                tools = run_fixture(
+                scripts = run_fixture(
                     ["git", "-C", str(repo), "mktree"],
-                    input=f"100644 blob {ceilings}\tproduct-table-write-ceilings.json\n",
+                    input=git("ls-tree", f"{tree}:scripts")
+                    + f"\n100644 blob {ceilings}\tproduct-table-write-ceilings.json\n",
                     check=True,
                     capture_output=True,
                     text=True,
                 ).stdout.strip()
+                root_entries = [
+                    line
+                    for line in git("ls-tree", tree).splitlines()
+                    if line.split("\t", 1)[1] != "scripts"
+                ]
                 reviewed_tree = run_fixture(
                     ["git", "-C", str(repo), "mktree"],
-                    input=git("ls-tree", tree) + f"\n040000 tree {tools}\ttools\n",
+                    input="\n".join(root_entries)
+                    + f"\n040000 tree {scripts}\tscripts\n",
                     check=True,
                     capture_output=True,
                     text=True,

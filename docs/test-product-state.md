@@ -21,7 +21,7 @@ plans, such as `SELECT` statements built from product constants and `EXPLAIN`
 of those statements. Writes must follow the product-write rules above.
 Put the marker on the line where the SQL call starts. Name the query, such as
 `EXPLAIN of GOVERNANCE_BEFORE`. Declare the exact number of marked calls for
-that file in `marked_nonliteral_files` in `tools/product-table-write-ceilings.json`.
+that file in `marked_nonliteral_files` in `scripts/product-table-write-ceilings.json`.
 Review the call, its marker and the manifest change together. Each marker must
 identify one unresolved call. Missing or stale ceilings fail the check.
 Statically recognized writes, including writes with unresolved table names,
