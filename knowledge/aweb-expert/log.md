@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-27
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-contracts (E8.1 H3 review).
+* **Creation**: lessons [an expected value comes from the declaration](/aweb-expert/lessons/an-expected-value-comes-from-the-declaration.md) and [a leaking text scan becomes an allowlist of known forms](/aweb-expert/lessons/a-leaking-text-scan-becomes-an-allowlist-of-known-forms.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
