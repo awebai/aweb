@@ -637,6 +637,124 @@ Rehearse a source-head change, an unresolved holder and a pre-retirement
 abort within the time budget. Check that historical mail remains readable
 with its original verification and an exact retry yields one receipt and effect.
 
+### Hosted child registration and phased parent transfer
+
+This is a proposed extension to the future customer transfer, outside E5.
+Moving the hosting parent's controller out of the service and publishing
+per-child DNS records both require operator approval before rollout. The
+transfer still needs the customer decision above. The frozen registry has no
+registration-only key. Until the scoped operation is available on the
+selected registry, fresh child creation needs the outside controller or
+pauses. The service never receives the controller key as a fallback.
+
+#### Registration-only key
+
+The parent controller authorises a dedicated provisioner key with a
+registry-bound, controller-signed record for the exact parent and its open
+epoch. The record names the key, its expiry and the registration-only
+purpose. The controller alone can replace or withdraw it. Use the
+[namespace-controller record pattern](standing-organisation-records.md#1-encoding-and-authority)
+for the record and its revision, without making the grant a discovery key.
+The provisioner key is separate from the parent's controller and from every
+child controller. It carries no DNS update authority.
+
+The registry accepts the provisioner's parent proof only on first
+registration of a direct child. A purpose-separated proof binds the grant
+revision, registry, exact parent, canonical child and proposed child
+controller to the registration request. The child controller proves
+possession through its own covering signature. The registry checks that
+inherited discovery names this parent and registry, and refuses an exact
+child record for the provisioner lane. Under the parent authority and child
+name locks, it rechecks discovery freshness, the grant, parent epoch,
+expiry, label policy and absence of any prior or reserved child. A deleted, migrated, or reserved
+child is unavailable to this lane even if there is no live row. Seed those
+reservations from the reviewed inventory before opening the lane. A
+byte-identical retry may retrieve the original receipt without changing
+state. Conflicting claims refuse. The released controller-signed path keeps
+its own authority rules.
+
+The provisioner cannot reaffirm, transfer, replace, recover, delete or
+withdraw an existing child, or publish records for the parent or child. An
+operation that already needs the child or full parent controller still needs
+it. The delegation witness records the **parent controller** and the child's
+registered key as before. Keep the provisioner key, grant revision and
+request digest as private registration provenance. They are useful to
+investigate unwanted new names and confer no continuing authority. The
+child controller signs its own D2 issuer association and any organisation
+records under its own epoch. A child key in hosted custody still has the
+ordinary powers of that child controller. The protection here requires
+keeping the parent controller and DNS change authority outside the
+provisioner.
+
+Replacing, expiring or withdrawing the grant closes future provisioning,
+including a queued request that has yet to pass the locked check. A parent
+epoch change ends the grant and requires a new authorisation. These changes
+leave committed child facts intact and emit no standing deny. If the
+controller subsequently withdraws a delegation or retires a child, the feed
+emits the handles for facts actually ended under §4. A provisioner leak can
+claim still-unused, allowed names until the grant ends. Reconcile those
+registrations under the controller path.
+
+A hosting parent may reserve a closed set of canonical direct-child labels.
+The operator owns the list. AWID applies it to fresh registration under that
+parent regardless of the registration proof, with a typed refusal for a
+reserved label. It leaves existing registrations intact. Hosting-zone policy
+prohibits child NS delegation and wildcard AWID TXT records. Apply it in the
+zone configuration and validate the published zone before transfer. Exact
+per-child TXT records are allowed. This hosting policy imposes no new
+restriction on unrelated zones.
+
+#### Transfer a hosting parent before its children
+
+1. **Pin the source per child.** Inventory and freeze new provisioning for
+   the moving parent. Before changing the parent's `_awid`, publish exact
+   `_awid.<child>` records naming each child's current controller and source
+   registry. Use the released TXT syntax and leave child records and epochs
+   at the source intact. For an outside-held child, the holder proves its
+   current key and approves the exact domain, controller and source registry.
+   The zone operator publishes the record if it controls DNS. The holder
+   keeps its key and separately signs its own later transfer. For a hosted
+   child, its custodian supplies the same child-controller proof. Confirm
+   exact discovery and current source status with cold and warmed released
+   clients. Wait out the old inherited answer and negative-cache lifetimes.
+   Hold the parent flip if any child that must stay live lacks a verified
+   path to the source.
+2. **Transfer the parent only.** Apply the fenced transfer above to the
+   parent's own namespace and flip its `_awid` after verification. Existing
+   held-out children stay at the source. Exact child authority is independent
+   of the parent's current registry while the child's exact record, source
+   row and open epoch agree. A parent transfer may end the old inherited
+   witness. It must preserve any child authority that now uses verified
+   exact discovery. Keep the child records and serving dependencies at the
+   source for those children.
+3. **Transfer ready children.** For each child, verify the source cut,
+   destination, deny inventory and source retirement before changing its
+   exact record and activating the new issuer. The child controller signs
+   the transfer and destination association. A self-held child that has
+   yet to consent stays on its exact source record. Use the already
+   specified refusal at the frozen boundary. The parent moving first does
+   not open a cross-protocol relay.
+4. **Converge discovery.** Keep an exact record unless the child and parent
+   authorise a live destination delegation, and an independent check proves
+   that inherited discovery authenticates the same exact child/controller,
+   epoch, registry and issuer association. Remove it only after that check
+   and reconcile verifier pins. A change from inherited to exact, or the
+   reverse, needs authenticated reconciliation of its authority evidence.
+   If the binding is unchanged, refresh the proof of the existing pin. If
+   the issuer or registry differs, require the authorised transfer evidence.
+   Missing, conflicting or ambiguous evidence refuses under §6. No second
+   registry is tried and no failing exact record is treated as absent.
+
+Rehearse both registries before approving the move. Require a fresh child
+registration and refusals for existing, deleted, migrated and reserved names.
+Race grant withdrawal and parent rotation against registration. Verify that
+withdrawing the grant stops new creation while a committed child still
+verifies. Exercise parent-only transfer with one hosted and one outside-held
+child still on the source. Check wrong issuer, missing exact record,
+unchanged binding on discovery-path change, and one later child transfer
+with the old authority fenced. Run the source checks with a released client
+and the destination checks with the standing client.
+
 ## 8. Model, conformance and scale
 
 Add the small Design extension beside the atomic trust model. Keep the prior
