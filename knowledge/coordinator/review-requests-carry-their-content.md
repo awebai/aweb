@@ -20,7 +20,9 @@ wrong.
   its prefix, and do not suppress aw's stderr on sends; confirm "Sent mail".
 
 Related: [resolve full review anchors before integration](resolve-review-anchors-before-integration.md),
-which applies the same discipline to commit ids.
+which applies the same discipline to commit ids; and
+[reach a cross-namespace reviewer through its thread holder](reach-a-cross-namespace-reviewer-through-its-thread-holder.md),
+which applies it to relayed requests.
 
 ## Provenance
 
