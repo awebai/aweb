@@ -340,11 +340,11 @@ the format, the firmware version and the MDS entry. §6 has the full split.
 
 Option B (§8.2) needs a verifier to learn, for a given issuing namespace,
 whether that namespace's `kind=human` certificates vouch on their own. The
-holder must not be able to suppress the answer. A pilot whose namespace root
-is held outside the service also needs a way to renew P without a human act
-for each person. One controller-signed record type carries both. It reuses
-the D2 namespace-controller record pattern unchanged: the encoding, the chain,
-publication, and the signed currentness read
+holder must not be able to suppress the answer. The pilot publishes the
+controller's policy with an empty grant list (§8.1). The same record can
+carry P-only grants for a later organisation whose controller is held
+outside its renewal service. It reuses the D2 namespace-controller record
+pattern for encoding, chaining, publication and signed currentness reads
 (`docs/design/standing-organisation-records.md` §1 and §4-5). It adds no
 second record mechanism.
 
@@ -449,13 +449,12 @@ service. A hosting provider's origin or domain never selects the issuer. An
 organisation's namespace that the pilot hosts is covered only by that
 organisation's own S, and has none by default.
 
-**Delegated grants.** A listed grant's key can sign P for this namespace, and
-nothing else. It cannot sign B, D, E, certificates or S. Every P it signs
+**Delegated grants for later organisations.** A listed grant authorises
+only P signatures for its exact namespace. Every P it signs
 also needs the controller's basis designation D (§4.6), so a grant can only
-renew backing for credentials the controller has designated. §8.1 states the
-worst case. Holding a grant key is a custody decision for the namespace's
-owner, and for awebai.org it is Juan's (§8.1). Without a grant, the
-controller signs every P itself.
+renew backing for credentials the controller has designated. §8.1 describes
+the exposure. Holding a grant key is a custody decision for the namespace's
+owner. The pilot controller signs every P itself.
 
 ### 4.6 The basis designation D
 
@@ -776,33 +775,80 @@ separately approved step (same document, §7).
 - The pilot runs the issuer side of §3: its own pin manifest, private cache,
   watcher, monitor and re-evaluation job. It depends on awsign running for
   enrollment (`docs/human-approval-architecture.md:452-453`).
-- **Who signs, when the namespace root is held outside the service.** Under
-  Juan's custody ruling F1, awebai.org's root and team keys are held outside
-  the pilot. The outside holder, as controller:
-  - signs B, D and E once at each person's hardware enrollment;
-  - signs S whenever the policy or a grant changes, and at least every 92
-    days, because each grant lasts at most 92 days.
 
-  With a grant, the pilot renews P monthly with no human act per person. If
-  Juan declines a grant, the outside holder signs every P renewal.
+**Pilot controller custody.** On 2026-11-28 Juan chose option A for where
+the controller key lives. The new service holds the `awebai.org` namespace
+controller key in a `0600` secret file mounted only into the background
+worker service. This is the `awebai.org` controller exception to F1.
 
-  **Worst case of a pilot-held grant key, in plain words.** A leaked key
-  dedicated to the `awebai.org` grant can make current hardware-backing
-  claims, and therefore personhood vouches, for any exact binding the
-  controller has independently designated. That includes a binding designated
-  after an identity rotation and a previously designated model later
-  withdrawn by FIDO. The key cannot revive an old binding or authorize a new
-  one. The grant ends at expiry, removal or controller rotation, with removal
-  reflected within the observation lifetime. Its term is at most 92 days and
-  it cannot be extended or renewed with the same key in this namespace. Later
-  signatures cannot create evidence that a relying party had saved at an
-  earlier time. The grant gives no approval, membership, message or other
-  namespace authority. The key must be dedicated to this grant, with no other
-  grant or key role in any namespace; this is a custody requirement on the
-  holder, and the registry does not enforce it across namespaces.
+The coordinator's pilot plan places the `awebai.org` admin and open team
+keys in the same worker-only secret mount, pending Juan's review. The
+namespace controller can authorise replacement of either team key. See
+[AWID signing authority](../awid-sot.md#authentication).
+All three keys are delivered as `0600` files. The web app's configuration
+has no access to any of the three. Key material is never put in environment
+variables, logs or error output.
 
-  Holding the key in the pilot is a narrow custody change from F1, so it goes
-  to Juan with this worst case.
+The worker signs B, D and E as required by the enrollment and continuity
+rules, publishes S with `grants: []`, and signs P at issuance and monthly
+renewal, within §4.2's eligibility and expiry checks. Each pilot P carries
+`grant: null`.
+
+**Signing authority.** The worker treats every job payload as untrusted.
+A job can identify an operation and a record to inspect. The worker loads
+the authoritative state, re-derives the basis for the exact operation and
+constructs the bytes it signs. Its authorising inputs are worker-owned or
+independently authenticated. The web role cannot create or amend those
+authorisations by enqueueing a job or writing its fields.
+
+- For B, the worker uses its own registration assessment, challenge and
+  eligibility checks for the exact credential and binding. For D and E it
+  verifies the exact committed confirmation or continuity evidence as
+  required by §§4.2 and 4.6. For P it verifies the current binding and
+  designation and re-evaluates eligibility under the current snapshot.
+- For certificate issuance it resolves the exact namespace, team and
+  subject, checks the required issuer or team authority, and checks the
+  applicable enrollment or authorised roster. For S it reads the approved
+  issuer policy and the current revision and epoch. Apply the same
+  operation-specific rule to each use of the keys.
+
+The worker checks current authority at the final signing decision,
+including §4.2's compare-and-sign for D and P. It refuses before signing or
+publishing when any required basis cannot be independently established.
+
+**Detection and recovery.** The operator watches the new registry's public
+change feed and alerts on any controller or key change for the namespace
+or either team outside its authorised changes. The watcher runs outside
+the worker and its custody boundary. The operator records approved changes
+out of band in an operator-held record. The worker and its credentials
+cannot write that record or administer the watcher. The watcher verifies
+the feed and its position, then reconciles the namespace controller epoch
+and keys and the admin and open team keys since its last verified
+observation against that record. It refreshes those checks even on idle
+feed barriers.
+The [public feed](standing-proof-and-feed.md#4-public-feed)
+carries opaque invalidation handles. It supplies a change signal, and the
+authenticated reads establish what changed. Alert separately if freshness
+or continuity is lost.
+
+Control of `_awid.awebai.org` DNS is the recovery backstop. On compromise
+the operator names a new controller in DNS and completes the registry's
+[controller replacement](../id-certificates.md#namespace-continuity-and-replacement)
+with the new key. That opens a replacement epoch. The operator fences
+issuance during recovery, reconciles prior acts and re-establishes affected
+bindings under the new authority. Current S, D and P then follow the
+successor-epoch rules in §§4-7.
+
+**Later P-only grants.** An organisation that keeps its controller outside
+its renewal service may use the grant in §4.5. A leaked grant key can make
+current hardware-backing claims, and therefore personhood vouches, for any
+exact binding the controller has independently designated. That includes a
+binding designated after an identity rotation or for a model later withdrawn
+by FIDO. The grant ends at expiry, removal or controller rotation, with
+removal reflected within the observation lifetime. Its term is at most 92
+days. Later signatures cannot create evidence a relying party saved
+earlier. The holder dedicates the key to this grant alone across all
+namespaces and key roles. The registry enforces key reuse rules per namespace.
 
 ### 8.2 Decided: option B, an ID for every sign-in
 
@@ -820,8 +866,8 @@ aweb.ai therefore:
    coherence rule, a certificate committed after S can never be classified by
    an earlier absence;
 2. issues a `kind=human` certificate to each person who signs in;
-3. signs D through the controller for each person whose certified credential
-   meets §4.2, and signs P through the controller or a grant in S.
+3. signs D and P through the worker-held controller for each person whose
+   certified credential meets §4.2.
 
 That person's link reads `personhood: vouched` (reason `hardware_backed`)
 while P is current. Every other aweb.ai person reads
@@ -987,7 +1033,7 @@ mail sent by the person's agents.
 | The issuer's own pin installation | Required independence: the issuer never uses awsign's snapshot (`registration.py:228-234`) |
 | Record type `awid.issuer-personhood/1` in the existing D2 record pattern, with its currentness and history reads | Option B needs an authenticated condition the holder cannot suppress. No existing carrier can hold it (§10.7). It reuses D2's encoding, chain, publication and read signature. |
 | Basis designation D, `aweb.hardware-backing-basis/1` | A B grade does not prove the batch profile, the confirmation or eligibility, and B may be signed by an actual-parent issuer (§4.6) |
-| Delegated grants in S | Lets P renew monthly without a human act per person while the root stays outside the service. Using one is a custody decision (§8.1). |
+| Delegated grants in S | A later option for organisations that renew P while keeping the controller outside the renewal service (§8.1). |
 
 Not reused: awsign's metadata cache (independence), B as the carrier of the
 claim (no lifetime), and the hosted sign-in credential (§10.2).
@@ -1053,7 +1099,25 @@ matter, and each test is paired with a valid neighbouring case:
   child namespace delegated from `awebai.org`, with no S of its own reads
   `vouched` (`issuer_default`), even though `awebai.org`'s S says
   `hardware_backing_required`.
-- Delegated grants:
+- Pilot custody and monitoring:
+  - inspect the deployed worker and web service configurations. Verify
+    worker-only `0600` mounts, absence of all three keys from web service
+    configuration, and absence of key material from environment variables,
+    logs and error output. A monthly renewal verifies under the controller
+    key with `grant: null` and S has an empty grant list;
+  - through the web role enqueue a forged job claiming an unsupported
+    enrollment, designation or roster. The worker refuses without creating
+    a signature, certificate or publication. Exercise a valid job through
+    the same entry point with independently established authority;
+  - a planned key change and a change absent from the operator's authorised
+    record produce distinct watcher results. Check the namespace controller,
+    admin team and open team independently. Show that worker credentials
+    cannot change the approved-change record or watcher. Feed gaps alert
+    separately;
+  - rehearse DNS recovery with a fresh controller. Verify the replacement
+    epoch, refusal of stale issuer evidence and current evidence for an
+    explicitly re-established binding.
+- Delegated grants, when a later organisation uses them:
   - a P signed in the last window before `not_after`, read before
     `not_after`, is accepted;
   - a P signed after expiry with a backdated `issued_at` fails, as does any
