@@ -33,6 +33,9 @@ GUEST_BUNDLES = REMOTE + "/bundles"
 GUEST_SOURCES = REMOTE + "/sources"
 GUEST_RUNS = REMOTE + "/runs"
 GUEST_OUT = LOGS + "/servers"
+# A root spec's run starts here: root's alone, so nothing the gate user wrote
+# is on the path Python loads the supervisor and runner from.
+ROOT_RUN = REMOTE + "/root-run"
 STEP_FIELDS = {
     "name",
     "user",
@@ -69,14 +72,22 @@ def bundle_commit(bundle, ref):
     return heads[0] if listed.returncode == 0 and len(heads) == 1 else None
 
 
-def admit_step(step, seen, sources):
+def admit_step(step, seen, sources, root=False):
     name = step.get("name")
     if not isinstance(name, str) or not NAME.fullmatch(name) or name in seen:
         raise Refused(f"step name {name!r} must be a unique short slug")
     unknown = set(step) - STEP_FIELDS
     if unknown:
         raise Refused(f"step {name} has unknown fields: {', '.join(sorted(unknown))}")
-    if step.get("user") != "gateuser":
+    if root and step.get("user") != "root":
+        raise Refused(
+            f"step {name} runs as {step.get('user')!r}: every step of a root spec runs as root"
+        )
+    if not root and step.get("user") == "root":
+        raise Refused(
+            f'step {name} runs as root: root runs only in a spec marked "root": true'
+        )
+    if not root and step.get("user") != "gateuser":
         raise Refused(
             f"step {name} runs as {step.get('user')!r}: a servers step runs as gateuser"
         )
@@ -126,8 +137,13 @@ def admit_step(step, seen, sources):
             )
 
 
-def admit(spec_path, repo, sha):
-    """The reviewed spec, its digest and the sources to ship, or a refusal before boot."""
+def admit(spec_path, repo, sha, approved_root_specs=()):
+    """The reviewed spec, its digest and the sources to ship, or a refusal before boot.
+
+    A spec marked "root": true runs every step as the guest's root. It runs
+    only when its sha256 is one the operator approved, in the operator
+    config's servers_root_specs, so any change to its commands, sources or
+    inputs is refused before boot; the flag alone grants nothing."""
     try:
         text = Path(spec_path).read_bytes()
         spec = json.loads(text)
@@ -177,12 +193,21 @@ def admit(spec_path, repo, sha):
     steps = spec.get("steps")
     if not isinstance(steps, list) or not steps:
         raise Refused("the spec has at least one step")
+    root = spec.get("root", False)
+    if type(root) is not bool:
+        raise Refused("the spec's root is true or false")
     seen = {}
     for step in steps:
-        admit_step(step, seen, sources)
+        admit_step(step, seen, sources, root)
         seen[step["name"]] = step
+    spec_sha256 = "sha256:" + hashlib.sha256(text).hexdigest()
+    if root and spec_sha256 not in approved_root_specs:
+        raise Refused(
+            f"the root spec {spec_sha256} is not one the operator approved (servers_root_specs)"
+        )
     return {
-        "spec_sha256": "sha256:" + hashlib.sha256(text).hexdigest(),
+        "root": root,
+        "spec_sha256": spec_sha256,
         # The guest gets the reviewed bytes themselves, read once here.
         "spec_bytes": text,
         "bundles": shipped,
@@ -197,11 +222,15 @@ def admit(spec_path, repo, sha):
     }
 
 
-def command(spec_sha256):
-    """The guest step: the runner over the shipped spec, which it checks against the admitted digest."""
+def command(spec_sha256, root=False):
+    """The guest step: the runner over the shipped spec, which it checks against the admitted digest.
+
+    Every step's own shell must report the uid its user has: 1000 for the gate
+    user, 0 for a root spec's steps."""
+    users = "root=0" if root else "gateuser=1000"
     return (
         f"python3 {REMOTE}/operator/vm_gate/servers_run.py {GUEST_SPEC} {GUEST_OUT} "
-        f"--spec-sha256 {spec_sha256} "
+        f"--spec-sha256 {spec_sha256} --users {users} "
         f"--bundles {GUEST_BUNDLES} --sources {GUEST_SOURCES} --runs {GUEST_RUNS}"
     )
 
@@ -213,20 +242,82 @@ class ServersExecutor(Executor):
         super().__init__(config, directory, source, command, provider)
         self.servers = servers
 
+    def runner_prefix(self):
+        """A root spec's runner runs as the guest's root; every other as the gate user."""
+        if self.servers["root"]:
+            return self.env(root=True)
+        return super().runner_prefix()
+
+    def runner_cwd(self):
+        return ROOT_RUN if self.servers["root"] else super().runner_cwd()
+
+    def launch_owner(self):
+        """A root spec's launcher and completion records are root's from the moment they exist."""
+        return "root" if self.servers["root"] else super().launch_owner()
+
+    def logs_mode(self):
+        return "-m 0755" if self.servers["root"] else super().logs_mode()
+
+    def launch_program(self):
+        """A root spec's launch: it runs as root from root's own directory.
+
+        The host contract has already held as the gate user in prepare, with its
+        UID-0 refusal. The checkout belongs to the gate user, so its status is
+        read as that user: Git refuses another owner's checkout to root."""
+        if not self.servers["root"]:
+            return super().launch_program()
+        return f"""#!/bin/bash
+set -euo pipefail
+cd {ROOT_RUN}
+test "$(id -u)" = 0
+id > {LOGS}/identity.txt
+date -u +%FT%TZ > {LOGS}/gate-start
+set +e
+{self.focused_shell()} > {LOGS}/gate-output.log 2>&1
+status=$?
+set -e
+printf '%s\\n' "$status" > {LOGS}/gate-exit
+date -u +%FT%TZ > {LOGS}/gate-end
+runuser -u gateuser -- git -C {REMOTE}/source status --porcelain --untracked-files=all > {LOGS}/source-after
+exit "$status"
+"""
+
     def prepare(self, server, timeout):
         super().prepare(server, timeout)
+        # A root spec's checkouts and runs are root's alone; the gate user cannot touch them.
+        owner = (
+            "-m 0700 -o root -g root"
+            if self.servers["root"]
+            else "-m 0755 -o gateuser -g gateuser"
+        )
         self.run(
             f"install -d -m 0755 -o root -g root {GUEST_BUNDLES} && "
-            f"install -d -m 0755 -o gateuser -g gateuser {GUEST_SOURCES} {GUEST_RUNS}",
+            f"install -d {owner} {GUEST_SOURCES} {GUEST_RUNS}",
             "servers-directories",
         )
         spec = Path(self.directory) / "servers-spec.json"
         spec.write_bytes(self.servers["spec_bytes"])
         self.upload(spec, GUEST_SPEC, mode="0444")
+        if self.servers["root"]:
+            self.protect_root_path()
         for name, bundle in self.servers["bundles"].items():
             local = Path(self.directory) / f"{name}.bundle"
             shutil.copyfile(bundle, local)
             self.upload(local, f"{GUEST_BUNDLES}/{name}.bundle", mode="0444")
+
+    def protect_root_path(self):
+        """A root run's working directory is root's alone, and its launcher is the one the controller wrote.
+
+        The launch script and the log directory are root's from their creation
+        (launch_owner), never the gate user's; this checks the script's bytes."""
+        launch = hashlib.sha256(
+            (Path(self.directory) / "launch.sh").read_bytes()
+        ).hexdigest()
+        self.run(
+            f"install -d -m 0700 -o root -g root {ROOT_RUN} && "
+            f"echo {launch}  {REMOTE}/launch.sh | sha256sum -c -",
+            "servers-root-path",
+        )
 
 
 def result(evidence):

@@ -285,12 +285,25 @@ gate sizes itself from the machine it runs on.
   real main in its history, and the guest runs `make gate GATE_STAGES=all`.
   Either way green needs every stage PASSED in Cloud's own `summary.tsv`; a
   missing row is red. `ac` also runs on a native host.
+- `aweb-cloud`: the pilot repository, on `ac`'s path with its own facts, kept
+  with ac's in one table (`release.CLOUD_PROJECTS`). `--image` must name
+  `ghcr.io/awebai/awebai-org` (and ac's `ghcr.io/awebai/ac`). The guest runs
+  the pilot's own gate script, as its Makefile does, so its exit survives:
+  `python3 scripts/gate.py --require-release` with `RELEASE_IMAGE`,
+  `RELEASE_IMAGE_ARCHIVE` and `RELEASE_IMAGE_MEMBER` for a release, bare
+  `python3 scripts/gate.py` for a train gate. Its exit 2 makes the receipt
+  refused and 70 infrastructure, never red. Green needs the one
+  `/tmp/aweb-cloud-gate-<sha>/summary.tsv` it writes, read raw: every row
+  PASSED, tool-image, checks, storage and image present, and no malformed or
+  repeated row. No Hermes key is required or shipped. Its gate builds no aweb,
+  so `--aweb-source` is refused before boot; for any Cloud project
+  `--aweb-source` pins a release only. It runs only in a guest.
 - `servers`: the steps of one reviewed spec, `--steps SPEC`, in one guest.
   The spec names each source as an author's git bundle with its `sha256`, the
   ref that holds it and the commit; `--repo` and `--sha` are its servers bundle
   and that commit. Admission refuses before boot unless every bundle has its
   author's digest and holds its commit at its ref. A step names its checkout,
-  its user (`gateuser`; a root step is refused), its command, its expected exit
+  its user (`gateuser`, or `root` in a root spec), its command, its expected exit
   (a code, or `"nonzero"` for a red control), the lines it must and must not
   print, structured checks on a line's JSON, the files it must leave, the files
   it takes from an earlier step it needs, and the named artifacts it keeps:
@@ -311,7 +324,16 @@ gate sizes itself from the machine it runs on.
   carries the spec's digest, each source's author and shipped bundle digests
   and the commit the guest checked out, and the runner's full record. Green
   needs every source at its commit, every step passed and the registry
-  removed. `servers` runs only in a guest.
+  removed. Each step's own shell reports, as its log's first line, the
+  uid and HOME it runs with; a uid other than its user's (1000 for the gate
+  user, 0 for root) is red. A spec marked `"root": true` runs every step as
+  the guest's root, and runs only when its sha256 is in the operator config's
+  `servers_root_specs`: the flag alone grants nothing, and any change to the
+  spec's bytes is refused before boot. Its runner runs as root from the
+  root-owned operator tree; its spec and bundles are root's, read-only, and
+  its checkouts and run directories are root's alone. The host contract still
+  holds as the gate user in prepare. Every other spec keeps the gate user's
+  UID-1000 path. `servers` runs only in a guest.
 
 ### Merak
 
