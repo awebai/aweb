@@ -604,11 +604,15 @@ the keys and values the providers read:
   the delivery probe;
 - `aw mail inbox --help`, whose stdout keeps `--count-only`: the providers
   read it before they use the unread count of section 3.7;
-- `aw status-host clear --help`, which exits 0: the providers run it before
-  turning health publishing off. From the release that removes `aw
-  status-host`, `aw status-host clear --help` still exits 0. That is a
-  condition of accepting that release, unless the provider release that drops
-  the health publisher (aweb-adzb.11) ships before it;
+- `aw status-host clear --help`, which exits 0, and then `aw status-host
+  clear --json`, which the providers run as each agent with a cached
+  designation, from its directory or with `--identity-home`, when they turn
+  health publishing off. The answer keeps `ok` bool and, when `ok` is false,
+  `status`, `code`, `message` and `retry_after`. The providers drop a cached
+  designation only after `ok` is true, so help alone is not enough: the
+  clear itself keeps working while a supported provider can make these calls.
+  A release that removes `aw status-host` first needs evidence that the
+  providers making them are retired and their designations settled;
 - `aw heartbeat`; `aw team list --json`; `aw team invite --team-id T --json`;
   `aw team join TOKEN --name N --json`, with the token as an argument (up to
   v1.41); `aw --team T init`, and `aw init` without

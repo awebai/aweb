@@ -2488,7 +2488,7 @@
     "aw mail send --help stdout (delivery probe): usage line aw mail send [flags]; flag lines --to string, --subject string, --body-file string; and a --new-conversation flag line or the phrase 'send starts a new thread titled by --subject' (any whitespace between thread and titled)",
     "--team T before whoami --json and before mail show --message-id ID --json and mail show --conversation-id ID --limit 500 --json (delivery probe)",
     "aw mail inbox --help stdout contains --count-only",
-    "aw status-host clear --help exits 0; from the status-host removal release, and a condition of accepting it, it still exits 0, unless the provider release that drops the health publisher (aweb-adzb.11) ships first",
+    "aw status-host clear --help exits 0, then aw status-host clear --json as each agent with a cached designation (its directory or --identity-home): answer ok bool, and status, code, message, retry_after when ok is false; the designation is dropped only after ok is true; kept, help and clear, while a supported provider can make these calls; removing aw status-host first needs evidence that those providers are retired and their designations settled",
     "aw heartbeat",
     "aw team list --json",
     "aw team invite --team-id T --json",
