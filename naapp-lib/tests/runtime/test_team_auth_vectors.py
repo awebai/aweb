@@ -34,12 +34,16 @@ def member_for(case: dict) -> Member:
     return member
 
 
+async def register(registry, case):
+    member = member_for(case)
+    await registry.add_team(member.team_id, member.team_did_key)
+    await registry.add_certificate(member.certificate(), team_key=member.team_key)
+
+
 async def present(
     registry, case, *, public_origin=None, path=None, body=None, payload=None, signature=None
 ):
     member = member_for(case)
-    await registry.add_team(member.team_id, member.team_did_key)
-    await registry.add_certificate(member.certificate(), team_key=member.team_key)
     pinned = datetime.fromisoformat(case["payload"]["timestamp"].replace("Z", "+00:00"))
     headers = envelope_headers(
         did_key=case["did_key"],
@@ -61,6 +65,7 @@ async def present(
 @pytest.mark.parametrize("name", sorted(CASES))
 async def test_positive_vector_authenticates(registry, name):
     case = CASES[name]
+    await register(registry, case)
     response = await present(registry, case)
     assert response.status_code == 200, response.text
     assert response.json()["did_key"] == case["did_key"]
