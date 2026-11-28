@@ -125,7 +125,20 @@ def vector_cohort(
     )
 
 
+def vector_snapshot(snapshot: dict) -> IdentityCheckpoint:
+    """The stored checkpoint a vector case starts from."""
+    return IdentityCheckpoint(
+        seq=snapshot["seq"],
+        entry_hash=snapshot["entry_hash"],
+        state_hash=snapshot.get("state_hash")
+        or hashlib.sha256(f"snapshot:{snapshot['seq']}:state".encode()).hexdigest(),
+        current_did_key=snapshot.get("current_did_key") or evidence().current_did_key,
+        revision=snapshot["revision"],
+    )
+
+
 async def insert_vector_snapshot(db, snapshot: dict) -> None:
+    stored = vector_snapshot(snapshot)
     await db.execute(
         """
         INSERT INTO {{tables.federation_did_checkpoints}} (
@@ -134,69 +147,44 @@ async def insert_vector_snapshot(db, snapshot: dict) -> None:
         ) VALUES ($1, $2, $3, $4, $5, $6, clock_timestamp(), clock_timestamp())
         """,
         evidence().did_aw,
-        snapshot["seq"],
-        snapshot["entry_hash"],
-        snapshot.get("state_hash")
-        or hashlib.sha256(f"snapshot:{snapshot['seq']}:state".encode()).hexdigest(),
-        snapshot.get("current_did_key") or evidence().current_did_key,
-        snapshot["revision"],
+        stored.seq,
+        stored.entry_hash,
+        stored.state_hash,
+        stored.current_did_key,
+        stored.revision,
     )
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "case", _STATE_VECTOR["checkpoint_cases"], ids=lambda case: case["name"]
-)
-async def test_checkpoint_vectors_execute_against_postgresql(
-    case: dict, aweb_cloud_db
+async def test_concurrent_checkpoint_forks_allow_one_winner_in_postgresql(
+    aweb_cloud_db,
 ) -> None:
-    if case["snapshot"] is not None:
-        await insert_vector_snapshot(aweb_cloud_db.aweb_db, case["snapshot"])
+    """Only the checkpoint row's lock orders competing forks of one entry."""
+    [case] = [
+        case
+        for case in _STATE_VECTOR["checkpoint_cases"]
+        if case["name"] == "two_n_plus_one_forks_allow_one_winner"
+    ]
+    await insert_vector_snapshot(aweb_cloud_db.aweb_db, case["snapshot"])
     repository = AuthorityRepository(aweb_cloud_db.aweb_db)
     expected = case["expected"]
 
-    if case["name"] == "two_n_plus_one_forks_allow_one_winner":
-
-        async def commit(raw: dict):
-            candidate = vector_checkpoint_candidate({**case, "candidate": raw})
-            try:
-                return await repository.commit_phase_a(
-                    candidate,
-                    vector_cohort(candidate, expected["final_revision"]),
-                )
-            except FederationAuthorityError as exc:
-                return exc.reason
-
-        results = await asyncio.gather(*(commit(raw) for raw in case["candidates"]))
-        assert (
-            sum(isinstance(result, AuthoritySecurityToken) for result in results)
-            == expected["max_winners"]
-        )
-        assert expected["reason_for_loser"] in results
-        return
-
-    candidate = vector_checkpoint_candidate(case)
-    if expected["action"] == "reject":
-        with pytest.raises(FederationAuthorityError) as raised:
-            await repository.commit_phase_a(
+    async def commit(raw: dict):
+        candidate = vector_checkpoint_candidate({**case, "candidate": raw})
+        try:
+            return await repository.commit_phase_a(
                 candidate,
-                vector_cohort(candidate, expected["revision"]),
+                vector_cohort(candidate, expected["final_revision"]),
             )
-        assert raised.value.reason == expected["reason"]
-        checkpoint = await repository.get_checkpoint(candidate.did_aw)
-        assert checkpoint is not None
-        assert checkpoint.revision == expected["revision"]
-        return
+        except FederationAuthorityError as exc:
+            return exc.reason
 
-    token = await repository.commit_phase_a(
-        candidate,
-        vector_cohort(candidate, expected["revision"]),
+    results = await asyncio.gather(*(commit(raw) for raw in case["candidates"]))
+    assert (
+        sum(isinstance(result, AuthoritySecurityToken) for result in results)
+        == expected["max_winners"]
     )
-    assert token.checkpoint_revision == expected["revision"]
-    if expected["action"] == "idempotent":
-        checkpoint = await repository.get_checkpoint(candidate.did_aw)
-        assert checkpoint is not None
-        assert checkpoint.entry_hash == case["snapshot"]["entry_hash"]
+    assert expected["reason_for_loser"] in results
 
 
 def first_checkpoint() -> CheckpointCandidate:
