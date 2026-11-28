@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-28
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-e1-removals (task aweb-adzb.10).
+* **Creation**: lesson [a command removal keeps the Go library's API while the server routes stay](/aweb-expert/lessons/a-command-removal-keeps-the-go-library-api.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
