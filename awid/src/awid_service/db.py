@@ -30,6 +30,8 @@ def database_config_from_settings(settings: Any) -> DatabaseConfig:
     return build_database_config(
         connection_string=settings.database_url,
         statement_cache_size=getattr(settings, "database_statement_cache_size", None),
+        min_connections=getattr(settings, "database_min_connections", None),
+        max_connections=getattr(settings, "database_max_connections", None),
         uses_transaction_pooler=bool(
             getattr(settings, "database_uses_transaction_pooler", False)
         ),
