@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { CHANNEL_INSTRUCTIONS, createChannelRegistryResolver, loadChannelConfig, isDirectExecution, resolveRegistryFallbackURL, handleClaudeStreamState, notifyClaudeAwakening } from "../src/index.js";
 import { eventStreamRefusedAwakening } from "@awebai/channel-core";
+import { messageTrustMetadata, presentMessageAwakening } from "../../channel-core/src/message_presentation.js";
 import { createShadowedPrincipalFixture } from "../../channel-core/test/helpers/config_fixture.js";
 
 describe("loadChannelConfig", () => {
@@ -96,15 +97,31 @@ describe("the refused notice", () => {
     }]);
   });
 
-  test("the plugin tells Claude what a channel notice is", () => {
-    expect(CHANNEL_INSTRUCTIONS).toContain(
-      'Channel notices (type="channel") come from this plugin itself, not from another agent',
-    );
+  test("the plugin tells Claude what the channel's own notices carry", () => {
+    const refused = { state: "refused" as const, cause: "401", retryInMs: 60_000, nextAttemptAt: Date.now(), startsEpisode: true as const };
+    const { meta } = eventStreamRefusedAwakening(refused);
+    expect(CHANNEL_INSTRUCTIONS).toContain(`type="${meta.type}"`);
+    expect(CHANNEL_INSTRUCTIONS).toContain(`notice="${meta.notice}"`);
   });
 
-  test("the plugin explains an accountability outage and withheld delivery", () => {
-    expect(CHANNEL_INSTRUCTIONS).toContain('trust_status="unverified" and responsibility_status="responsibility_unavailable"');
-    expect(CHANNEL_INSTRUCTIONS).toContain('decrypt_error="decryption_failed"');
+  test("the plugin explains the fields an accountability outage and a failed decryption carry", () => {
+    // What the presentation code actually emits for each case.
+    const outage = messageTrustMetadata({
+      status: "verified",
+      subject: { id: "did:aw:sender", did_key: "did:key:sender", team_member_did_aw: null, team_member_did_key: null },
+      responsibility: { outcome: "unavailable", human_id: null, identity_valid: null, kind: null, reason: "evidence_unavailable" },
+    });
+    const undecryptable = presentMessageAwakening({ kind: "mail", content: "", deliveryIntent: "wake", meta: { type: "mail", decrypted: "false" } }).meta;
+    for (const [key, value] of [
+      ["trust_status", outage.trust_status],
+      ["responsibility_status", outage.responsibility_status],
+      ["content_withheld", undecryptable.content_withheld],
+      ["decrypt_error", undecryptable.decrypt_error],
+    ]) {
+      expect(value).toBeTruthy();
+      expect(CHANNEL_INSTRUCTIONS).toContain(`${key}="${value}"`);
+    }
+    // The field is not on the wire, so the instructions must not name it.
     expect(CHANNEL_INSTRUCTIONS).not.toContain("responsibility.reason");
   });
 });
