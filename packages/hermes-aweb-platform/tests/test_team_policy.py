@@ -228,7 +228,12 @@ class TeamPolicyTests(unittest.IsolatedAsyncioTestCase):
 
                 adapter._run_aw_json = missing
                 try:
-                    self.assertFalse(await adapter.connect())
+                    with self.assertLogs(adapter_module.logger, "WARNING") as logs:
+                        self.assertFalse(await adapter.connect())
+                    self.assertIn(
+                        "cannot establish the selected canonical team", logs.output[0]
+                    )
+                    self.assertIn("selected_team missing", "".join(logs.output))
                     self.assertEqual(adapter.fatal_error_code, "team_unavailable")
                     self.assertIsNone(adapter._stream_task)
                 finally:

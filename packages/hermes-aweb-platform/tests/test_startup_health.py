@@ -102,8 +102,11 @@ with (root / "frames").open() as source:
 
     async def test_silent_stream_times_out_once_and_recovers_in_background(self):
         started = asyncio.get_running_loop().time()
-        connected, degraded = await self.connect_snapshot()
+        with self.assertLogs(adapter_module.logger, "WARNING") as logs:
+            connected, degraded = await self.connect_snapshot()
         elapsed = asyncio.get_running_loop().time() - started
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("no connected/heartbeat frame", logs.output[0])
         self.assertTrue(connected)
         self.assertTrue(degraded)
         self.assertGreaterEqual(elapsed, 4.9)
@@ -202,8 +205,11 @@ while True:
         )
         self.child.chmod(0o700)
         started = asyncio.get_running_loop().time()
-        self.assertFalse(await self.adapter.connect())
+        with self.assertLogs(adapter_module.logger, "WARNING") as logs:
+            self.assertFalse(await self.adapter.connect())
         elapsed = asyncio.get_running_loop().time() - started
+        self.assertIn("cannot establish the selected canonical team", logs.output[0])
+        self.assertIn("TimeoutError", "".join(logs.output))
         self.assertEqual(self.adapter.fatal_error_code, "team_unavailable")
         pid = int((self.root / "query-pid").read_text())
         with self.assertRaises(ProcessLookupError):
