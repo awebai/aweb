@@ -43,8 +43,8 @@ current service belong to that service's later retirement inventory.
 
 ## 2. Statements
 
-All statement, feed-barrier and snapshot signatures have distinct versioned
-purpose labels. The proposed byte encoding is Ed25519 over the ASCII purpose
+Statement, feed-barrier, snapshot and era-transition signatures have
+distinct versioned purpose labels. The proposed byte encoding is Ed25519 over the ASCII purpose
 label followed by a newline and the UTF-8
 [JSON Canonicalization Scheme](https://www.rfc-editor.org/rfc/rfc8785.html)
 payload. Carry payload and signature as unpadded base64url. Pin the issuer and
@@ -76,19 +76,45 @@ lane for an enrolled identity. Display aliases are never authoritative keys.
 App installation, manifest and scopes are owned by aweb and checked
 independently of the member's standing.
 
-A proof-bearing request signs its audience, operation, target, body and the
-attached evidence set. Verify the holder signature separately from the issuer's
-statement. Every route accepting statements refuses the compact v1 and existing
-identity-only envelopes. The E5 inventory must migrate global-identity mail
-from today's identity-only envelope to a request-bound envelope. It keeps
-the identity signing key as the holder and binds the evidence and request
-fields above. Existing per-purpose replay, replay receipt and recipient-binding
-rules still apply. Keep private positive issuance at the existing authorised
-boundary. One issuer must not grant read access on another issuer's behalf. A
-grant worker needs scoped authorisation to obtain its resident's evidence
-without getting the resident's signing key. The grant journey must prove that
-an expired or revoked grant cannot use a still-valid resident statement and
-that evidence issuance confers no access to the private roster.
+### Holder request and replay
+
+The holder signs the purpose `aweb.standing-request/1` followed by a newline
+and the canonical request payload. This label is distinct from compact v1,
+request-bound v2, identity-only, mail content and the current-evidence issuance
+request in §3. Verifiers select the request type by the route and reject an
+envelope of any other type on statement routes. E5 migrates global-identity
+mail from today's identity-only envelope to this request-bound envelope,
+still signed by the identity key. DID and address routing still work without
+an invented team selection.
+
+The canonical payload covers the version, canonical service audience, HTTP
+method, raw path including query, operation, exact actor scope, SHA-256 of the
+body bytes, SHA-256 of the canonical ordered array of attached evidence
+envelopes, and a UTC timestamp. Include the operation ID or nonce when the
+route requires one. A configured or authenticated service identifier determines
+the audience. The request's Host and forwarding headers do not. Compare
+the method and raw target with the effective externally signed request at the
+trusted serving boundary. The request timestamp may be at most 60 seconds
+old and at most 2 seconds ahead of the verifier, with the conservative clock
+bound in §5. Verify the holder signature separately from the issuer statement.
+The timestamp limits replay exposure. The route class determines whether a
+replay can take another effect.
+
+| Route class | Replay rule within the signed window |
+|---|---|
+| Pure reads and read-only stream admission | An identical request can be checked again against current local authority. Signing a read does not acknowledge, mutate or permit later emissions. |
+| Durably idempotent or conflict-safe data writes, including mail/chat delivery with an immutable message ID | Accept the same exact operation and actor with the original canonical inputs at most once. Record its receipt with the effect and outbox. A repeat can read the same receipt if still entitled, while the same ID with changed inputs refuses. |
+| Authority creation and every remaining effectful route | Consume a one-use ID with the effect. Authority creation uses the ID in its exact-request evidence. Other routes in this class use a holder-signed random nonce scoped to the actor, operation and service. A repeat gives only an entitled receipt or a replay refusal. Keep consumed IDs through the full accepted replay window, including clock uncertainty. |
+
+Classify every enabled route, including app mutations and stream
+acknowledgements, in the cutover inventory. A route with no class is disabled.
+
+Keep private positive issuance at the existing authorised boundary. One issuer
+must not grant read access on another issuer's behalf. A grant worker needs
+scoped authorisation to obtain its resident's evidence without getting the
+resident's signing key. The grant journey must prove that an expired or revoked
+grant cannot use a still-valid resident statement and that evidence issuance
+confers no access to the private roster.
 
 ### Issuance
 
@@ -103,20 +129,29 @@ limits use. Current-evidence issuance always takes a current authoritative cut.
 
 ## 3. Exact-request evidence for authority creation
 
-A member creating authority needs distinct current evidence. Start with grant
-mint, connect, app install and app-request approval when admitted as a member.
-Review the route inventory before declaring it complete. Controller acts
-submitted to AWID and service-owned authority lanes keep their own current
-checks.
+Any effect that creates or widens authority which outlives the request needs
+current evidence for that exact act. For member-derived acts, the holder
+obtains it from the registry. A controller act at AWID itself or an act wholly
+owned by the service applies the same current decision and one-use rule inside
+its own authority transaction.
 
-The holder signs the exact method, operation, service audience, team, target
-and digest of the final effect-bearing inputs. The digest omits the returned
-evidence and outer signature. The registry checks the request and the relevant
-standing at its current committed cut and signs those bindings, the required
-dependencies, an exclusive expiry and a one-use ID. An ordinary statement
-cannot satisfy this proof type. Stage an app manifest before requesting current
-evidence for its exact digest and scopes. Never enable unknown, unreadable or
-expired authority on a retry.
+Classify grant mint, connect, app install and app-request approval. Also
+inventory API key issuance, temporary access, hosted-connector tokens, invites,
+hook and webhook bindings, member-key enrolment, and contact or reachability
+changes that grant access. A request for approval that grants no authority
+can stay ordinary. A route requiring current evidence stays disabled until
+the issuer, exact inputs, owner and lifetime have been identified.
+
+The holder signs the separate issuance purpose
+`awid.current-standing-request/1`. The canonical intent binds the registry
+as issuance audience and specifies the destination service, operation,
+method, raw path and query, actor scope and body digest. The intent excludes
+the returned evidence and its destination request signature. The registry
+checks the request and relevant standing at its current committed cut and
+signs the intent, dependencies, exclusive expiry and one-use ID. The
+destination compares its signed request to the attested intent. An ordinary
+statement cannot satisfy this proof type. Stage an app manifest before
+requesting current evidence for its exact digest and scopes.
 
 At the destination, check the bindings, expiry and applied prefix after the
 last relevant wait. Consume the ID with the effect in one transaction. A
@@ -126,6 +161,30 @@ unless that budget is superseded before wire freeze. If a revocation races
 after issuance, local application or expiry defeats the proof. A decision
 that won the race locally may commit later. This boundary does not require an
 atomic AWID and application transaction.
+
+The owner records the actor and authority provenance with every created
+authority. For a personal delegation such as a session grant, current
+evidence also identifies the issuer-scoped handles for the minter's
+continuing authority lineage. The owner records and checks these on grant
+use. A terminal change to that authority denies its lineage handles. If
+admission wins the race and the deny applies before its write commits, the
+resulting row cannot authorise a use. Check this in the owner transaction
+or at use against the same authority fence. Persist terminal ends. A later
+re-admission receives different lineage handles and cannot revive the
+delegation. When the governing rule has continuity across credential
+renewal, the assertion-version handle can change without denying the
+continuing authority lineage.
+
+The owner must preserve terminal ends beyond the feed's proof-retention
+window. After a missed interval outside retention, it must re-establish
+the original live authority lineage through an authorised recovery path
+before serving dependent delegations. Fresh standing for a newly admitted
+subject proves only its new authority. A record whose grantor is the
+organisation, such as an installation backed by an authorised organisation
+decision, can outlive the presenting member. Its route must name that
+authority explicitly and define the owning administrator or service
+revocation path. Member-derived authority is the default when a route
+supplies no independent organisation authority.
 
 ## 4. Public feed
 
@@ -160,7 +219,12 @@ invalidation entries commit together. The initial PostgreSQL implementation
 can allocate positions by locking a transactional head row at its final
 append, after taking all object locks and before commit. Plain SQL sequences
 can reorder visibility or leave aborted gaps. A wall-clock timestamp or a read
-of the largest visible sequence does not establish a complete prefix.
+of the largest visible sequence does not establish a complete prefix. The
+scale gate's initial acceptance target is **p99 head-lock wait at most 5 ms**
+at **1,000 authority-changing transactions/s** on the stated registry
+hardware. Record the sustained commit rate and barrier age during that run.
+A missed target calls for changing the implementation within the same
+committed-prefix contract.
 
 A signed barrier names the issuer, era, inclusive last position, prefix
 commitment and its observation time. A release must define the hash input
@@ -168,16 +232,40 @@ and genesis value in vectors. Use a chained cryptographic hash over each
 position and handle so a skipped, replaced or reordered entry cannot extend a
 previously verified prefix. The barrier is captured through the same commit
 boundary. Publish it only after commit and never extend its age when serving
-cached bytes. Operate the signer and distribution with high availability.
-Failover must retain the same committed prefix, or advertise an authorised
-new era that requires resync. It cannot refresh an older or forked prefix.
+cached bytes. During idle periods sign a new barrier at least every 5 seconds,
+even when the position and commitment are unchanged. Use a dedicated
+barrier-signing key and isolate barrier signing and distribution from
+routine issuance in capacity, processes and operational failure domains.
+Distribution serves signed bytes and holds no signing key. Barrier and
+statement signers share only the underlying authority data they need. An issuance-only outage denies current-evidence acquisition
+and refresh, while already issued ordinary proofs can continue until their
+own deadlines, up to 30 minutes, if barriers remain live.
+
+Authenticated admission depends on the availability of the barrier signer
+and distribution. The residual recovery budget is only the unused portion
+of the 30 seconds from the last applied point. The E5 target is 99.99% of a
+rolling 30-day window with a live applied point from each required issuer
+at representative healthy verifier locations, and p99 applied age at most
+10 seconds at the scale gate. Measure the signer path, distribution and
+verifier apply lag separately.
+
+An ordinary failover continues the same committed prefix. An era transition
+must be signed by the scoped authority, bind the prior published prefix and
+the successor genesis, and require resync. Before starting a new era, prove
+the authoritative data includes the prefix of the last published barrier
+and settle all later committed outcomes. If that floor cannot be proved,
+require an operator-authorised incident recovery. Fence issuance and
+admission until the authoritative records have been reconciled or the
+affected credentials have been explicitly invalidated through their proper
+authority. A new era alone cannot clear revocation or refresh a forked
+prefix.
 
 ### Subscription and on-demand read
 
 A subscription delivers committed ranges and signed barriers. The on-demand
 read returns a cacheable contiguous range from the last applied position
-towards the latest signed barrier. A request names the stream era and its exclusive starting position. The first
-response fixes the target barrier. A continuation binds the same era and
+towards the latest signed barrier. A request names the stream era and its
+exclusive starting position. The first response fixes the target barrier. A continuation binds the same era and
 target, advancing only the exclusive start. Responses return range boundaries,
 ordered handles and that signed barrier. An expired or foreign-era cursor
 indicates resync instead of returning an empty tail.
@@ -197,12 +285,22 @@ caching, a fresh TCP connection or receipt time grants no freshness by itself.
 
 ### Snapshot and retention
 
-A signed public resync snapshot carries one authenticated cut and every deny
-handle still able to defeat a valid statement at that cut. It carries no
-positive identities or rosters. A private positive projection has its own
-authorised provisioning path. Apply the verified snapshot and cursor
+A signed public resync snapshot carries one authenticated cut, the chain
+commitment at that cut and every deny handle still able to defeat a valid
+statement there. Following ranges must extend that commitment. It carries
+no positive identities or rosters. A private positive projection has its
+own authorised provisioning path. Apply the verified snapshot and cursor
 atomically, then get a live signed barrier. A restarted verifier cannot become
 ready with an empty deny set at the latest position.
+
+Keep each issuer's authenticated old-era denies across resync for their
+remaining 30-minute horizon plus clock margin. Compare handles by issuer
+and handle even across eras. The replacement snapshot includes still-live
+denies from previous eras. Its application merges those with local
+authenticated denies. A store restart cannot discard the local deny state
+and declare a recovered era ready from an unproven snapshot. Reusing a
+dependency version keeps its exact handle across eras. A deny remains
+effective even if an incorrect restored issuer reattests that version.
 
 Retain an invalidated handle even if the verifier has never seen a statement
 that refers to it. For retention, use the first subsequent authenticated
@@ -218,12 +316,19 @@ authority rather than evict a deny that can still match.
 ## 5. Local decision and E5 binding
 
 Verify signed bindings, holder possession, complete dependencies, the
-statement deadline and independent credential deadlines. Use a conservative
-bound on current time. Select the exact issuer's authenticated applied
-prefix, require its era to match and its cut to cover the proof's cut, and
-reject any matching deny handle. A verified new era requires new statements. Require a fresh barrier immediately before a new effect, after any
-relevant lock wait. Check authority and linearize admission against the
-process's applied view. A failed signature or revoked credential and
+statement deadline and independent credential deadlines. The maximum
+issuer-to-verifier clock error is **2 seconds**, including measurement
+uncertainty. Use verifier UTC plus that bound for issuer-time expiry and
+barrier age. Refuse to establish verifier readiness while this bound is
+unknown or exceeded. After bootstrap, refuse affected authorization requests
+when time is unsafe. Never extend the window to tolerate clock loss.
+
+For each presented proof independently, select its exact issuer's applied
+prefix. Require its era to match and its cut to cover that proof's cut.
+Reject any matching deny handle. A request relying on two issuers needs
+both views. A verified new era requires new statements. Require a fresh
+barrier immediately before a new effect, after relevant lock waits.
+Check authority and linearize admission against the process's applied view. A failed signature or revoked credential and
 unavailable authority are distinct wire outcomes. Preserve the existing
 terminal refusal where the route already defines one. Unknown trust or a
 stale view never reads as zero revocations.
@@ -237,16 +342,22 @@ current authority. Scope unavailable authority to the issuer or dependencies
 used by the request.
 
 In E5, **run the consumer in each web process** in the existing registry
-adapter. Use a live background subscription for the pilot's required
-issuers. Each process owns its applied view. Its readiness probe fails
-until it has live authenticated authority for its required issuers and fails
-again at the 30-second protocol boundary. Requests enforce the
-same bound even when a load balancer has not yet acted on readiness.
-Unrelated foreign authorities affect only requests depending on them. Keep
-process liveness independent so a process can recover. A shared distribution
+adapter. Use a background subscription for the pilot's required issuers.
+Each process owns its applied view. Its readiness probe gates bootstrap on
+a live authenticated prefix and healthy bounded clock. Once bootstrapped,
+loss of an issuer refuses requests that require that issuer at the effect
+gate. Keep the process in the load balancer so public routes and other
+issuers' routes can serve. Keep liveness independent. A shared distribution
 cache can serve signed ranges to all processes. There is no central Redis
-watermark in the pilot's decision gate and no negative or positive AWID
-lookup on the request path.
+watermark or AWID lookup in the pilot's decision gate.
+
+On stream authority loss, end the affected stream with a retryable
+authority-unavailable reason before another protected emission. The client
+keeps its last accepted cursor and reconnects with a newly timestamped
+request. Use exponential backoff starting at one second, capped at 30
+seconds, with independent jitter across clients. Honour a longer
+Retry-After and add jitter to it. Reset after a healthy admission. This
+spreads reconnects and preserves replay handling after a fleet-wide loss.
 
 ## 6. Federation and cutover
 
@@ -258,12 +369,27 @@ unverified key, or evidence from an unrelated fresh issuer cannot substitute.
 A split view requires reconciliation. Emergency signer removal uses an
 independently authenticated authority path.
 
-The federation destination checks the preserved holder signature and proof
-bindings, its local applied issuer views, address continuity and its own
-delivery policy. The same ordinary proof can serve source and destination.
-Only facts actually used for delivery require evidence. A new send or
-effect after proof expiry needs current evidence for that decision. An exact
-committed receipt remains an idempotent historical result.
+For a relayed send, the holder signs a submission envelope for the source
+service and a distinct delivery envelope for the destination service. The
+source verifies its own audience and the holder's destination signature,
+and checks that the delivery binds the exact resolved destination, sender,
+recipient, immutable message ID and body it is relaying. The relay carries
+the holder's destination-bound bytes and supplies any separately required
+relay authentication. The destination verifies its own audience, never the
+source's. It checks proof bindings, its own applied issuer views, address
+continuity and delivery policy. The same portable standing can accompany
+both requests. A delayed new delivery whose signed window or proof has
+expired requires new holder-signed evidence for that delivery. An exact
+committed receipt remains an idempotent historical result under its existing
+access rule.
+
+Mail delivered before cutover retains its receipt and verification treatment.
+The recipient verifies the original stored signed artifact under its original
+message contract. Reading it does not require a new holder envelope or a
+standing statement. The cutover alone changes neither the historical receipt
+nor whether a previously verified message displays as verified. A new reply
+uses the new request envelope while preserving the existing source-message
+and recipient-binding checks.
 
 E5 switches once the issuer, feed consumers, clients, applications and
 federation peers in its cutover inventory can use the new protocol. After
@@ -288,22 +414,28 @@ including cases an independent verifier can run.
 
 Run the same conformance suite for subscription and on-demand use. It checks:
 
-- Valid proof at two verifiers, wrong issuer/team/credential/purpose, independently
-  authenticated foreign chain and team, and fresh evidence for an unrelated
-  issuer next to stale evidence required by the request. Reject compact v1
-  and existing identity-only requests at statement routes, and exercise
-  global-identity mail with the request-bound envelope.
+- Valid proof at two verifiers, wrong issuer/team/credential/purpose, two
+  issuers per request and stale authority for either issuer. Reject compact
+  v1, v2 and identity-only envelopes at statement routes. Exercise
+  global-identity mail with the new envelope. Replay across audiences,
+  routes, raw queries and signature purposes. Preserve a pre-cutover
+  delivered message's historical receipt and verification.
 - Committed issuance before and after removal, a proof first presented after
   its deny was applied, credential expiry, stale feed at the cutoff, and
   previously admitted effects that finish. Include stream continuation and
   a write waiting on a lock.
-- Exact current evidence, wrong request digest, reuse, unchanged replay receipt,
-  and the absence of effects on issuer refusal or stale destination evidence.
+- Repeated reads, exact idempotent replay with one effect/outbox and changed
+  inputs refused, and one-use effects on retry. Check exact current evidence,
+  wrong request digest and expiry. Test local admission before a minter
+  denial with commit after it, and the resulting inability to use the
+  delegation. Confirm an independent organisation-sponsored neighbour.
 - Aborted and reordered transactions, missing or changed entries, duplicate
-  entries, stale and replayed barriers, snapshot resync and era change. A
-  bootstrap snapshot includes still-live denies for versions it never saw
-  as positive evidence. Stop the signer and distribution separately. Both
-  transports recover only with a complete live point.
+  entries, stale and replayed barriers, snapshot resync and era change. Reject
+  a new era whose restore lacks an already-applied deny. Retain old denies
+  and verify a tail from the signed snapshot commitment. Stop the statement
+  signer, barrier signer and distribution independently. Check clock skew,
+  timed idle barriers, recovery through a complete live point, public
+  routes during issuer loss and jittered stream reconnects.
 - Distinct teams with the same certificate UUID or key, recreation, ancestor
   invalidation and retained terminal grants. Unrelated facts remain eligible.
   Inspect public responses and snapshots for raw identifiers or joinable
@@ -325,9 +457,14 @@ At 30 minutes, one proof per active binding costs about 556 signatures/s for
 one million bindings and 5,556/s for ten million before early renewal and
 retries. At an 80% refresh interval, about 694/s and 6,944/s respectively.
 Two independent proofs per binding double those numbers. Extra verifiers for
-the same binding add no issuance. Benchmark the deployed signer, indexed
-registry reads and both feed transports rather than extrapolating from raw
-signature operations.
+the same binding add no issuance. On an era change, every active binding may
+need all its proofs reissued at once. The recovery capacity target is one
+million active bindings within five minutes, about 3,334 signatures/s for
+one proof or 6,667/s for two. At ten million bindings these figures are
+33,334/s and 66,667/s. Pace and jitter retries under this load. Authority
+stays unavailable for a binding until it has replacement evidence. Benchmark
+the deployed signer, indexed reads and both feed transports rather than
+extrapolating from raw signature operations.
 
 | Implementation boundary | Acceptance |
 |---|---|
