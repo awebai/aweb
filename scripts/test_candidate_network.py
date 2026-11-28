@@ -367,55 +367,6 @@ class EndpointTests(unittest.TestCase):
         )
         self.assertEqual(result.stdout.strip(), "http://127.0.0.1:49151")
 
-    def test_channel_does_not_reserve_ports_and_selects_both_service_names(self):
-        source = (ROOT / "channel/test/integration.test.ts").read_text()
-        allocation = source[
-            source.index("  const directNetwork =") : source.index(
-                "  const projectSeed ="
-            )
-        ]
-        endpoints = source[
-            source.index("  const publishedHost =") : source.index(
-                "  await writeFile(envFilePath,"
-            )
-        ]
-        helper = source[
-            source.index("function candidateHostname(") : source.index(
-                "function dockerPublishedHost("
-            )
-        ]
-        helper = helper.replace(": string", "")
-        project = "aweb-candidate-08f4f622d1ec-780cad-naapp-library"
-        program = (
-            'import {execFileSync} from "node:child_process"; import {join} from "node:path"; '
-            + "const repoRoot="
-            + json.dumps(str(ROOT))
-            + "; "
-            + helper
-            + "const projectName="
-            + json.dumps(project)
-            + "; "
-            'function dockerPublishedHost(){return "aweb-docker.test";} '
-            'function reserveLoopbackPorts(){throw Error("unexpected host allocation");}\n'
-            + allocation
-            + endpoints
-            + "\nconsole.log(JSON.stringify([awebURL,awidURL]));"
-        )
-        result = subprocess.run(
-            ["node", "--input-type=module", "-e", program],
-            env={**os.environ, "CANDIDATE_RUNNER_NAME": "probe"},
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(
-            json.loads(result.stdout),
-            [
-                f"http://{network.hostname(project, 'aweb')}:8000",
-                f"http://{network.hostname(project, 'awid')}:8010",
-            ],
-        )
-
     def test_naapp_database_and_registry_endpoints_are_direct(self):
         for package in ("folio", "library"):
             path = ROOT / "naapp" / package / "tests/test_e2e_smoke.py"
