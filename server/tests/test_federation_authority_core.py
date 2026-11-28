@@ -19,7 +19,6 @@ from aweb.federation.authority_work import (
     AuthorityEvidenceScope,
     AuthorityWorkRepository,
     authority_result_scope_payload,
-    authority_result_ttl_seconds,
 )
 from aweb.federation.errors import authority_error_body
 from awid.external_registry import ExternalAuthorityEvidence
@@ -672,18 +671,8 @@ async def test_evidence_reuse_vectors(case: dict, aweb_cloud_db) -> None:
     if name == "authoritative_not_found_scope_is_complete":
         payload = authority_result_scope_payload(scope)
         assert list(payload) == expected["key_fields"]
-        reuse_seconds = case["input"]["reuse_seconds"]
-        assert (
-            authority_result_ttl_seconds("authoritative_not_found", reuse_seconds)
-            == reuse_seconds
-        )
-        assert (
-            authority_result_ttl_seconds("authoritative_not_found", reuse_seconds + 1)
-            == reuse_seconds
-        )
-        assert (
-            authority_result_ttl_seconds("authoritative_not_found", 60) == reuse_seconds
-        )
+        # The published failure's lifetime is checked on the stored row by
+        # test_contact_add_unregistered_cross_namespace_target (test_contacts_http.py).
         return
 
     if name == "malformed_evidence_scope_includes_response_digest":
@@ -698,11 +687,8 @@ async def test_evidence_reuse_vectors(case: dict, aweb_cloud_db) -> None:
         return
 
     if name == "dns_transport_failure_is_retryable_and_short_lived":
-        assert (
-            authority_result_ttl_seconds("dns_transport_failure", 60)
-            == expected["max_seconds"]
-        )
-        assert expected["retryable"] is True
+        # The published failure's lifetime is checked on the stored row by
+        # test_contact_add_unregistered_cross_namespace_target (test_contacts_http.py).
         return
 
     if name == "controlled_bypass_is_one_per_message_and_shared":

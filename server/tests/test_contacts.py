@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import inspect
+from datetime import datetime, timezone
 
 import pytest
 
@@ -262,10 +262,6 @@ async def test_pending_contact_does_not_satisfy_contacts_policy_until_active(
 async def test_handle_contact_default_agent_resolution_uses_recent_activity(
     aweb_cloud_db,
 ):
-    assert (
-        "ORDER BY last_seen_at DESC NULLS LAST, a.created_at ASC"
-        in inspect.getsource(resolve_handle_contact_agent)
-    )
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -325,6 +321,59 @@ async def test_handle_contact_default_agent_resolution_uses_recent_activity(
     )
     assert named is not None
     assert named["address"] == "acme.com/older"
+
+
+async def _handle_agent(db, alias, created_at, last_seen_at=None):
+    row = await db.fetch_one(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, identity_scope, role, created_at, inbound_mode
+        )
+        VALUES ('default:acme.com', $1, $2, $3, $4, 'global', 'developer', $5, 'open')
+        RETURNING agent_id
+        """,
+        f"did:key:{alias}",
+        f"did:aw:{alias}",
+        f"acme.com/{alias}",
+        alias,
+        created_at,
+    )
+    await db.execute(
+        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1",
+        row["agent_id"],
+    )
+    if last_seen_at is not None:
+        await db.execute(
+            "INSERT INTO {{tables.workspaces}} (team_id, agent_id, alias, last_seen_at) "
+            "VALUES ('default:acme.com', $1, $2, $3)",
+            row["agent_id"],
+            alias,
+            last_seen_at,
+        )
+
+
+@pytest.mark.asyncio
+async def test_handle_contact_default_agent_puts_inactive_last_and_breaks_ties_by_age(
+    aweb_cloud_db,
+):
+    db = aweb_cloud_db.aweb_db
+    await db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('default:acme.com', 'acme.com', 'default', 'did:key:team')
+        """
+    )
+    seen = datetime(2026, 5, 1, tzinfo=timezone.utc)
+    await _handle_agent(db, "inactive", datetime(2026, 1, 1, tzinfo=timezone.utc))
+    await _handle_agent(db, "younger", datetime(2026, 1, 3, tzinfo=timezone.utc), seen)
+    await _handle_agent(db, "elder", datetime(2026, 1, 2, tzinfo=timezone.utc), seen)
+
+    resolved = await resolve_handle_contact_agent(
+        _DbShim(db), handle_namespace="acme.com"
+    )
+
+    assert resolved is not None
+    assert resolved["address"] == "acme.com/elder"
 
 
 def test_is_address_in_contacts_exact():

@@ -54,6 +54,25 @@ async def test_existing_person_self_enrolls_and_controller_cannot_carry_it(
     chain = [issued["certificate"]]
     await commit_identity(registry, {"id_chain": chain}, seed, key)
     own = {"seed": seed, "key": key, "identity": person, "chain": chain}
+    # Another issued person of the same organisation, with a valid chain of
+    # its own: only being the enrollment's requester distinguishes them.
+    other_seed, other_key, other = await register_identity(registry)
+    other_chain = [(await holder.issue_person(other, other_key))["certificate"]]
+    await commit_identity(registry, {"id_chain": other_chain}, other_seed, other_key)
+    stranger = {
+        "seed": other_seed,
+        "key": other_key,
+        "identity": other,
+        "chain": other_chain,
+    }
+
+    async def refused_to_stranger(client, path, body):
+        before = holder.store.audit()
+        response = await call(client, path, body, **stranger)
+        assert response.status_code == 401, response.text
+        assert response.json()["error"]["code"] == "requester_mismatch"
+        assert holder.store.audit() == before
+
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=create_app(holder)), base_url=holder.origin
     ) as client:
@@ -86,6 +105,9 @@ async def test_existing_person_self_enrolls_and_controller_cannot_carry_it(
             "material": material,
             "registration_count": len(material["registrations"]),
         }
+        await refused_to_stranger(
+            client, f"/v1/enrollments/{person}/binding", binding_request
+        )
         response = await call(
             client,
             f"/v1/enrollments/{person}/binding",
@@ -109,6 +131,7 @@ async def test_existing_person_self_enrolls_and_controller_cannot_carry_it(
             "hardware": ["certified_hardware"],
             "mixed": ["certified_hardware", "passkey_uv"],
         }[binding_kind]
+        await refused_to_stranger(client, f"/v1/enrollments/{person}/finish", proof)
         response = await call(client, f"/v1/enrollments/{person}/finish", proof, **own)
         assert response.status_code == 200, response.text
         activation = response.json()
@@ -142,6 +165,7 @@ async def test_existing_person_self_enrolls_and_controller_cannot_carry_it(
                 )
         if binding_kind == "mixed":
             lose_passkey_inventory(holder.store, person, credentials[1]["id"])
+        await refused_to_stranger(client, f"/v1/enrollments/{person}/activate", {})
         response = await call(client, f"/v1/enrollments/{person}/activate", {}, **own)
         assert response.status_code == 200, response.text
         assert holder.active_person(person)["active"] == 1

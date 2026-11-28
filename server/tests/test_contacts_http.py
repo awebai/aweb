@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -160,6 +160,20 @@ async def test_contact_add_unregistered_cross_namespace_target(privacy_app, miss
     assert response.json()["reason"] == expected_reason
     assert response.json()["retryable"] is (missing == "log")
     assert await db.fetch_val("SELECT COUNT(*) FROM {{tables.contacts}}") == 0
+    # Shared failed reads publish the same stable failure for five seconds
+    # (docs/identity-messaging-contract.md), measured on the stored row.
+    failed = await db.fetch_all(
+        "SELECT scope_key, evidence, created_at, expires_at "
+        "FROM {{tables.federation_authority_results}} WHERE status = 'failed'"
+    )
+    by_scope = {row["scope_key"]: row for row in failed}
+    # Waiting readers get the stored reason, not this response's.
+    discovery = by_scope["discovery:" + target]
+    evidence = discovery["evidence"]
+    evidence = json.loads(evidence) if isinstance(evidence, str) else evidence
+    assert evidence["reason"] == expected_reason
+    for row in failed:
+        assert row["expires_at"] - row["created_at"] == timedelta(seconds=5)
 
 
 @pytest.mark.asyncio

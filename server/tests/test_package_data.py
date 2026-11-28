@@ -148,68 +148,77 @@ def test_mcp_dependency_excludes_api_incompatible_v2():
     assert MCP_INCOMPATIBLE_API_VERSION not in mcp_req.specifier
 
 
-def test_canonical_chain_starts_with_reset_baseline_then_forward_migrations():
-    """Reset-only rebaseline remains 001; new product schema changes are
-    ordered forward migrations instead of edits to the historical baseline."""
+# The migration files main has shipped. pgdbm keys its receipts by file
+# name, so a shipped file is never renamed, removed or reordered, and the
+# reset-only baseline stays 001.
+SHIPPED_MIGRATIONS = (
+    "001_initial.sql",
+    "002_agent_encryption_keys.sql",
+    "003_messages_encrypted_v2.sql",
+    "004_chat_messages_encrypted_v2.sql",
+    "005_messages_encrypted_v2_shape_legacy_fields.sql",
+    "006_chat_participants_left_at.sql",
+    "007_agent_encryption_key_custody.sql",
+    "008_app_registry_grants.sql",
+    "009_app_events.sql",
+    "010_session_admission_leases.sql",
+    "010a_chat_message_reads_orphan_guard.sql",
+    "011_chat_message_reads.sql",
+    "012_chat_message_reads_orphan_backfill.sql",
+    "013_lifecycle_side_effect_outbox.sql",
+    "014_federation_authority.sql",
+    "015_federation_delivery_policy.sql",
+    "016_identity_session_grants.sql",
+    "017_agents_certificate_id.sql",
+    "018_identity_grant_liveness.sql",
+    "019_chat_participant_lookup.sql",
+    "020_agent_status_hosts.sql",
+    "021_agent_status.sql",
+    "022_message_attachments.sql",
+    "023_operator_audit.sql",
+    "024_team_app_emit_keys.sql",
+    "025_team_scoped_app_origin.sql",
+    "026_team_app_event_types.sql",
+    "027_team_app_keys.sql",
+    "028_team_app_install_bytes.sql",
+    "032_app_hook_bindings.sql",
+    "033_typed_chat_participants.sql",
+    "034_agent_identity_binding.sql",
+    "035_team_app_installation_identity.sql",
+    "036_app_installation_management.sql",
+    "037_contacts_only.sql",
+    "038_task_revisions.sql",
+    "039_app_task_requests.sql",
+    "040_task_answer_stages.sql",
+    "041_native_send_ingress.sql",
+    "042_message_id_chains.sql",
+    "043_team_room.sql",
+    "044_room_post_notices.sql",
+    "045_canonical_participant_dids.sql",
+    "046_local_human_succession.sql",
+    "047_verified_human_kind.sql",
+    "048_chat_session_seq.sql",
+    "049_dead_row_indexes.sql",
+    "050_one_active_team_document.sql",
+    "051_team_key_pin_act.sql",
+    "052_member_accepted_team_key.sql",
+    "053_drop_retired_signer.sql",
+    "055_chat_conversation_coverage.sql",
+    "056_inbound_mode_default.sql",
+    "057_legacy_mail_index.sql",
+)
+
+
+def test_shipped_migrations_stay_and_new_ones_only_append():
+    """New product schema changes are forward migrations after the shipped
+    chain, never edits or insertions into it."""
     sql_files = sorted(
         p.name for p in AWEB_MIGRATIONS.iterdir() if p.name.endswith(".sql")
     )
-    assert sql_files == [
-        "001_initial.sql",
-        "002_agent_encryption_keys.sql",
-        "003_messages_encrypted_v2.sql",
-        "004_chat_messages_encrypted_v2.sql",
-        "005_messages_encrypted_v2_shape_legacy_fields.sql",
-        "006_chat_participants_left_at.sql",
-        "007_agent_encryption_key_custody.sql",
-        "008_app_registry_grants.sql",
-        "009_app_events.sql",
-        "010_session_admission_leases.sql",
-        "010a_chat_message_reads_orphan_guard.sql",
-        "011_chat_message_reads.sql",
-        "012_chat_message_reads_orphan_backfill.sql",
-        "013_lifecycle_side_effect_outbox.sql",
-        "014_federation_authority.sql",
-        "015_federation_delivery_policy.sql",
-        "016_identity_session_grants.sql",
-        "017_agents_certificate_id.sql",
-        "018_identity_grant_liveness.sql",
-        "019_chat_participant_lookup.sql",
-        "020_agent_status_hosts.sql",
-        "021_agent_status.sql",
-        "022_message_attachments.sql",
-        "023_operator_audit.sql",
-        "024_team_app_emit_keys.sql",
-        "025_team_scoped_app_origin.sql",
-        "026_team_app_event_types.sql",
-        "027_team_app_keys.sql",
-        "028_team_app_install_bytes.sql",
-        "032_app_hook_bindings.sql",
-        "033_typed_chat_participants.sql",
-        "034_agent_identity_binding.sql",
-        "035_team_app_installation_identity.sql",
-        "036_app_installation_management.sql",
-        "037_contacts_only.sql",
-        "038_task_revisions.sql",
-        "039_app_task_requests.sql",
-        "040_task_answer_stages.sql",
-        "041_native_send_ingress.sql",
-        "042_message_id_chains.sql",
-        "043_team_room.sql",
-        "044_room_post_notices.sql",
-        "045_canonical_participant_dids.sql",
-        "046_local_human_succession.sql",
-        "047_verified_human_kind.sql",
-        "048_chat_session_seq.sql",
-        "049_dead_row_indexes.sql",
-        "050_one_active_team_document.sql",
-        "051_team_key_pin_act.sql",
-        "052_member_accepted_team_key.sql",
-        "053_drop_retired_signer.sql",
-        "055_chat_conversation_coverage.sql",
-        "056_inbound_mode_default.sql",
-        "057_legacy_mail_index.sql",
-    ]
+    assert sql_files[: len(SHIPPED_MIGRATIONS)] == list(SHIPPED_MIGRATIONS)
+    assert all(
+        name > SHIPPED_MIGRATIONS[-1] for name in sql_files[len(SHIPPED_MIGRATIONS) :]
+    )
 
 
 @pytest.mark.asyncio
