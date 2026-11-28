@@ -969,6 +969,12 @@ stays unavailable for a binding until it has replacement evidence. Benchmark
 the deployed signer, indexed reads and both feed transports rather than
 extrapolating from raw signature operations.
 
+Qualify the pilot's external watcher against the D2
+[credential-free sentinel conformance cases](standing-organisation-records.md#credential-free-sentinel)
+on the same registry build, including a watched private team's re-key and
+loss of a verified feed prefix. The watcher alerts independently of worker
+signing and serving authority.
+
 | Implementation boundary | Acceptance |
 |---|---|
 | AWID issuance and signer | Consistent committed read, scoped ordinary and exact-request proofs, protected signer, issuance refusals and byte vectors. |
