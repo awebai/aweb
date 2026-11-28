@@ -13,6 +13,9 @@
     `team` entry, for the released OATS roster.
   - `aw workspace connect --role` is accepted and ignored, for released OATS
     providers.
+  - aw reads a `role_name` that a released aw wrote into a `workspace.yaml`
+    membership, ignores it, and leaves it out of its next save.
+    `aw workspace migrate-multi-team` no longer carries a role over.
   - `aw doctor --online` checks the server's team through `GET /v1/agents`,
     and drops its `team.server.roles_read` and
     `team.server.selected_role_matches_local` checks.

@@ -53,7 +53,6 @@ type doctorSupportBundleLocalMetadata struct {
 	TeamID                 string                                  `json:"team_id,omitempty"`
 	WorkspaceID            string                                  `json:"workspace_id,omitempty"`
 	Alias                  string                                  `json:"alias,omitempty"`
-	RoleName               string                                  `json:"role_name,omitempty"`
 	IdentityScope          string                                  `json:"identity_scope,omitempty"`
 	Custody                string                                  `json:"custody,omitempty"`
 	DIDKey                 string                                  `json:"did_key,omitempty"`
@@ -141,7 +140,6 @@ func collectDoctorSupportBundleLocalMetadataAt(workingDir, identityHome string) 
 			meta.TeamID = strings.TrimSpace(membership.TeamID)
 			meta.WorkspaceID = strings.TrimSpace(membership.WorkspaceID)
 			meta.Alias = strings.TrimSpace(membership.Alias)
-			meta.RoleName = strings.TrimSpace(membership.RoleName)
 			certPath, _ := resolveIdentityStoredPath(workingDir, identityHome, membership.CertPath)
 			if strings.TrimSpace(certPath) != "" {
 				if cert, err := awid.LoadTeamCertificate(certPath); err == nil && cert != nil {

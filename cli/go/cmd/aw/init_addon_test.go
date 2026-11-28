@@ -50,7 +50,6 @@ func TestRunInitSetupChannelExistingWorkspaceStaysAddonWithURLFlags(t *testing.T
 		Memberships: []awconfig.WorktreeMembership{{
 			TeamID:      "default:alice.aweb.ai",
 			Alias:       "alice",
-			RoleName:    "coordinator",
 			WorkspaceID: "ws-1",
 			CertPath:    ".aw/team-certs/default_alice.aweb.ai.json",
 			JoinedAt:    "2026-05-15T00:00:00Z",

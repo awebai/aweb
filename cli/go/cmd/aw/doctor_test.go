@@ -40,7 +40,7 @@ func TestDoctorSupportBundleExportSchemaIsExplicit(t *testing.T) {
 		{"doctorRedaction", doctorRedaction{}, []string{"field", "reason"}},
 		{"doctorSupportBundleInfo", doctorSupportBundleInfo{}, []string{"generated_by", "local_metadata", "platform", "redaction_summary", "safe_to_share", "schema"}},
 		{"doctorSupportBundlePlatform", doctorSupportBundlePlatform{}, []string{"arch", "os"}},
-		{"doctorSupportBundleLocalMetadata", doctorSupportBundleLocalMetadata{}, []string{"address", "alias", "aweb_url", "certificate", "custody", "did_key", "hostname", "identity_scope", "identity_yaml_present", "registry_url", "role_name", "signing_key_present", "stable_id", "team_certificate_present", "team_id", "workspace_id", "workspace_path", "workspace_yaml_present"}},
+		{"doctorSupportBundleLocalMetadata", doctorSupportBundleLocalMetadata{}, []string{"address", "alias", "aweb_url", "certificate", "custody", "did_key", "hostname", "identity_scope", "identity_yaml_present", "registry_url", "signing_key_present", "stable_id", "team_certificate_present", "team_id", "workspace_id", "workspace_path", "workspace_yaml_present"}},
 		{"doctorSupportBundleCertificateMetadata", doctorSupportBundleCertificateMetadata{}, []string{"alias", "identity_scope", "member_address", "member_did_aw", "member_did_key", "team_did_key", "team_id"}},
 		{"doctorSupportBundleRedactionSummary", doctorSupportBundleRedactionSummary{}, []string{"by_reason", "count", "rule_version"}},
 		{"doctorFixPlan", doctorFixPlan{}, []string{"authority", "check_id", "dry_run", "high_impact", "next_step", "plan_id", "planned_mutations", "preconditions", "refusal_detail", "refusal_reason", "rollback_guidance", "safe", "source", "status", "target"}},

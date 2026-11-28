@@ -17,7 +17,6 @@ func canonicalWorkspaceState() *WorktreeWorkspace {
 		Memberships: []WorktreeMembership{{
 			TeamID:      "backend:acme.com",
 			Alias:       "alice",
-			RoleName:    "developer",
 			WorkspaceID: "ws-1",
 			CertPath:    TeamCertificateRelativePath("backend:acme.com"),
 			JoinedAt:    "2026-04-09T00:00:00Z",
@@ -73,25 +72,42 @@ role: reviewer
 	}
 }
 
-func TestSaveWorktreeWorkspaceToWritesCanonicalRoleNameKey(t *testing.T) {
+// Released aw wrote a role_name into each membership. This aw has no team roles:
+// it loads such a file, ignores the key, and leaves it out when it saves.
+func TestWorktreeWorkspaceReadsAReleasedRoleNameAndDropsItOnSave(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "workspace.yaml")
-	if err := SaveWorktreeWorkspaceTo(path, canonicalWorkspaceState()); err != nil {
-		t.Fatalf("save workspace: %v", err)
+	if err := os.WriteFile(path, []byte(strings.TrimSpace(`
+aweb_url: https://app.aweb.ai
+memberships:
+  - team_id: backend:acme.com
+    alias: alice
+    role_name: developer
+    workspace_id: ws-1
+    cert_path: team-certs/backend__acme.com.pem
+`)+"\n"), 0o600); err != nil {
+		t.Fatalf("write workspace: %v", err)
 	}
 
+	workspace, err := LoadWorktreeWorkspaceFrom(path)
+	if err != nil {
+		t.Fatalf("load workspace with a released role_name: %v", err)
+	}
+	if got := workspace.Membership("backend:acme.com"); got == nil || got.Alias != "alice" || got.WorkspaceID != "ws-1" {
+		t.Fatalf("membership=%#v", got)
+	}
+	if err := SaveWorktreeWorkspaceTo(path, workspace); err != nil {
+		t.Fatalf("save workspace: %v", err)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read workspace: %v", err)
 	}
 	text := string(data)
-	if !strings.Contains(text, "role_name: developer") {
-		t.Fatalf("workspace yaml missing role_name:\n%s", text)
-	}
-	if strings.Contains(text, "\nrole:") {
-		t.Fatalf("workspace yaml still wrote legacy role key:\n%s", text)
+	if strings.Contains(text, "role") {
+		t.Fatalf("saved workspace yaml kept a role:\n%s", text)
 	}
 	if strings.Contains(text, "active_team:") {
 		t.Fatalf("workspace yaml should not write active_team:\n%s", text)

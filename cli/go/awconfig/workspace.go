@@ -14,7 +14,6 @@ import (
 type WorktreeMembership struct {
 	TeamID      string `yaml:"team_id"`
 	Alias       string `yaml:"alias,omitempty"`
-	RoleName    string `yaml:"role_name,omitempty"`
 	WorkspaceID string `yaml:"workspace_id,omitempty"`
 	CertPath    string `yaml:"cert_path"`
 	JoinedAt    string `yaml:"joined_at,omitempty"`
@@ -37,7 +36,6 @@ type WorktreeWorkspace struct {
 type worktreeMembershipYAML struct {
 	TeamID      string `yaml:"team_id"`
 	Alias       string `yaml:"alias,omitempty"`
-	RoleName    string `yaml:"role_name,omitempty"`
 	WorkspaceID string `yaml:"workspace_id,omitempty"`
 	CertPath    string `yaml:"cert_path"`
 	JoinedAt    string `yaml:"joined_at,omitempty"`
@@ -67,7 +65,6 @@ type LegacySingleTeamWorkspace struct {
 	Alias           string `yaml:"alias,omitempty"`
 	HumanName       string `yaml:"human_name,omitempty"`
 	AgentType       string `yaml:"agent_type,omitempty"`
-	RoleName        string `yaml:"role_name,omitempty"`
 	Hostname        string `yaml:"hostname,omitempty"`
 	WorkspacePath   string `yaml:"workspace_path,omitempty"`
 	UpdatedAt       string `yaml:"updated_at,omitempty"`
@@ -97,10 +94,15 @@ var canonicalWorkspaceYAMLKeys = map[string]struct{}{
 var canonicalMembershipYAMLKeys = map[string]struct{}{
 	"team_id":      {},
 	"alias":        {},
-	"role_name":    {},
 	"workspace_id": {},
 	"cert_path":    {},
 	"joined_at":    {},
+}
+
+// releasedMembershipYAMLKeys are membership keys a released aw wrote that this
+// aw reads and ignores. They are left out of the next save.
+var releasedMembershipYAMLKeys = map[string]struct{}{
+	"role_name": {},
 }
 
 var removedWorkspaceYAMLKeys = map[string]struct{}{
@@ -125,7 +127,6 @@ func (m *WorktreeMembership) normalize() {
 	}
 	m.TeamID = strings.TrimSpace(m.TeamID)
 	m.Alias = strings.TrimSpace(m.Alias)
-	m.RoleName = strings.TrimSpace(m.RoleName)
 	m.WorkspaceID = strings.TrimSpace(m.WorkspaceID)
 	m.CertPath = filepath.ToSlash(strings.TrimSpace(m.CertPath))
 	m.JoinedAt = strings.TrimSpace(m.JoinedAt)
@@ -155,7 +156,7 @@ func (w *WorktreeWorkspace) normalize() {
 	normalized := make([]WorktreeMembership, 0, len(w.Memberships))
 	for _, membership := range w.Memberships {
 		membership.normalize()
-		if membership.TeamID == "" && membership.CertPath == "" && membership.WorkspaceID == "" && membership.Alias == "" && membership.RoleName == "" && membership.JoinedAt == "" {
+		if membership.TeamID == "" && membership.CertPath == "" && membership.WorkspaceID == "" && membership.Alias == "" && membership.JoinedAt == "" {
 			continue
 		}
 		normalized = append(normalized, membership)
@@ -251,6 +252,9 @@ func inspectMembershipYAMLKeys(prefix string, value *yaml.Node) (removed []strin
 		if _, ok := canonicalMembershipYAMLKeys[key]; ok {
 			continue
 		}
+		if _, ok := releasedMembershipYAMLKeys[key]; ok {
+			continue
+		}
 		label := fmt.Sprintf("%s.%s", prefix, key)
 		if _, ok := removedWorkspaceYAMLKeys[key]; ok {
 			removed = append(removed, label)
@@ -343,7 +347,6 @@ func (raw worktreeWorkspaceYAML) normalizedWorkspace() WorktreeWorkspace {
 		memberships = append(memberships, WorktreeMembership{
 			TeamID:      membership.TeamID,
 			Alias:       membership.Alias,
-			RoleName:    membership.RoleName,
 			WorkspaceID: membership.WorkspaceID,
 			CertPath:    membership.CertPath,
 			JoinedAt:    membership.JoinedAt,
@@ -377,7 +380,6 @@ func (w WorktreeWorkspace) MarshalYAML() (any, error) {
 		memberships = append(memberships, worktreeMembershipYAML{
 			TeamID:      membership.TeamID,
 			Alias:       membership.Alias,
-			RoleName:    membership.RoleName,
 			WorkspaceID: membership.WorkspaceID,
 			CertPath:    membership.CertPath,
 			JoinedAt:    membership.JoinedAt,
@@ -448,7 +450,6 @@ func LoadLegacySingleTeamWorkspaceFrom(path string) (*LegacySingleTeamWorkspace,
 	state.Alias = strings.TrimSpace(state.Alias)
 	state.HumanName = strings.TrimSpace(state.HumanName)
 	state.AgentType = strings.TrimSpace(state.AgentType)
-	state.RoleName = strings.TrimSpace(state.RoleName)
 	state.Hostname = strings.TrimSpace(state.Hostname)
 	state.WorkspacePath = strings.TrimSpace(state.WorkspacePath)
 	state.UpdatedAt = strings.TrimSpace(state.UpdatedAt)

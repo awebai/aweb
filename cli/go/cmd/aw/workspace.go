@@ -701,7 +701,6 @@ func migrateLegacyWorkspaceToMultiTeamAt(workingDir, workspacePath string, home 
 		Memberships: []awconfig.WorktreeMembership{{
 			TeamID:      legacy.TeamID,
 			Alias:       legacy.Alias,
-			RoleName:    legacy.RoleName,
 			WorkspaceID: legacy.WorkspaceID,
 			CertPath:    certPath,
 			JoinedAt:    firstNonEmpty(strings.TrimSpace(cert.IssuedAt), strings.TrimSpace(legacy.UpdatedAt)),

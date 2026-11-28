@@ -225,7 +225,6 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	state := workspaceBinding(server.URL, "backend:demo", "alice", selfID)
-	state.Memberships[0].RoleName = "developer"
 	state.Hostname = "devbox"
 	state.WorkspacePath = tmp
 	state.CanonicalOrigin = "github.com/acme/repo"
@@ -352,7 +351,6 @@ func TestAwWorkspaceStatusAllShowsAllMemberships(t *testing.T) {
 			{
 				TeamID:      "backend:demo",
 				Alias:       "alice",
-				RoleName:    "developer",
 				WorkspaceID: "ws-backend",
 				CertPath:    awconfig.TeamCertificateRelativePath("backend:demo"),
 				JoinedAt:    "2026-04-09T00:00:00Z",
@@ -360,7 +358,6 @@ func TestAwWorkspaceStatusAllShowsAllMemberships(t *testing.T) {
 			{
 				TeamID:      "design:demo",
 				Alias:       "alice-design",
-				RoleName:    "designer",
 				WorkspaceID: "ws-design",
 				CertPath:    awconfig.TeamCertificateRelativePath("design:demo"),
 				JoinedAt:    "2026-04-09T00:00:00Z",
@@ -368,7 +365,6 @@ func TestAwWorkspaceStatusAllShowsAllMemberships(t *testing.T) {
 			{
 				TeamID:      "ops:demo",
 				Alias:       "alice-ops",
-				RoleName:    "operator",
 				WorkspaceID: "ws-ops",
 				CertPath:    awconfig.TeamCertificateRelativePath("ops:demo"),
 				JoinedAt:    "2026-04-09T00:00:00Z",
@@ -715,7 +711,6 @@ func TestAwWorkspaceStatusKeepsGoneDurableLocalIdentity(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	state := workspaceBinding(server.URL, "backend:demo", "alice", selfID)
-	state.Memberships[0].RoleName = "developer"
 	state.Hostname = "devbox"
 	state.WorkspacePath = tmp
 	state.CanonicalOrigin = "github.com/acme/repo"
@@ -805,7 +800,6 @@ func TestAwWorkspaceStatusKeepsGoneLocalIdentityFromIdentityScope(t *testing.T) 
 	buildAwBinary(t, ctx, bin)
 
 	state := workspaceBinding(server.URL, "backend:demo", "alice", selfID)
-	state.Memberships[0].RoleName = "developer"
 	state.Hostname = "devbox"
 	state.WorkspacePath = tmp
 	writeWorkspaceBindingForTest(t, tmp, state)
@@ -962,7 +956,6 @@ func TestAwWorkspaceStatusKeepsGoneGlobalIdentity(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	state := workspaceBinding(server.URL, "backend:demo", "alice", selfID)
-	state.Memberships[0].RoleName = "developer"
 	state.Hostname = "devbox"
 	state.WorkspacePath = tmp
 	state.CanonicalOrigin = "github.com/acme/repo"
@@ -1058,7 +1051,6 @@ func TestAwWorkspaceStatusSkipsGoneWorkspaceWithUnknownIdentityScope(t *testing.
 	buildAwBinary(t, ctx, bin)
 
 	state := workspaceBinding(server.URL, "backend:demo", "alice", selfID)
-	state.Memberships[0].RoleName = "developer"
 	state.Hostname = "devbox"
 	state.WorkspacePath = tmp
 	state.CanonicalOrigin = "github.com/acme/repo"
@@ -2581,6 +2573,9 @@ updated_at: "2026-04-09T00:00:00Z"
 	state, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
 	if err != nil {
 		t.Fatalf("load migrated workspace: %v", err)
+	}
+	if migrated, err := os.ReadFile(filepath.Join(tmp, ".aw", "workspace.yaml")); err != nil || strings.Contains(string(migrated), "role") {
+		t.Fatalf("migrated workspace kept the legacy role_name (err %v):\n%s", err, migrated)
 	}
 	activeMembership := activeMembershipForTest(t, state)
 	teamState, err := awconfig.LoadTeamState(tmp)

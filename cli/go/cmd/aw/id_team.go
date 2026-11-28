@@ -3549,7 +3549,6 @@ func upsertWorkspaceMembershipCache(workspace *awconfig.WorktreeWorkspace, membe
 	}
 	membership.TeamID = strings.TrimSpace(membership.TeamID)
 	membership.Alias = strings.TrimSpace(membership.Alias)
-	membership.RoleName = strings.TrimSpace(membership.RoleName)
 	membership.WorkspaceID = strings.TrimSpace(membership.WorkspaceID)
 	membership.CertPath = filepath.ToSlash(strings.TrimSpace(membership.CertPath))
 	membership.JoinedAt = strings.TrimSpace(membership.JoinedAt)
@@ -3557,9 +3556,6 @@ func upsertWorkspaceMembershipCache(workspace *awconfig.WorktreeWorkspace, membe
 		return
 	}
 	if existing := workspace.Membership(membership.TeamID); existing != nil {
-		if strings.TrimSpace(existing.RoleName) != "" && strings.TrimSpace(membership.RoleName) == "" {
-			membership.RoleName = strings.TrimSpace(existing.RoleName)
-		}
 		if strings.TrimSpace(existing.WorkspaceID) != "" && strings.TrimSpace(membership.WorkspaceID) == "" {
 			membership.WorkspaceID = strings.TrimSpace(existing.WorkspaceID)
 		}
