@@ -258,69 +258,13 @@ async def test_pending_contact_does_not_satisfy_contacts_policy_until_active(
     }
 
 
-@pytest.mark.asyncio
-async def test_handle_contact_default_agent_resolution_uses_recent_activity(
-    aweb_cloud_db,
-):
-    db_shim = _DbShim(aweb_cloud_db.aweb_db)
-    await aweb_cloud_db.aweb_db.execute(
+async def _handle_team(db):
+    await db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES ('default:acme.com', 'acme.com', 'default', 'did:key:team')
         """
     )
-    older = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, identity_scope, role, created_at, inbound_mode
-        )
-        VALUES (
-            'default:acme.com', 'did:key:older', 'did:aw:older',
-            'acme.com/older', 'older', 'global', 'developer',
-            '2026-01-01T00:00:00Z', 'open'
-        )
-        RETURNING agent_id
-        """
-    )
-    recent = await aweb_cloud_db.aweb_db.fetch_one(
-        """
-        INSERT INTO {{tables.agents}} (
-            team_id, did_key, did_aw, address, alias, identity_scope, role, created_at, inbound_mode
-        )
-        VALUES (
-            'default:acme.com', 'did:key:recent', 'did:aw:recent',
-            'acme.com/recent', 'recent', 'global', 'developer',
-            '2026-01-02T00:00:00Z', 'open'
-        )
-        RETURNING agent_id
-        """
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.workspaces}} (team_id, agent_id, alias, last_seen_at)
-        VALUES
-            ('default:acme.com', $1, 'older', '2026-05-01T00:00:00Z'),
-            ('default:acme.com', $2, 'recent', '2026-05-02T00:00:00Z')
-        """,
-        older["agent_id"],
-        recent["agent_id"],
-    )
-
-    await aweb_cloud_db.aweb_db.execute(
-        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=ANY($1::uuid[])",
-        [older["agent_id"], recent["agent_id"]],
-    )
-    resolved = await resolve_handle_contact_agent(db_shim, handle_namespace="acme.com")
-    assert resolved is not None
-    assert resolved["address"] == "acme.com/recent"
-
-    named = await resolve_handle_contact_agent(
-        db_shim,
-        handle_namespace="acme.com",
-        target_agent_name="older",
-    )
-    assert named is not None
-    assert named["address"] == "acme.com/older"
 
 
 async def _handle_agent(db, alias, created_at, last_seen_at=None):
@@ -353,16 +297,44 @@ async def _handle_agent(db, alias, created_at, last_seen_at=None):
 
 
 @pytest.mark.asyncio
+async def test_handle_contact_default_agent_resolution_uses_recent_activity(
+    aweb_cloud_db,
+):
+    db = aweb_cloud_db.aweb_db
+    await _handle_team(db)
+    await _handle_agent(
+        db,
+        "older",
+        datetime(2026, 1, 1, tzinfo=timezone.utc),
+        datetime(2026, 5, 1, tzinfo=timezone.utc),
+    )
+    await _handle_agent(
+        db,
+        "recent",
+        datetime(2026, 1, 2, tzinfo=timezone.utc),
+        datetime(2026, 5, 2, tzinfo=timezone.utc),
+    )
+
+    db_shim = _DbShim(db)
+    resolved = await resolve_handle_contact_agent(db_shim, handle_namespace="acme.com")
+    assert resolved is not None
+    assert resolved["address"] == "acme.com/recent"
+
+    named = await resolve_handle_contact_agent(
+        db_shim,
+        handle_namespace="acme.com",
+        target_agent_name="older",
+    )
+    assert named is not None
+    assert named["address"] == "acme.com/older"
+
+
+@pytest.mark.asyncio
 async def test_handle_contact_default_agent_puts_inactive_last_and_breaks_ties_by_age(
     aweb_cloud_db,
 ):
     db = aweb_cloud_db.aweb_db
-    await db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('default:acme.com', 'acme.com', 'default', 'did:key:team')
-        """
-    )
+    await _handle_team(db)
     seen = datetime(2026, 5, 1, tzinfo=timezone.utc)
     await _handle_agent(db, "inactive", datetime(2026, 1, 1, tzinfo=timezone.utc))
     await _handle_agent(db, "younger", datetime(2026, 1, 3, tzinfo=timezone.utc), seen)
