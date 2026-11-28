@@ -786,30 +786,20 @@ separately approved step (same document, §7).
   With a grant, the pilot renews P monthly with no human act per person. If
   Juan declines a grant, the outside holder signs every P renewal.
 
-  **Worst case of a pilot-held grant key, in plain words.** If that key
-  leaks, whoever holds it can keep "hardware backing current" for any
-  awebai.org person the controller has already designated, and so keep that
-  person reading "vouched". It can do this even after FIDO has withdrawn that
-  person's key model, or after the pilot stopped renewing them. It lasts until
-  the controller publishes an S without the grant (effective within 30
-  seconds for any verifier making a fresh read), or until the grant's
-  `not_after`, at most 92 days. The key is never granted again: every
-  renewal uses a fresh key, and a grant cannot be extended, so 92 days is the
-  limit for that key. After the grant ends, its signatures count only where a
-  relying party had already saved them; they cannot create backing for an
-  earlier period.
-
-  It cannot:
-  - designate anyone new, or back a passkey, a TPM-grade key, a withdrawn
-    key that was never designated, or a credential that never completed its
-    own confirmation;
-  - sign certificates, B, D, E or S;
-  - act for any other namespace, including organisations the pilot hosts;
-  - affect a person whose identity key has changed, or revive a superseded
-    identity binding. A D for a new binding is a new controller act, with its
-    own eligibility check;
-  - survive a controller rotation: the grant ends with its epoch;
-  - change any approval, membership or message verdict.
+  **Worst case of a pilot-held grant key, in plain words.** A leaked key
+  dedicated to the `awebai.org` grant can make current hardware-backing
+  claims, and therefore personhood vouches, for any exact binding the
+  controller has independently designated. That includes a binding designated
+  after an identity rotation and a previously designated model later
+  withdrawn by FIDO. The key cannot revive an old binding or authorize a new
+  one. The grant ends at expiry, removal or controller rotation, with removal
+  reflected within the observation lifetime. Its term is at most 92 days and
+  it cannot be extended or renewed with the same key in this namespace. Later
+  signatures cannot create evidence that a relying party had saved at an
+  earlier time. The grant gives no approval, membership, message or other
+  namespace authority. The key must be dedicated to this grant, with no other
+  grant or key role in any namespace; this is a custody requirement on the
+  holder, and the registry does not enforce it across namespaces.
 
   Holding the key in the pilot is a narrow custody change from F1, so it goes
   to Juan with this worst case.
