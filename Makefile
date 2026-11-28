@@ -331,7 +331,7 @@ verify-site: check-awid-site-docs
 
 # The AWID release production runs, locked, for the suites that test against
 # it; synced before a suite goes offline.
-PRODUCTION_AWID_PROJECT := scripts/test-egress/production-awid
+export PRODUCTION_AWID_PROJECT := $(CURDIR)/scripts/test-egress/production-awid
 
 production-awid-sync:
 	uv sync --frozen --project $(PRODUCTION_AWID_PROJECT)
