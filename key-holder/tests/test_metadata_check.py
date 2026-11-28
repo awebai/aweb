@@ -1,17 +1,19 @@
 """Operator checks read active issuer inventory and emit aggregate status."""
 
 import json
+import stat
 import sys
 from base64 import b64encode
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from approval_service.encoding import encode
 from approval_service.grading import EnrollmentGrading
 from authenticator import packed_device
 from aweb_key_holder import cli
+from metadata_fixtures import signed_cache
 from test_enrollment import creation
-from test_enrollment import holder as holder
 
 
 @pytest.mark.parametrize(
@@ -26,6 +28,8 @@ from test_enrollment import holder as holder
         ("pending", 2),
         ("retired", 2),
         ("invalid_inventory", 1),
+        ("invalid_inventory_null_aaguid", 1),
+        ("invalid_inventory_numeric_aaguid", 1),
     ],
 )
 def test_metadata_check_matches_effective_withdrawals_for_active_credentials(
@@ -41,10 +45,22 @@ def test_metadata_check_matches_effective_withdrawals_for_active_credentials(
         # Activation itself is covered by the native enrollment journey.
         if status != "pending":
             db.execute("UPDATE enrollments SET active=1 WHERE person=?", (person,))
-        if status == "invalid_inventory":
+        if status.startswith("invalid_inventory"):
+            assessment = json.loads(
+                db.execute(
+                    "SELECT assessment FROM attestation_inventory WHERE person=?",
+                    (person,),
+                ).fetchone()["assessment"]
+            )
+            if status == "invalid_inventory":
+                assessment = [aaguid]
+            elif status == "invalid_inventory_null_aaguid":
+                assessment["aaguid"] = None
+            else:
+                assessment["aaguid"] = 42
             db.execute(
                 "UPDATE attestation_inventory SET assessment=? WHERE person=?",
-                (json.dumps([aaguid]), person),
+                (json.dumps(assessment), person),
             )
     if status == "retired":
         holder.store.retire_person(person)
@@ -78,24 +94,8 @@ def test_metadata_check_matches_effective_withdrawals_for_active_credentials(
         return snapshot
 
     monkeypatch.setattr(metadata_monitor, "fetch_and_pin", verified_snapshot)
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "aweb-key-holder",
-            "--state",
-            str(holder.store.directory),
-            "--mds-cache",
-            str(cache),
-            "--mds-manifest",
-            str(manifest),
-            "metadata-check",
-        ],
-    )
-    with pytest.raises(SystemExit) as exited:
-        cli.main()
-    assert exited.value.code == exit_code
-    output = capsys.readouterr()
+    exit_status, output = run_monitor(holder, cache, manifest, monkeypatch, capsys)
+    assert exit_status == exit_code
     if exit_code == 1:
         assert output.out == ""
         assert json.loads(output.err)["error"] == "metadata_check_unavailable"
@@ -116,3 +116,80 @@ def test_metadata_check_matches_effective_withdrawals_for_active_credentials(
         b64encode(root).decode(),
     ):
         assert value not in output.out and value not in output.err
+
+
+def run_monitor(holder, cache, manifest, monkeypatch, capsys):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "aweb-key-holder",
+            "--state",
+            str(holder.store.directory),
+            "--mds-cache",
+            str(cache),
+            "--mds-manifest",
+            str(manifest),
+            "metadata-check",
+        ],
+    )
+    with pytest.raises(SystemExit) as exited:
+        cli.main()
+    return exited.value.code, capsys.readouterr()
+
+
+@pytest.mark.parametrize(
+    "expired", [False, True], ids=["valid_then_corrupt", "expired"]
+)
+def test_metadata_check_verifies_real_signed_cache(
+    holder, tmp_path, monkeypatch, capsys, expired
+):
+    device, snapshot, (aaguid, leaf, root) = packed_device(
+        holder.approval_origin, holder.rp_id
+    )
+    holder.grading = EnrollmentGrading("hardware", snapshot)
+    person, receipt = creation(holder, device=device)
+    with holder.store._connection() as db, db:
+        db.execute("UPDATE enrollments SET active=1 WHERE person=?", (person,))
+    entry = snapshot.by_aaguid[aaguid]
+    entry["statusReports"].append(
+        {
+            "status": "ATTESTATION_KEY_COMPROMISE",
+            "batchCertificate": b64encode(leaf).decode("ascii"),
+        }
+    )
+    cache = tmp_path / "metadata-cache"
+    manifest = tmp_path / "pin.json"
+    now = datetime.now(UTC)
+    blob = signed_cache(
+        cache,
+        manifest,
+        entry=entry,
+        now=now,
+        next_update=now + timedelta(days=-1 if expired else 2),
+    )
+    assert stat.S_IMODE(cache.stat().st_mode) == 0o700
+    status, output = run_monitor(holder, cache, manifest, monkeypatch, capsys)
+    if not expired:
+        assert status == 3
+        assert output.err == ""
+        assert (
+            json.loads(output.out)["withdrawal"] == "fido_withdrawal_matches_inventory"
+        )
+        for value in (
+            aaguid,
+            person,
+            receipt["assertion"]["id"],
+            encode(leaf),
+            encode(root),
+        ):
+            assert value not in output.out
+        blob.write_bytes(b"corrupted cached artifact")
+        status, output = run_monitor(holder, cache, manifest, monkeypatch, capsys)
+
+    assert status == 1
+    assert output.out == ""
+    assert json.loads(output.err) == {
+        "error": "metadata_check_unavailable",
+        "message": "Check the reviewed metadata pin, its private cache and the holder state.",
+    }

@@ -11,6 +11,7 @@ import dns.message
 import dns.rcode
 import dns.rrset
 import httpx
+import pytest
 import pytest_asyncio
 from approval_service.grading import EnrollmentGrading
 from aweb_key_holder.enrollment import Holder
@@ -20,10 +21,25 @@ from awid.registry import RegistryClient
 from awid_service.db import AwidDatabaseInfra
 from awid_service.main import create_app
 from pgdbm import AsyncDatabaseManager
-from redis.asyncio import Redis
 from policy_inputs import policy_file
+from redis.asyncio import Redis
 
 pytest_plugins = ("pgdbm.fixtures.conftest",)
+
+
+@pytest.fixture
+def holder(tmp_path):
+    store = KeyStore.create(tmp_path / "private", organisation="example.test")
+    policy = policy_file(tmp_path / "human-approval.json", store.descriptor().domain)
+    return Holder(
+        store,
+        human_approval_config=policy,
+        registry=None,
+        origin="https://holder.example",
+        approval_origin="https://approval.example",
+        rp_id="approval.example",
+        grading=EnrollmentGrading("passkey_only", None),
+    )
 
 
 @pytest_asyncio.fixture

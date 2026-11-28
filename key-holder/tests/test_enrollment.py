@@ -15,26 +15,9 @@ from approval_service.seams import check_enrollment_intent, commitment
 from approval_service.verify import Refused as ApprovalRefused
 from authenticator import Passkey, packed_device
 from aweb_key_holder.auth import Caller
-from aweb_key_holder.enrollment import Holder
-from aweb_key_holder.keys import KeyStore, Refused
+from aweb_key_holder.keys import Refused
 from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
 from pending import expire_pending
-from policy_inputs import policy_file
-
-
-@pytest.fixture
-def holder(tmp_path):
-    store = KeyStore.create(tmp_path / "private", organisation="example.test")
-    policy = policy_file(tmp_path / "human-approval.json", store.descriptor().domain)
-    return Holder(
-        store,
-        human_approval_config=policy,
-        registry=None,
-        origin="https://holder.example",
-        approval_origin="https://approval.example",
-        rp_id="approval.example",
-        grading=EnrollmentGrading("passkey_only", None),
-    )
 
 
 def person():

@@ -56,14 +56,17 @@ def _matches(snapshot, assessment, *, now):
     if not isinstance(assessment, dict) or not isinstance(
         assessment.get("format"), str
     ):
-        raise ValueError("invalid attestation assessment")
+        raise TypeError("invalid attestation assessment")
     if "verified_chain" not in assessment:
         return False
     chain = assessment["verified_chain"]
     if not isinstance(chain, list) or not chain:
         raise ValueError("invalid attestation chain")
+    aaguid = assessment.get("aaguid")
+    if not isinstance(aaguid, str):
+        raise TypeError("invalid attestation AAGUID")
     return snapshot.has_effective_withdrawal(
-        assessment["aaguid"],
+        aaguid,
         now=now,
         certificate_hashes={hashlib.sha256(decode(cert)).digest() for cert in chain},
     )
