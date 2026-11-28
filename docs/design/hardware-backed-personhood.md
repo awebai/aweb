@@ -179,11 +179,17 @@ its `valid_until`. The issuer cannot recall a P already signed. The exposure
 window is bounded by that lifetime (§4.1).
 
 **Known future withdrawals.** `Snapshot.model` skips status reports whose
-`effectiveDate` is still in the future (`metadata.py:101-108`). Such a
-report is already known when the issuer signs, so it caps P's `valid_until`
-(§4.1). P never extends past a withdrawal date the issuer already holds. The
-remaining exposure is a withdrawal that FIDO publishes after P is signed. That
-exposure is bounded by the 31-day cap and the snapshot cutoff.
+`effectiveDate` is still in the future (`metadata.py:101-108`). Such a report
+is already known when the issuer signs. If an applicable withdrawal takes
+effect at or before the P that would be signed expires, the issuer **signs no
+P** for that credential (§4.2 step 4). It never shortens `valid_until` to the
+withdrawal date. That date is specific to a model or batch, and with
+`assessed_under` it would identify the model from the public MDS (§6). So P
+never extends past a withdrawal date the issuer already holds, and the
+credential's backing lapses at the previous P's ordinary, shared
+`valid_until`. The remaining exposure is a withdrawal that FIDO publishes
+after P is signed. That exposure is bounded by the 31-day cap and the
+snapshot cutoff.
 
 ## 4. What the issuer signs, and where
 
@@ -206,9 +212,9 @@ prefix ending in one newline, and an issuer signature
 | `credential` | The basis credential's selector in that B |
 | `basis` | `certified_hardware`, the only v1 value |
 | `grade_policy` | The B entry's `grade_policy` (for example `fido-mds-l1-single-device-uv-v1`) |
-| `assessed_under` | `sha256:` digest of the snapshot under which the issuer last confirmed the credential's eligibility. At first issuance it equals the snapshot in B. Later it names the renewal snapshot. |
+| `assessed_under` | `sha256:` digest of the snapshot whose evaluation, in the final decision of §4.2, justified **this** P. This holds for the first P as well. It may differ from the enrollment snapshot that B records, and B keeps that original snapshot unchanged. |
 | `issued_at` | The issuer's clock time |
-| `valid_until` | The earliest of: the `assessed_under` snapshot's `valid_until`; the earliest `effectiveDate`, after `issued_at`, of any withdrawal report in that snapshot that applies to this AAGUID, or to a certificate in its retained chain (§3); and `issued_at + 31 days` |
+| `valid_until` | `min(assessed_under.valid_until, issued_at + 31 days)`. It is computed only from inputs that every credential assessed under that snapshot shares, never from a model- or batch-specific date (§3, §6). |
 
 `P` = issuer signature over `UTF8("aweb.human-hardware-backing/1\n") + canonical_json(P_body)`.
 The issuer selection and key are those that sign B for this person, and they
@@ -231,16 +237,25 @@ The issuer signs P only when all of the following hold.
    snapshot, and the result was `certified_hardware`. This is the existing
    precondition for signing that grade in B (`docs/protocol.md:439-446`). The
    same pass establishes the batch profile (§2).
-2. **The exact basis completed its own proof.** The enrollment that B records
-   is **committed**: the issuer signed an E that references this B and its
-   confirmation receipt (`docs/protocol.md:511-533`). And **the basis
-   credential itself** made the accepted UV assertion in that receipt,
-   meaning an `enrollment_confirmation` or `enroll_existing_person`
-   confirmation that the issuer built with its own nonce over this `H_B`. A
-   pending B is not enough. Neither is a credential that is merely listed in
-   a B whose confirmation another credential signed. A hardware key enrolled
-   beside a passkey that did the confirming becomes a basis only after it
-   completes its own issuer-built confirmation.
+2. **The exact basis completed its own proof, in the existing pending
+   ceremony.** The order is acyclic and follows the bootstrap construction
+   (`docs/protocol.md:511-533`):
+   1. the issuer prepares the proposed certificate (or, for an existing
+      person, names the committed one) and signs the pending B;
+   2. the issuer checks that **the basis credential itself** made the accepted
+      UV assertion of the `enrollment_confirmation` (or `enroll_existing_person`
+      confirmation) that the issuer built, with its own nonce, over this
+      pending `H_B`;
+   3. the issuer commits the certificate and signs E referencing B and that
+      receipt;
+   4. only then may the issuer publish P. awsign activates on its normal
+      observation of the committed certificate and E; P is not an input to
+      activation.
+
+   A pending B, with no commit, gives no P. Neither does a credential that is
+   merely listed in a B whose confirmation another credential signed. A
+   hardware key enrolled beside a passkey that did the confirming becomes a
+   basis only after it completes its own issuer-built confirmation.
 3. **Continuity.** The credential is in the person's current B, and B binds
    the person's current certificate and identity key. After an identity-key
    change, the basis carries over only through an authenticated continuity
@@ -248,20 +263,34 @@ The issuer signs P only when all of the following hold.
    current before the change (`docs/protocol.md:535-556`). A bare rotation with
    no such evidence goes through the existing recovery or enrollment rule
    (§7) before any credential is a basis again.
-4. **A current assessment.** Re-evaluation against the issuer's currently
-   installed snapshot succeeds (§3).
+4. **The final decision.** This step is the single compare-and-sign decision
+   below. It runs the same way for the first P and for every renewal.
 
 The issuer records the observation from steps 1 and 2 once, privately: the
 committed `H_B`, `H_E` and confirmation receipt digest for the basis. Each
 renewal, and each later continuity transition, reuses that observation rather
 than repeating the person's ceremony.
 
-**Ordering.** Signing is a compare-and-sign. The issuer reads the installed
-snapshot digest and the person's current `H_B` under one lock. It signs, then
-commits P only if both are unchanged. Installing a new snapshot, or changing
-the person's binding, takes the same lock. An in-flight renewal that started
-under a superseded snapshot or binding is discarded and redone. It is never
-published.
+**The final decision (compare-and-sign).** Under one lock, which installing a
+snapshot and changing the person's binding also take, the issuer:
+
+1. reads the installed snapshot S and the person's current `H_B`;
+2. fixes `issued_at` to its clock and computes
+   `valid_until = min(S.valid_until, issued_at + 31 days)`;
+3. evaluates eligibility with `Snapshot.model(aaguid, now=issued_at, …)` under
+   S (§3), and refuses if `issued_at >= S.valid_until`, or if any applicable
+   withdrawal in S has an `effectiveDate` at or before `valid_until`;
+4. signs P with `assessed_under = S`, that `issued_at` and that `valid_until`;
+5. publishes P only if S and `H_B` are still the current ones and the
+   publication time is still before `valid_until`. Otherwise it discards P and
+   decides again.
+
+Eligibility and the deadline therefore come from one evaluation at one time.
+A wait that crosses a cutoff while both digests stay unchanged cannot publish
+a P past it: step 5 checks the time, and step 3 has already ruled out every
+withdrawal before `valid_until`. The first P after a delayed confirmation
+names the snapshot actually evaluated. For example, B was prepared under N,
+the confirmation completed after N+1 was installed, and P names N+1.
 
 The issuer re-signs P after it installs each new snapshot, and before the
 current P expires.
@@ -334,9 +363,17 @@ need.
 2. The version is supported and the body is well formed and closed. If not,
    `unsupported_version` or `malformed`.
 3. The issuer signature verifies under independently obtained Trust, using the
-   same issuer selection rule as B. If the signature fails, the reason is
-   `signature_invalid`. If a trust input cannot be read, it is
-   `trust_input_unavailable`, never a manufactured invalid signature.
+   same issuer selection rule as B. If a trust input cannot be read, the
+   reason is `trust_input_unavailable`, never a manufactured invalid
+   signature. If the signature does not verify under current Trust, it is
+   `signature_invalid`. The one exception is `issuer_superseded` (status
+   `invalid`). That applies only when the verifier also holds
+   **independently verified** predecessor evidence: the namespace's checked
+   controller or issuer history, showing that the signing key was that
+   issuer's authenticated key during `[issued_at, valid_until)` and has since
+   been replaced. A holder-supplied key never counts. Without that evidence
+   the result stays `signature_invalid`, so an arbitrary bad signature and an
+   authenticated superseded signer are never confused.
 4. `person`, `certificate` and `identity_key` equal this link's checked subject.
    If not, `binding_mismatch`.
 5. A presented B verifies, `H_B(B)` equals `binding`, and B lists `credential`
@@ -389,7 +426,7 @@ Each human link gets these results, added beside the existing fields in
 | `personhood.status` | `vouched` or `unknown` |
 | `personhood.issuer` | The checked issuing namespace, or null |
 | `hardware_backing.status` | `current`, `lapsed`, `none` or `invalid` |
-| `hardware_backing.reason` | `checked`, `missing_statement`, `missing_binding`, `malformed`, `unsupported_version`, `signature_invalid`, `binding_mismatch`, `not_yet_valid`, `expired`, `not_current`, `trust_input_unavailable` |
+| `hardware_backing.reason` | `checked`, `missing_statement`, `missing_binding`, `malformed`, `unsupported_version`, `signature_invalid`, `issuer_superseded`, `binding_mismatch`, `not_yet_valid`, `expired`, `not_current`, `trust_input_unavailable` |
 | `hardware_backing.issuer` / `credential` / `assessed_under` / `valid_until` | From a checked P, or null |
 | `hardware_backing.enrollment_proof` | `true`, `false` or null, plus the receipt's event when it is true |
 | `as_of` | The evaluation time, and whether this is a current or a historical reading |
@@ -438,7 +475,7 @@ the relying party's own record (`docs/protocol.md:403-406`).
 | The `AttestationAssessment` (§4.2a) of a batch-profile basis credential: format, AAGUID, firmware, verified chain, root, profile | **Issuer only**: private, encrypted at rest, keyed by (namespace, person, credential). Deleted when the credential leaves B or the ID is revoked. Never logged, exported, or put in P, B, E or the registry. | Needed to re-evaluate against later snapshots and certificate-scoped withdrawals (§3). Retained only for the batch profile, which identifies a model and batch, never a device (§2). Other profiles are discarded at assessment. |
 | Credential public key, selector, grade, enrollment snapshot digest | Public in B, as today | Existing |
 | Person ID, certificate digest, identity key, `H_B`, selector, basis, grade policy, `assessed_under`, dates | Public in P | The minimum needed to check P |
-| Which model or vendor the person uses | Never public | P names no model, and `assessed_under` is the same for everyone |
+| Which model or vendor the person uses | Never public | P names no model. `assessed_under` and `valid_until` derive only from inputs shared by every credential assessed under that snapshot (§4.1). A known model- or batch-specific withdrawal date suppresses P rather than appearing in it (§3). |
 
 Further rules:
 
@@ -455,10 +492,10 @@ Further rules:
 
 | Event | Effect on P and the reading | Basis |
 |---|---|---|
-| Identity-key rotation (enrolled keys unchanged) | The old P binds the old identity key and certificate, so a current reading gives `not_current`. The issuer re-signs B (an existing duty) and then P. No ceremony is needed. | approval-service@be53c0a `README.md:30-37,153-157` |
-| Namespace-controller rotation | P signed by the superseded key no longer verifies for current readings. The issuer re-signs at the next renewal. Historical readings use as-of Trust. | `README.md:30-37` |
+| Identity-key rotation (enrolled keys unchanged) | The old P binds the old identity key and certificate, so a current reading gives `not_current`. The issuer re-signs B (an existing duty). It re-signs P only when the rotation is an authenticated continuity transition recorded in E (§4.2 step 3). A bare rotation goes through recovery or enrollment first. | approval-service@be53c0a `README.md:30-37,153-157`; §4.2 |
+| Namespace-controller rotation | P signed by the superseded key no longer verifies under current Trust. That reads `signature_invalid`, or `issuer_superseded` with independently verified predecessor evidence (§5.2 step 3). The new issuer re-signs at the next renewal under §4.2. Historical readings use as-of Trust. | `README.md:30-37` |
 | Basis credential lost, replaced or withdrawn | Replacing or withdrawing an enrolled key changes the identity key (`docs/protocol.md:94-99`). The old P becomes not current. A new P needs a batch-profile `certified_hardware` credential in the new B that completed its own proof (§4.2). If only passkeys remain, hardware backing is `none` from then on. Personhood (the issuer's vouching) is unaffected. The retained reference is deleted. | §4.2 |
-| A second hardware credential is still enrolled | The issuer issues the new P on that credential. P names it, and a basis never moves silently. | §4.1 |
+| A second hardware credential is still enrolled | That credential grounds a new P only if it meets §4.2 itself: its own batch-profile assessment and its own completed issuer-built confirmation. P names it, and a basis never moves silently. | §4.2 |
 | Re-enrollment at another origin or RP | New B, new assessment, new P. Nothing carries over. | `docs/protocol.md:121-126` |
 | Recovery or recreation after losing every key | A new creation event after an explicit break. P starts over and never inherits the old basis. | `docs/deployment.md:160-167`; `docs/protocol.md:100-106` |
 | ID revoked | Current readings give `not_current`. Retained references are deleted. Historical readings of earlier windows still hold. | §5.4 |
@@ -501,10 +538,23 @@ the certificate body is closed (`docs/id-certificates.md:102-116`), so it
 cannot carry a per-issuer condition. That leaves two options. This design does
 not choose between them.
 
-**Option A: a person ID only after hardware.** aweb.ai issues a `kind=human`
-certificate only once the person has enrolled at awsign a credential that
-satisfies §4.2. Until then, a signed-in person has an account but no aweb.ai
-person ID.
+**Option A: a person ID only after hardware (issuance-time policy).** aweb.ai
+commits a `kind=human` certificate only when the pending ceremony of §4.2
+step 2 succeeds with a basis-eligible credential. Until then, a signed-in
+person has an account but no aweb.ai person ID. A first sign-in with no prior
+ID runs the following order:
+
+1. aweb.ai prepares the proposed certificate, but does not commit it, and the
+   person registers at awsign under aweb.ai's challenge;
+2. aweb.ai signs the pending B;
+3. the eligible hardware credential itself completes the
+   `enrollment_confirmation` over that `H_B`;
+4. aweb.ai commits the certificate and signs E, and may then publish P;
+5. awsign activates on its normal observation.
+
+If the confirmation was made by a passkey, or the pending attempt expires, the
+certificate is never committed under A. The pending material expires as it
+does today.
 
 - §5.1 applies to aweb.ai's IDs unchanged. Every `kind=human` certificate has
   one meaning, whichever issuer signed it.
@@ -513,9 +563,14 @@ person ID.
 - Cost: sign-in alone does not give a person ID, which changes the pilot's
   sign-in and onboarding flow.
 
-**Option B: an ID for every sign-in, with personhood unknown.** aweb.ai issues
-a `kind=human` certificate to everyone who signs in. Its sign-in IDs read
-personhood `unknown` unless P is current.
+**Option B: an ID for every sign-in, with personhood unknown (reading-time
+policy).** aweb.ai issues a `kind=human` certificate to everyone who signs
+in. Its sign-in IDs read personhood `unknown` unless P is current. This is
+coherent only with **authenticated issuer conditions that the holder cannot
+suppress**. For a covered issuer, a missing or unavailable condition reads
+`unknown` or `trust_input_unavailable`, and never silently yields `vouched`.
+The issuer is the checked issuing namespace. A hosting provider's origin or
+domain never selects it.
 
 - A verifier must be able to tell that aweb.ai's `kind=human` does not vouch
   on its own. Nothing a holder presents can carry that, because the holder
@@ -646,8 +701,17 @@ matter, and each test is paired with a valid neighbouring case:
 - P past its `valid_until` reads `lapsed`. P one second before `issued_at`,
   P for another certificate digest, P whose `H_B` does not match, and P whose
   credential is `passkey_uv` in B each read `invalid`, with distinct reasons.
-- P signed by a superseded controller key gives `not_current` when read now,
-  and `current` when read as of a time inside its window.
+- P signed by a superseded controller key reads `invalid` with
+  `issuer_superseded` when read now and the independently verified controller
+  history is supplied, and `signature_invalid` without that history. The same
+  P reads `current` when read as of a time inside its window under as-of
+  Trust. A P signed by an arbitrary key reads `signature_invalid` even when
+  history is supplied.
+- Under option A (if chosen): a first sign-in confirmed by an eligible
+  hardware credential commits the certificate and then publishes P. A pending
+  attempt, and one confirmed only by a passkey, commit no certificate.
+- Under option B (if chosen): an aweb.ai sign-in ID with its issuer condition
+  unavailable reads `unknown` or `trust_input_unavailable`, never `vouched`.
 - A FIDO withdrawal leaves the certificate unrevoked. Backing reads `lapsed`
   after `valid_until`. A newly enrolled current key that completes its own
   proof reads `current` again.
@@ -664,12 +728,18 @@ matter, and each test is paired with a valid neighbouring case:
   no P until it completes its own confirmation. A committed basis carried
   through a recorded continuity transition keeps producing P. A bare identity
   rotation with no continuity evidence produces no P.
-- A snapshot carrying a withdrawal with a future `effectiveDate` for the basis
-  model caps `valid_until` at that date. An unaffected model's renewal in the
-  same snapshot is not capped.
+- A snapshot carrying a withdrawal for the basis model, with an
+  `effectiveDate` before the would-be `valid_until`, produces no P. An
+  unaffected model's renewal in the same snapshot gets the same `valid_until`
+  as every other credential under that snapshot.
 - A renewal that started under snapshot N, racing the installation of
   snapshot N+1, is discarded and redone under N+1. A renewal with no race
   commits.
+- Delayed first P: B prepared under N, and the confirmation completed after
+  N+1 was installed. P names N+1, and B still names N.
+- Time-only cutoff: a decision whose wait crosses `valid_until`, or crosses a
+  withdrawal `effectiveDate`, while both digests stay unchanged, publishes
+  nothing.
 - A body with `valid_until > issued_at + 31 days` reads `malformed`.
 - `enrollment_proof`: a confirmation receipt by P's credential over P's
   `H_B` gives true. The same receipt beside a P for another `H_B`, a receipt
