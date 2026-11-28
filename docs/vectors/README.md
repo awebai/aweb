@@ -900,7 +900,7 @@ Both are required.
 
 ### `trust-web-cases-v1.json` — experimental
 
-Cases of the experimental trust-web model in `spec/trust-model` (a Lean 4
+Cases of the experimental trust-web model in `docs/spec/trust-model` (a Lean 4
 model of selected trust rules). The model's author owns its decisions, the
 cases it emits and their meaning. `server/tests/test_trust_web_cases.py` runs
 every implemented case against a real AWID registry and a real aweb server, and
