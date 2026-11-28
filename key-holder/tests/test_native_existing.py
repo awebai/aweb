@@ -1,5 +1,7 @@
 """Operator issuance followed by own-key later enrollment on the real registry."""
 
+import json
+
 import httpx
 import pytest
 from approval_service.statements import verify_enrollment_evidence
@@ -66,7 +68,16 @@ async def test_existing_person_self_enrolls_and_controller_cannot_carry_it(
             **own,
         )
         assert response.status_code == 200, response.text
-        proof = creation_receipt(response.json(), device)
+        bound = response.json()
+        repeated = await call(
+            client,
+            f"/v1/enrollments/{person}/binding",
+            {"material": material, "registration_count": 1},
+            **own,
+        )
+        assert repeated.status_code == 200, repeated.text
+        assert repeated.json() == bound
+        proof = creation_receipt(bound, device)
         response = await call(client, f"/v1/enrollments/{person}/finish", proof, **own)
         assert response.status_code == 200, response.text
         activation = response.json()
@@ -83,6 +94,23 @@ async def test_existing_person_self_enrolls_and_controller_cannot_carry_it(
             )["proof_status"]
             == "checked"
         )
+        with holder.store._connection() as db:
+            assert not db.execute(
+                "SELECT credential FROM active_attestation_inventory"
+            ).fetchall()
         response = await call(client, f"/v1/enrollments/{person}/activate", {}, **own)
         assert response.status_code == 200, response.text
         assert holder.active_person(person)["active"] == 1
+    with holder.store._connection() as db:
+        inventoried = db.execute(
+            "SELECT credential FROM active_attestation_inventory WHERE namespace=? AND person=?",
+            (root.domain, person),
+        ).fetchone()
+        assert inventoried["credential"] == proof["assertion"]["id"]
+    holder.store.retire_person(person)
+    with holder.store._connection() as db:
+        assert not db.execute("SELECT credential FROM attestation_inventory").fetchall()
+        saved = db.execute(
+            "SELECT creation_receipt FROM enrollments WHERE person=?", (person,)
+        ).fetchone()
+        assert json.loads(saved["creation_receipt"]) == proof

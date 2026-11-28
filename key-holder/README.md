@@ -21,6 +21,8 @@ generated inside the holder. Use `descriptor` to read a descriptor and
 <hex>` writes only ciphertext encrypted to the operator's offline X25519 key.
 `migrate` explicitly applies ordered holder-store migrations; serving never
 applies them. Mount the private state only into the holder, under its own UID.
+Keep that state on storage encrypted at rest. It includes the issuer's private
+attestation inventory.
 
 Approval is off by default. Start without an approval service:
 

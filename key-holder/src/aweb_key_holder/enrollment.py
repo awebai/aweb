@@ -791,16 +791,17 @@ class Holder:
                 raise Refused("registration_count_mismatch")
             if not intent["not_before"] <= now() < intent["deadline"]:
                 raise Refused("enrollment_expired")
-            credentials = [
+            assessments = [
                 self.grading.check(
                     item["registration"],
                     expected_challenge=decode(intent["challenge"]),
                     origin=self.approval_origin,
                     rp_id=self.rp_id,
                     now=datetime.now(UTC),
-                ).binding_entry()
+                )
                 for item in answer["registrations"]
             ]
+            credentials = [result.binding_entry() for result in assessments]
             if len({item["id"] for item in credentials}) != len(credentials):
                 raise Refused("credential_duplicate")
             root = self.store._descriptor(db)
@@ -865,6 +866,26 @@ class Holder:
                 raise Refused("enrollment_expired")
             if intent["purpose"] == "enroll_existing_person":
                 self._existing_current(intent, current, root)
+            # Private issuer inventory for withdrawal matching and P assessment.
+            # The credential grade is the only eligibility signal.
+            for result in assessments:
+                assessment = result.attestation_assessment
+                if assessment is None:
+                    raise Refused("attestation_assessment_unavailable")
+                record = {"format": assessment.format}
+                if assessment.verified_chain:
+                    record.update(
+                        aaguid=assessment.aaguid,
+                        firmware_version=assessment.firmware_version,
+                        verified_chain=[
+                            encode(cert) for cert in assessment.verified_chain
+                        ],
+                    )
+                db.execute(
+                    "INSERT INTO attestation_inventory (namespace,person,credential,assessment) "
+                    "VALUES (?,?,?,?) ON CONFLICT (namespace,person,credential) DO NOTHING",
+                    (root.domain, person, result.credential_id, json.dumps(record)),
+                )
             return {
                 "state": "awaiting_confirmation",
                 "intent": signed,
@@ -1072,6 +1093,21 @@ class Holder:
                 now=now(),
                 trust=trust,
             )
+            if not row["active"]:
+                hardware_credentials = {
+                    entry["id"]
+                    for entry in value["binding"]["binding"]["credentials"]
+                    if entry["grade"] == "certified_hardware"
+                }
+                if hardware_credentials:
+                    recorded = db.execute(
+                        "SELECT credential FROM attestation_inventory WHERE namespace=? AND person=?",
+                        (trust.organisation, person),
+                    )
+                    if not hardware_credentials.issubset(
+                        item["credential"] for item in recorded
+                    ):
+                        raise Refused("attestation_assessment_unavailable")
             db.execute("UPDATE enrollments SET active=1 WHERE person=?", (person,))
             self._owner(row, caller, admitted, activation=True)
             if not 0 <= now() - trust.observed_at <= 60:

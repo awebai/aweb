@@ -136,7 +136,7 @@ class KeyStore:
         store = cls(directory)
         with store._connection() as db:
             store._refuse_legacy_configuration(db)
-            if db.execute("PRAGMA user_version").fetchone()[0] != 5:
+            if db.execute("PRAGMA user_version").fetchone()[0] != 6:
                 raise Refused("schema_unavailable")
             if db.execute("SELECT count(*) FROM configuration").fetchone()[0] != 1:
                 raise Refused("storage_unavailable")
@@ -190,7 +190,17 @@ class KeyStore:
                 if policy is not None:
                     self.observe_policy(db, policy, legacy_approved=approved)
                 db.execute("COMMIT")
-            elif version != 5:
+                version = 5
+            if version == 5:
+                db.executescript(
+                    "BEGIN IMMEDIATE;\n"
+                    + files(__package__)
+                    .joinpath("migrations/006_attestation_inventory.sql")
+                    .read_text()
+                    + "\nCOMMIT;"
+                )
+                version = 6
+            if version != 6:
                 raise Refused("schema_unavailable")
 
     @staticmethod

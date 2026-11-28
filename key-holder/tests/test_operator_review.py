@@ -182,7 +182,10 @@ def test_person_history_migrates_existing_enrollment_without_reset(tmp_path):
     target, key = person()
     saved = holder.bootstrap_pending(target, key)
     audit = holder.store.audit()
+    from legacy_schema import remove_attestation_inventory
+
     with holder.store._connection() as db, db:
+        remove_attestation_inventory(db)
         db.execute("ALTER TABLE enrollments DROP COLUMN retired_at")
         db.execute("DROP TABLE person_revisions")
         db.execute(
