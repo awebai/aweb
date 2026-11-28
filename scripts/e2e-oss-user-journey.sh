@@ -44,6 +44,7 @@ canonicalize_dir() {
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$REPO_ROOT/scripts/journey-network.sh"
+source "$REPO_ROOT/scripts/lib/revocation-probe.sh"
 # Docker resolves a bind source on the daemon's host. Inside the candidate
 # runner the daemon is the host's, and only the run-owned bind root has the same
 # path on both sides, so the journey's files live there when it is set.
@@ -296,9 +297,7 @@ cleanup() {
   local status=$?
   echo ""
   echo "--- Cleanup ---"
-  if [[ -n "${REVOCATION_PROBE_PID:-}" ]]; then
-    kill "$REVOCATION_PROBE_PID" 2>/dev/null || true
-  fi
+  stop_revocation_probe
   stop_quickstart_bridges
   release_service_ports || status=1
   release_customer_port 2>/dev/null || status=1
@@ -2942,53 +2941,41 @@ REVOKE_STATUS="$(echo "$revoke_out" | jq_field status)"
 # stated there was nothing active to revoke.
 assert_eq "bob revoked" "revoked" "$REVOKE_STATUS"
 
-# The successful removal anchors the revocation window. Bob's sends are polled
-# against the untouched service in the background while Phases 18-21 run;
-# finish_revocation_probe collects the verdict before Phase 22 recreates the
-# server. The window is the deployed server's own: one fresh window of its
-# cached revocation list plus the stale-while-revalidate window.
-# Seconds on the monotonic clock, which every process on the host shares.
-monotonic_seconds() {
-  python3 -c 'import time; print(int(time.monotonic()))'
+# The successful removal anchors the revocation window, read at once. Bob's
+# sends are polled against the untouched service in the background while
+# Phases 18-21 run; finish_revocation_probe collects the verdict before
+# Phase 22 recreates the server. The window is the deployed server's own: one
+# fresh window of its cached revocation list plus the stale-while-revalidate
+# window.
+REVOCATION_ANCHOR="$(monotonic_seconds)"
+REVOCATION_WINDOW="$(cd "$SERVER_DIR" && compose exec -T aweb python -c \
+  'from awid import registry; print(registry._TEAM_REVOCATIONS_CACHE_TTL_SECONDS * registry._STALE_MULTIPLIER)')"
+[[ "$REVOCATION_WINDOW" =~ ^[1-9][0-9]*$ ]] || {
+  echo "FATAL: the server reported no revocation window: $REVOCATION_WINDOW" >&2
+  exit 1
 }
-
-probe_revocation() {
-  local dir="$1" window="$2" started attempt=0 out status
-  started="$(monotonic_seconds)"
-  while :; do
-    attempt=$((attempt + 1))
-    if out="$(run_aw_in "$BOB_DIR" mail send --plaintext --to alice \
-      --subject "after-revocation-$attempt" --body "must not arrive" --json 2>"$dir/stderr")"; then
-      status=0
-    else
-      status=$?
-    fi
-    if [[ "$status" != 0 ]]; then
-      printf '%s\n' "$out" >"$dir/refusal.json"
-      printf 'after-revocation-%s\n' "$attempt" >"$dir/refused-subject"
-      printf '%s\n' "$(($(monotonic_seconds) - started))" >"$dir/seconds"
-      printf '%s\n' "$status" >"$dir/exit"
-      return 0
-    fi
-    if (($(monotonic_seconds) - started > window + 5)); then
-      printf 'accepted\n' >"$dir/exit"
-      return 0
-    fi
-    sleep 5
-  done
-}
+REVOCATION_PROBE="$E2E_ROOT/revocation-probe"
+mkdir -p "$REVOCATION_PROBE"
+start_revocation_probe "$REVOCATION_PROBE" "$REVOCATION_ANCHOR" "$REVOCATION_WINDOW"
 
 finish_revocation_probe() {
   echo "=== Phase 20: Bob's requests fail after revocation ==="
   wait "$REVOCATION_PROBE_PID" || true
-  REVOCATION_PROBE_PID=""
-  local verdict refused_subject alice_inbox
-  if [[ "$(cat "$REVOCATION_PROBE/exit")" == accepted ]]; then
-    echo "  FAIL: bob was still accepted ${REVOCATION_WINDOW}s + 5s after his removal"
+  stop_revocation_probe
+  local verdict budget refused_subject alice_inbox
+  budget=$((REVOCATION_WINDOW + 5))
+  verdict="$(cat "$REVOCATION_PROBE/verdict")"
+  if [[ "$verdict" != refused ]]; then
+    echo "  FAIL: bob's sends ended $verdict, not refused within ${budget}s of his removal"
     fail=$((fail + 1))
     exit 1
   fi
-  echo "  bob refused $(cat "$REVOCATION_PROBE/seconds")s after removal (window ${REVOCATION_WINDOW}s)"
+  if (($(cat "$REVOCATION_PROBE/seconds") > budget)); then
+    echo "  FAIL: bob was refused $(cat "$REVOCATION_PROBE/seconds")s after removal, past ${budget}s"
+    fail=$((fail + 1))
+    exit 1
+  fi
+  echo "  bob refused $(cat "$REVOCATION_PROBE/seconds")s after removal (budget ${budget}s)"
   verdict="$(python3 -c '
 import json, sys
 error = json.load(open(sys.argv[1]))["error"]
@@ -3006,17 +2993,6 @@ print(error.get("http_status"), error.get("reason"))
   pass=$((pass + 1))
   echo ""
 }
-
-REVOCATION_WINDOW="$(cd "$SERVER_DIR" && compose exec -T aweb python -c \
-  'from awid import registry; print(registry._TEAM_REVOCATIONS_CACHE_TTL_SECONDS * registry._STALE_MULTIPLIER)')"
-[[ "$REVOCATION_WINDOW" =~ ^[1-9][0-9]*$ ]] || {
-  echo "FATAL: the server reported no revocation window: $REVOCATION_WINDOW" >&2
-  exit 1
-}
-REVOCATION_PROBE="$E2E_ROOT/revocation-probe"
-mkdir -p "$REVOCATION_PROBE"
-probe_revocation "$REVOCATION_PROBE" "$REVOCATION_WINDOW" >"$REVOCATION_PROBE/probe.log" 2>&1 &
-REVOCATION_PROBE_PID=$!
 echo ""
 
 # ---------------------------------------------------------------------------
