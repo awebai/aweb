@@ -177,6 +177,9 @@ func TestAwTopLevelHelpGroupsCommandsByArchitecture(t *testing.T) {
 		if command.GroupID != group {
 			t.Errorf("%s is in group %q, want %q", name, command.GroupID, group)
 		}
+		if command.Hidden {
+			t.Errorf("%s is hidden from top-level help", name)
+		}
 	}
 	for _, retired := range []string{"agents", "spawn"} {
 		if command, ok := byName[retired]; ok && !command.Hidden {
