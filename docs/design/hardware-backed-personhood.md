@@ -585,16 +585,14 @@ retirement or replacement ends the binding. P avoids this for hardware
 backing. Approvals are tracked separately as approval-service task
 aweb-adrj.11. The `tpm` and `apple` finding is aweb-adrj.10.
 
-### 10.5 Open: does "physical key" cover certified platform authenticators?
+### 10.5 Open with Juan: the definition of "physical key"
 
-v1 uses the existing `certified_hardware` definition: L1+ certified,
-single-device, with UV. A `packed` platform authenticator that meets that
-definition qualifies. The alternative is to also require the MDS
-`attachmentHint` to be external, which would mean a roaming security key only.
-That would be a second hardware definition beside the shared grade. The
-recommendation is to keep v1 as written. `docs/human-approval-architecture.md:334`
-says "certified security key". **This is with Juan.** Until he answers, v1
-keeps the shared grade, with platform authenticators included.
+Juan's answer, relayed by oats-integration-coordinator and approval-service on
+2026-11-28: "for now let's make it work". v1 keeps the shared approval-service
+`certified_hardware` grade: certified (L1+), single-device and user-verified,
+with platform authenticators included. The definition of "physical key" stays
+open with Juan. An alternative, such as also requiring the MDS `attachmentHint`
+to be external, would be a later, explicit change.
 
 ### 10.6 Follow-up: carriage in messages
 
