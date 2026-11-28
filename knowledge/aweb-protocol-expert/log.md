@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-28
+* **Harvest**: OKF proposal from seat aweb-protocol-expert-e2ee-rotation with three backing notes; each claim checked against aweb main fbfa65f22 and the source's branch.
+* **Creation**: decisions [a rotated encryption key is ordered by lineage, not timestamp](/aweb-protocol-expert/decisions/rotated-encryption-key-is-ordered-by-lineage.md) (client half on a branch, projection half ruled and not implemented) and [listing recovery is row-local](/aweb-protocol-expert/decisions/listing-recovery-is-row-local.md) (placeholders on a branch, identity-level failure released in aw-v1.36.59); lesson [a CLI change is not verified by the CLI suite](/aweb-protocol-expert/lessons/a-cli-change-is-not-verified-by-the-cli-suite.md).
+* **Deprecation**: [test databases run on tmpfs](/aweb-protocol-expert/decisions/test-databases-run-on-tmpfs.md) is superseded as the local rule by Juan's correction of 2026-11-28, relayed by the coordinator seat (source-reported): test databases go on the host PostgreSQL through pgdbm's test fixtures, no Postgres containers are started for tests, and Redis stays isolated. Its measurement lessons stand.
+
 ## 2026-11-06
 * **Fix**: review of the db-access proposal on npm gitHead, PubSub release and stream checkouts: hosted specifics in [stream bodies leave the request connection scope](/aweb-protocol-expert/lessons/stream-bodies-leave-the-request-connection-scope.md) and [an npm tarball publish records no gitHead](/aweb-protocol-expert/lessons/npm-tarball-publish-records-no-githead.md) are stated generically or dropped, as the OSS and Cloud boundary requires.
 * **Update**: [SSE cleanup is cancelled on client disconnect](/aweb-protocol-expert/lessons/sse-cleanup-is-cancelled-on-disconnect.md) and [a PubSub release survives any cancellation](/aweb-protocol-expert/decisions/pubsub-release-survives-any-cancellation.md) link each other: the AnyIO shield covers Starlette's disconnect, not native task cancellation.

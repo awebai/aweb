@@ -1,9 +1,9 @@
 ---
 type: Decision
-title: Test databases run on tmpfs
-description: Intermittent PostgreSQL stalls in the test suite are fixed by putting every test database on tmpfs, never by raising a timeout or skipping; the mount must be verified, not assumed. Accepted, not yet landed.
+title: Test databases run on tmpfs (superseded)
+description: Superseded on 2026-11-28 as the local rule. Test databases now go on the host PostgreSQL through pgdbm's own test fixtures with small pools, no Postgres containers are started for tests, and Redis stays isolated; the measurement lessons still stand.
 tags: [decision, testing, postgresql, flaky-tests, infrastructure]
-timestamp: 2026-10-21
+timestamp: 2026-11-28
 ---
 
 Approved by the OSS coordinator on 2026-10-21 after an intermittent five-second
@@ -12,8 +12,22 @@ past an unexplained intermittent failure... fix it without raising the
 timeout." The approval: test databases that stall for seconds on host I/O are
 the defect, and tmpfs removes it.
 
-**Status:** accepted direction, not landed; confirmed by the coordinator on
-2026-10-25. On main, only some end-to-end compose files use tmpfs, and the
+**Superseded on 2026-11-28.** Juan corrected this direction on 2026-11-28.
+The coordinator seat relayed the correction in mail, so it is recorded as
+source-reported. The tmpfs launcher is no longer the local rule:
+
+- Test databases go on the host PostgreSQL of the team's machines. pgdbm's
+  own test fixtures create and drop them, and pools stay small.
+- No Postgres containers are started for tests.
+- Redis stays isolated, either in its own instance or in explicitly isolated
+  db numbers, because the shared host Redis holds other seats' data in dbs
+  0-15.
+
+The gate's per-run services are unaffected. The decision and measurement
+lessons below are kept as history, and the measurement lessons still apply.
+
+**Status before supersession:** accepted direction, not landed; confirmed by
+the coordinator on 2026-10-25. On main, only some end-to-end compose files use tmpfs, and the
 shared test launcher still starts PostgreSQL on disk.
 
 # Evidence
@@ -51,3 +65,5 @@ Harvested 2026-10-25 from seat `aweb-protocol-expert-chat-session-fix` (notes
 `diagnostics-can-disturb-storage-measurements.md`, `aciq-time-window.md`;
 coordinator a0d0120b; reply 145a45c9), with status and A/B figures confirmed
 by the OSS coordinator in f8d89364.
+
+Supersession evidence: OKF proposal from aweb-protocol-expert/aweb-protocol-expert-e2ee-rotation, 2026-11-28; notes/read-team-test-rules-before-db-runs.md (coordinator mail c5c892a9, source-reported).
