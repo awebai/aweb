@@ -22,6 +22,8 @@ import (
 type commandStack struct {
 	RegistryURL string `json:"registry_url"`
 	ServerURL   string `json:"server_url"`
+	// The server's longest revocation delay: fresh plus stale cache windows.
+	RevocationWindowSeconds int `json:"revocation_window_seconds"`
 }
 
 type commandStackAuthority struct {

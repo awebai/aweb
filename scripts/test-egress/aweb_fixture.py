@@ -22,6 +22,7 @@ import dns.asyncresolver
 from aweb.config import enforce_team_key_pins, require_registered_certificates
 from aweb.testing import running_server
 from aweb_naapp_testing.network import DnsServer
+from awid import registry as awid_registry
 from awid.ratelimit import MemoryFixedWindowRateLimiter
 from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN, running_registry
 from redis.asyncio import Redis
@@ -178,7 +179,17 @@ async def main() -> None:
         )
         await serve_fixture_app(server.app, sock=server_sock, resources=resources)
         print(
-            json.dumps({"registry_url": registry_url, "server_url": server_url}),
+            json.dumps(
+                {
+                    "registry_url": registry_url,
+                    "server_url": server_url,
+                    # The longest a revocation may take to reach this server:
+                    # one fresh window of the cached revocation list plus its
+                    # stale-while-revalidate window.
+                    "revocation_window_seconds": awid_registry._TEAM_REVOCATIONS_CACHE_TTL_SECONDS
+                    * awid_registry._STALE_MULTIPLIER,
+                }
+            ),
             flush=True,
         )
         await asyncio.to_thread(sys.stdin.read)
