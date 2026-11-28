@@ -248,13 +248,15 @@ class AuthorityWorkRepository:
                     raise FederationAuthorityError("federation_authority_cas_conflict")
                 row = await tx.fetch_one(
                     """
+                    WITH stamp AS (SELECT clock_timestamp() AS at)
                     INSERT INTO {{tables.federation_authority_results}} (
                         scope_key, fence, status, evidence, source_digest,
                         created_at, expires_at
-                    ) VALUES (
-                        $1, $2, $3, $4::jsonb, $5, clock_timestamp(),
-                        clock_timestamp() + $6::integer * INTERVAL '1 second'
                     )
+                    SELECT
+                        $1, $2, $3, $4::jsonb, $5, stamp.at,
+                        stamp.at + $6::integer * INTERVAL '1 second'
+                    FROM stamp
                     ON CONFLICT (scope_key) DO UPDATE SET
                         fence = EXCLUDED.fence,
                         status = EXCLUDED.status,

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from uuid import uuid4
 
 import pytest
+
+from awid.db_config import build_database_config
+from pgdbm import AsyncDatabaseManager
 
 from aweb.federation.authority_work import AuthorityWorkRepository
 from awid.federation_errors import FederationAuthorityError
@@ -144,3 +148,49 @@ async def test_fence_overflow_and_database_failure_fail_closed(aweb_cloud_db) ->
             "discovery:example.com", owner_id=uuid4(), ttl_seconds=5
         )
     assert outage.value.reason == "federation_authority_coordination_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_a_published_result_lives_exactly_its_ttl_when_the_clock_advances(
+    aweb_cloud_db, shared_test_database
+) -> None:
+    # A connection whose clock_timestamp() advances 10 ms on every read: a
+    # result stamped from two reads would live longer than its TTL.
+    await aweb_cloud_db.aweb_db.execute("CREATE SCHEMA IF NOT EXISTS clock_fault")
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        CREATE OR REPLACE FUNCTION clock_fault.clock_timestamp()
+        RETURNS timestamptz LANGUAGE plpgsql VOLATILE AS $$
+        BEGIN
+            PERFORM pg_catalog.pg_sleep(0.01);
+            RETURN pg_catalog.clock_timestamp();
+        END $$
+        """
+    )
+    pool = await AsyncDatabaseManager.create_shared_pool(
+        build_database_config(
+            connection_string=shared_test_database.config.get_dsn(),
+            min_connections=1,
+            max_connections=1,
+            shared_pool_search_path="clock_fault, pg_catalog",
+        )
+    )
+    try:
+        repository = AuthorityWorkRepository(
+            AsyncDatabaseManager(pool=pool, schema="aweb")
+        )
+        scope = "discovery:exact-ttl"
+        lease = await repository.acquire_lease(scope, owner_id=uuid4(), ttl_seconds=10)
+
+        await repository.publish_result(
+            lease, status="failed", evidence={"reason": "x"}, ttl_seconds=5
+        )
+    finally:
+        await pool.close()
+
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT created_at, expires_at FROM {{tables.federation_authority_results}} "
+        "WHERE scope_key = $1",
+        scope,
+    )
+    assert row["expires_at"] - row["created_at"] == timedelta(seconds=5)

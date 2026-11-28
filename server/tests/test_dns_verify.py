@@ -158,15 +158,12 @@ async def test_discovery_caps_ancestor_walk_at_registered_domain_boundary(monkey
         lambda _domain: "project.github.io",
     )
 
-    assert (
-        await discover_authoritative_registry("project.github.io")
-        == DEFAULT_AWID_REGISTRY_URL
-    )
+    assert await discover_registry_override("project.github.io") is None
     assert queries == ["_awid.project.github.io"]
 
 
 @pytest.mark.asyncio
-async def test_discovery_ignores_unrelated_txt_records_and_falls_back(monkeypatch):
+async def test_discovery_ignores_unrelated_txt_records(monkeypatch):
     async def _resolve(qname: str, _rrtype: str):
         if qname == "_awid.project.aweb.ai":
             raise NXDOMAIN()
@@ -179,10 +176,7 @@ async def test_discovery_ignores_unrelated_txt_records_and_falls_back(monkeypatc
         dns_verify, "_registered_domain_boundary", lambda _domain: "aweb.ai"
     )
 
-    assert (
-        await discover_authoritative_registry("project.aweb.ai")
-        == DEFAULT_AWID_REGISTRY_URL
-    )
+    assert await discover_registry_override("project.aweb.ai") is None
 
 
 def test_awid_txt_helpers_emit_release_contract() -> None:
@@ -236,7 +230,7 @@ async def test_discovery_treats_timeout_as_hard_failure(monkeypatch):
     )
 
     with pytest.raises(DnsVerificationError, match="DNS lookup failed"):
-        await discover_authoritative_registry("project.aweb.ai")
+        await discover_registry_override("project.aweb.ai")
 
 
 @pytest.mark.asyncio
@@ -247,7 +241,7 @@ async def test_discovery_treats_no_nameservers_as_hard_failure(monkeypatch):
     monkeypatch.setattr("dns.asyncresolver.resolve", _resolve)
 
     with pytest.raises(DnsVerificationError, match="DNS lookup failed"):
-        await discover_authoritative_registry("example.com")
+        await discover_registry_override("example.com")
 
 
 @pytest.mark.asyncio

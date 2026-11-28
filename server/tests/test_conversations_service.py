@@ -188,7 +188,7 @@ async def test_missing_conversation_is_not_found(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_closed_conversation_rejects_continuation_and_new_participants(
+async def test_closed_conversation_rejects_continuation(
     aweb_cloud_db,
 ):
     db = _DbShim(aweb_cloud_db.aweb_db)

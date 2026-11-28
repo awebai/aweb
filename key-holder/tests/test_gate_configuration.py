@@ -4,7 +4,15 @@ import pytest
 from approval_service.grading import EnrollmentGrading
 from aweb_key_holder.enrollment import Holder
 from aweb_key_holder.keys import KeyStore, Refused
-from legacy_schema import remove_attestation_inventory
+from older_store import older_store
+
+
+def approved_store(directory):
+    """A version 4 holder whose operator configured approved human issuance."""
+    store = older_store(directory, version=4)
+    with store._connection() as db, db:
+        db.execute("UPDATE configuration SET human_issuance='approved'")
+    return store
 
 
 @pytest.mark.parametrize("configured", [False, True])
@@ -12,16 +20,10 @@ from legacy_schema import remove_attestation_inventory
 def test_legacy_holder_refuses_start_with_replacement_instruction(
     tmp_path, configured, mode
 ):
-    store = KeyStore.create(tmp_path / "private", organisation="example.test")
-    # The actual persisted setting used by the previous version, not a mocked
-    # policy source. Keep its upgrade behavior even after the column retires.
-    with store._connection() as db, db:
-        names = {row[1] for row in db.execute("PRAGMA table_info(configuration)")}
-        if "human_issuance" not in names:
-            db.execute("ALTER TABLE configuration ADD COLUMN human_issuance TEXT")
-        db.execute("UPDATE configuration SET human_issuance=?", (mode,))
-        remove_attestation_inventory(db)
-        db.execute("PRAGMA user_version=4")
+    if mode == "approved":
+        store = approved_store(tmp_path / "private")
+    else:
+        store = older_store(tmp_path / "private", version=4)
     values = (
         dict(
             approval_origin="https://approval.example",
@@ -38,14 +40,8 @@ def test_legacy_holder_refuses_start_with_replacement_instruction(
 def test_approved_database_requires_explicit_configured_migration(tmp_path):
     from approval_service.gate import Policy
 
-    store = KeyStore.create(tmp_path / "private", organisation="example.test")
+    store = approved_store(tmp_path / "private")
     descriptor = store.descriptor()
-    with store._connection() as db, db:
-        db.execute(
-            "ALTER TABLE configuration ADD COLUMN human_issuance TEXT NOT NULL DEFAULT 'approved'"
-        )
-        remove_attestation_inventory(db)
-        db.execute("PRAGMA user_version=4")
     with pytest.raises(Refused, match="human_approval"):
         KeyStore.open(store.directory)
     for policy in (None, Policy.from_section(None)):
@@ -136,13 +132,7 @@ def test_actual_legacy_cli_names_the_replacement_section(tmp_path):
     import subprocess
     import sys
 
-    store = KeyStore.create(tmp_path / "private", organisation="example.test")
-    with store._connection() as db, db:
-        db.execute(
-            "ALTER TABLE configuration ADD COLUMN human_issuance TEXT DEFAULT 'approved'"
-        )
-        remove_attestation_inventory(db)
-        db.execute("PRAGMA user_version=4")
+    store = approved_store(tmp_path / "private")
     result = subprocess.run(
         [
             sys.executable,
@@ -171,13 +161,7 @@ def test_migrated_approved_holder_requires_source_until_explicit_empty_policy(tm
     from policy_inputs import policy_file
     import base64
 
-    store = KeyStore.create(tmp_path / "private", organisation="example.test")
-    with store._connection() as db, db:
-        db.execute(
-            "ALTER TABLE configuration ADD COLUMN human_issuance TEXT DEFAULT 'approved'"
-        )
-        remove_attestation_inventory(db)
-        db.execute("PRAGMA user_version=4")
+    store = approved_store(tmp_path / "private")
     store.migrate(
         policy=Policy.from_section(
             {
@@ -323,7 +307,10 @@ def test_cli_policy_refusal_explains_the_operator_action(tmp_path, problem):
     from approval_service.gate import Policy
     from policy_inputs import policy_file
 
-    store = KeyStore.create(tmp_path / "private", organisation="example.test")
+    if problem == "missing_source":
+        store = approved_store(tmp_path / "private")
+    else:
+        store = KeyStore.create(tmp_path / "private", organisation="example.test")
     command = [
         sys.executable,
         "-m",
@@ -336,12 +323,6 @@ def test_cli_policy_refusal_explains_the_operator_action(tmp_path, problem):
         "https://holder.example",
     ]
     if problem == "missing_source":
-        with store._connection() as db, db:
-            db.execute(
-                "ALTER TABLE configuration ADD COLUMN human_issuance TEXT DEFAULT 'approved'"
-            )
-            remove_attestation_inventory(db)
-            db.execute("PRAGMA user_version=4")
         store.migrate(
             policy=Policy.from_section(
                 {

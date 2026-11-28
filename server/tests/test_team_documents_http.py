@@ -3,6 +3,7 @@ and the size limit on both documents."""
 
 from __future__ import annotations
 
+import json
 from uuid import uuid4
 
 import pytest
@@ -212,3 +213,129 @@ async def test_concurrent_document_creation_allocates_distinct_versions(
         await env.db.fetch_value(f"SELECT count(*) FROM {table} WHERE team_id=$1", TEAM)
         == 3
     )
+
+
+async def _versions(env, kind):
+    table = "{{tables.team_" + kind + "}}"
+    return await env.db.fetch_value(
+        f"SELECT count(*) FROM {table} WHERE team_id=$1", TEAM
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_new_team_reads_an_empty_stored_roles_bundle(privacy_app):
+    env = privacy_app
+    assert await _versions(env, "roles") == 0
+
+    active = await _request(env, "GET", "/v1/roles/active")
+
+    assert active.status_code == 200, active.text
+    assert active.json()["roles"] == {}
+    rows = await env.db.fetch_all(
+        "SELECT id, is_active, bundle_json FROM {{tables.team_roles}} WHERE team_id=$1",
+        TEAM,
+    )
+    assert len(rows) == 1 and rows[0]["is_active"]
+    bundle = rows[0]["bundle_json"]
+    bundle = json.loads(bundle) if isinstance(bundle, str) else bundle
+    assert bundle == {"roles": {}, "adapters": {}}
+    assert active.json()["team_roles_id"] == str(rows[0]["id"])
+
+
+@pytest.mark.asyncio
+async def test_team_roles_routes_carry_the_ids_the_cli_reads(privacy_app):
+    env = privacy_app
+    first = (await _request(env, "GET", "/v1/roles/active")).json()
+    assert first["active_team_roles_id"] == first["team_roles_id"]
+    bundle = {
+        "roles": {"developer": {"title": "Developer", "playbook_md": "Ship code"}},
+        "adapters": {},
+    }
+
+    created = await _request(
+        env,
+        "POST",
+        "/v1/roles",
+        {"bundle": bundle, "base_team_roles_id": first["team_roles_id"]},
+    )
+    assert created.status_code == 200, created.text
+    new_id = created.json()["team_roles_id"]
+    activated = await _request(env, "POST", f"/v1/roles/{new_id}/activate")
+    assert activated.status_code == 200, activated.text
+    assert activated.json()["active_team_roles_id"] == new_id
+
+    before = await _versions(env, "roles")
+    stale = await _request(
+        env,
+        "POST",
+        "/v1/roles",
+        {"bundle": bundle, "base_team_roles_id": first["team_roles_id"]},
+    )
+    assert stale.status_code == 409, stale.text
+    assert await _versions(env, "roles") == before
+
+    active = (await _request(env, "GET", "/v1/roles/active?role_name=developer")).json()
+    assert active["team_roles_id"] == active["active_team_roles_id"] == new_id
+    assert active["selected_role"]["role_name"] == "developer"
+    history = (await _request(env, "GET", "/v1/roles/history")).json()
+    assert {v["team_roles_id"] for v in history["team_roles_versions"]} == {
+        first["team_roles_id"],
+        new_id,
+    }
+    deactivated = await _request(env, "POST", "/v1/roles/deactivate")
+    assert deactivated.status_code == 200, deactivated.text
+    replaced = deactivated.json()
+    assert replaced["deactivated"] is True
+    # The deactivation's id and version are the empty bundle now active.
+    now_active = (await _request(env, "GET", "/v1/roles/active")).json()
+    assert replaced["active_team_roles_id"] == now_active["team_roles_id"] != new_id
+    assert replaced["version"] == now_active["version"]
+    assert now_active["roles"] == {}
+
+
+@pytest.mark.asyncio
+async def test_team_instructions_routes_carry_the_ids_the_cli_reads(privacy_app):
+    env = privacy_app
+    first = await _request(
+        env, "POST", "/v1/instructions", {"document": {"body_md": "first"}}
+    )
+    assert first.status_code == 200, first.text
+    first_id = first.json()["team_instructions_id"]
+    assert (
+        await _request(env, "POST", f"/v1/instructions/{first_id}/activate")
+    ).status_code == 200
+
+    created = await _request(
+        env,
+        "POST",
+        "/v1/instructions",
+        {"document": {"body_md": "second"}, "base_team_instructions_id": first_id},
+    )
+    assert created.status_code == 200, created.text
+    new_id = created.json()["team_instructions_id"]
+    activated = await _request(env, "POST", f"/v1/instructions/{new_id}/activate")
+    assert activated.status_code == 200, activated.text
+    assert activated.json()["active_team_instructions_id"] == new_id
+
+    before = await _versions(env, "instructions")
+    stale = await _request(
+        env,
+        "POST",
+        "/v1/instructions",
+        {"document": {"body_md": "stale"}, "base_team_instructions_id": first_id},
+    )
+    assert stale.status_code == 409, stale.text
+    assert await _versions(env, "instructions") == before
+
+    active = (await _request(env, "GET", "/v1/instructions/active")).json()
+    assert active["team_instructions_id"] == active["active_team_instructions_id"]
+    assert active["team_instructions_id"] == new_id
+    assert active["document"]["body_md"] == "second"
+    assert active["document"]["format"] == "markdown"
+    history = (await _request(env, "GET", "/v1/instructions/history")).json()
+    assert {
+        v["team_instructions_id"] for v in history["team_instructions_versions"]
+    } >= {
+        first_id,
+        new_id,
+    }

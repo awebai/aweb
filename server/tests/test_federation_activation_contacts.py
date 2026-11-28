@@ -5,7 +5,8 @@ import pytest
 from aweb.messaging.contacts import (
     add_contact,
     bind_contact_identity,
-    has_exact_active_identity_contact,
+    IdentityContactMatch,
+    identity_contact_match,
 )
 from aweb.service_errors import ConflictError
 
@@ -30,11 +31,14 @@ async def test_address_only_contact_is_inert_until_identity_bound(
         label="Alice",
     )
 
-    assert not await has_exact_active_identity_contact(
-        db,
-        owner_dids=["did:aw:owner"],
-        contact_address="alpha.example/alice",
-        contact_did_aw="did:aw:alice",
+    assert (
+        await identity_contact_match(
+            db,
+            owner_dids=["did:aw:owner"],
+            address="alpha.example/alice",
+            sender_did="did:aw:alice",
+        )
+        is IdentityContactMatch.NEEDS_BINDING
     )
 
 
@@ -52,23 +56,32 @@ async def test_contact_authority_requires_exact_address_and_stable_identity(
         label="Alice",
     )
 
-    assert await has_exact_active_identity_contact(
-        db,
-        owner_dids=["did:aw:owner"],
-        contact_address="alpha.example/alice",
-        contact_did_aw="did:aw:alice",
+    assert (
+        await identity_contact_match(
+            db,
+            owner_dids=["did:aw:owner"],
+            address="alpha.example/alice",
+            sender_did="did:aw:alice",
+        )
+        is IdentityContactMatch.MATCHED
     )
-    assert not await has_exact_active_identity_contact(
-        db,
-        owner_dids=["did:aw:owner"],
-        contact_address="alpha.example/alice",
-        contact_did_aw="did:aw:replacement",
+    assert (
+        await identity_contact_match(
+            db,
+            owner_dids=["did:aw:owner"],
+            address="alpha.example/alice",
+            sender_did="did:aw:replacement",
+        )
+        is IdentityContactMatch.NOT_FOUND
     )
-    assert not await has_exact_active_identity_contact(
-        db,
-        owner_dids=["did:aw:owner"],
-        contact_address="alpha.example/mallory",
-        contact_did_aw="did:aw:alice",
+    assert (
+        await identity_contact_match(
+            db,
+            owner_dids=["did:aw:owner"],
+            address="alpha.example/mallory",
+            sender_did="did:aw:alice",
+        )
+        is IdentityContactMatch.NOT_FOUND
     )
 
 
@@ -116,11 +129,14 @@ async def test_contact_binding_requires_explicit_cas_for_reassignment(
         controller_did="did:key:z6Mkcontroller",
         replacement_accepted=True,
     )
-    assert await has_exact_active_identity_contact(
-        db,
-        owner_dids=["did:aw:owner"],
-        contact_address="alpha.example/alice",
-        contact_did_aw="did:aw:replacement",
+    assert (
+        await identity_contact_match(
+            db,
+            owner_dids=["did:aw:owner"],
+            address="alpha.example/alice",
+            sender_did="did:aw:replacement",
+        )
+        is IdentityContactMatch.MATCHED
     )
 
 

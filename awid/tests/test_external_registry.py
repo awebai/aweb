@@ -139,6 +139,33 @@ async def test_fetches_complete_verified_evidence_from_one_strict_origin() -> No
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case",
+    json.loads((_VECTORS / "identity-log-raw-wire-v1.json").read_text())["cases"],
+    ids=lambda case: case["name"],
+)
+async def test_raw_wire_sequence_values_fail_closed_on_the_registry_read(case) -> None:
+    resolution = json.loads(case["resolution_json"])
+    served = responses(include_log=False)
+    address = served["/v1/namespaces/alpha.example.com/addresses/Alice"]
+    address["did_aw"] = resolution["did_aw"]
+    address["current_did_key"] = resolution["current_did_key"]
+    escaped_did = resolution["did_aw"].replace(":", "%3A")
+    served[f"/v1/did/{escaped_did}/key"] = resolution
+    resolver = StrictExternalRegistry(
+        txt_resolver=DNS(),
+        host_resolver=Hosts(),
+        http_factory=lambda *_: HTTP(served),
+        origin_context=OriginContext(),
+    )
+
+    with pytest.raises(FederationAuthorityError) as raised:
+        await resolver.fetch_evidence("alpha.example.com/Alice", authority_generation=4)
+
+    assert raised.value.reason == "sender_did_log_invalid"
+
+
+@pytest.mark.asyncio
 async def test_response_domains_accept_canonical_equivalents() -> None:
     equivalent = responses()
     equivalent["/v1/namespaces/alpha.example.com"]["domain"] = "Alpha.Example.Com."

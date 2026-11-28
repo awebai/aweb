@@ -50,7 +50,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 _MANIFEST = _ROOT / "test-vectors" / "federation" / "preactivation-harness-v1.json"
 
 
-def test_topology_and_canonical_input_artifacts_are_exact() -> None:
+def test_topology_and_activation_inputs_are_exact() -> None:
     manifest = json.loads(_MANIFEST.read_text(encoding="utf-8"))
     topology = manifest["topology"]
     assert topology == {
@@ -62,41 +62,10 @@ def test_topology_and_canonical_input_artifacts_are_exact() -> None:
         "strict_ingress_calls": False,
     }
 
-    expected_inputs = {
-        "docs/vectors/federation-origin-ip-v1.json": (
-            15231,
-            "503136cce893f63f0b7fe21525e0de03b873dae2d043debe1b80756c0fe66e43",
-        ),
-        "docs/vectors/federation-discovery-v1.json": (
-            18774,
-            "42fc649d28f097d22073d10e01c800ca653e177ec055a9cd2f40b047eb6a22da",
-        ),
-        "docs/vectors/federation-authority-state-v1.json": (
-            25085,
-            "f47996006465b825a876621468dd651c1d15e8d0177c2e021e63a103c97f4e28",
-        ),
-        "docs/vectors/identity-log-v1.json": (
-            4169,
-            "bf49643f2986753ec91297b928f23ddeaa84a9138b65fa21fd9708b9d7df552e",
-        ),
-        "docs/vectors/message-signing-v1.json": (
-            2558,
-            "c19418cf505c22c4782b9840f89a2dabea02751515c4a59a014f520ba152bc92",
-        ),
-        "docs/vectors/e2ee-v2-cross-language.json": (
-            11591,
-            "6aacf482e22889f633d6bbf91b327d61837fe48ec54769924defbb4ccb2b6339",
-        ),
-    }
-    inputs = manifest["canonical_inputs"]
-    assert {item["path"] for item in inputs} == set(expected_inputs)
-    for item in inputs:
+    # scripts/check_federation_harness.py holds the inventory, embedding and
+    # digest checks, and scripts/check_vector_provenance.py the absolute pins.
+    for item in manifest["canonical_inputs"]:
         assert set(item) == {"path", "bytes", "sha256", "purpose", "embedded"}
-        body = (_ROOT / item["path"]).read_bytes()
-        assert (item["bytes"], item["sha256"]) == expected_inputs[item["path"]]
-        assert len(body) == item["bytes"]
-        assert hashlib.sha256(body).hexdigest() == item["sha256"]
-        assert item["embedded"] is False
         assert item["purpose"]
 
     assert manifest["activation_inputs"] == {

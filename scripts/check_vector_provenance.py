@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import io
 import tokenize
 import json
@@ -14,6 +15,36 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 PUBLIC_ROOT = PurePosixPath("docs/vectors")
+# The federation pre-activation harness's public inputs, held to their exact
+# bytes. The harness manifest records the same digests, but a change can
+# rewrite the manifest together with the file; this table is the one absolute
+# record of the ACKed bytes.
+PREACTIVATION_INPUT_PINS = {
+    PUBLIC_ROOT / "federation-origin-ip-v1.json": (
+        15231,
+        "503136cce893f63f0b7fe21525e0de03b873dae2d043debe1b80756c0fe66e43",
+    ),
+    PUBLIC_ROOT / "federation-discovery-v1.json": (
+        18774,
+        "42fc649d28f097d22073d10e01c800ca653e177ec055a9cd2f40b047eb6a22da",
+    ),
+    PUBLIC_ROOT / "federation-authority-state-v1.json": (
+        25085,
+        "f47996006465b825a876621468dd651c1d15e8d0177c2e021e63a103c97f4e28",
+    ),
+    PUBLIC_ROOT / "identity-log-v1.json": (
+        4169,
+        "bf49643f2986753ec91297b928f23ddeaa84a9138b65fa21fd9708b9d7df552e",
+    ),
+    PUBLIC_ROOT / "message-signing-v1.json": (
+        2558,
+        "c19418cf505c22c4782b9840f89a2dabea02751515c4a59a014f520ba152bc92",
+    ),
+    PUBLIC_ROOT / "e2ee-v2-cross-language.json": (
+        11591,
+        "6aacf482e22889f633d6bbf91b327d61837fe48ec54769924defbb4ccb2b6339",
+    ),
+}
 EXPECTED_VECTOR_ROOTS = {
     PurePosixPath("cli/go/internal/conformance/vectors"),
     PUBLIC_ROOT,
@@ -425,8 +456,6 @@ ROOT_CONSUMERS = {
     PurePosixPath("awid/tests/test_federation_authority_vectors.py"): _consumer(
         {
             "federation-authority-state-v1.json",
-            "federation-discovery-v1.json",
-            "federation-origin-ip-v1.json",
             "identity-log-negative-v1.json",
             "identity-log-raw-wire-v1.json",
             "identity-log-v1.json",
@@ -441,7 +470,7 @@ ROOT_CONSUMERS = {
         '_VECTORS = _ROOT / "docs" / "vectors"',
     ),
     PurePosixPath("awid/tests/test_external_registry.py"): _consumer(
-        "identity-log-v1.json",
+        {"identity-log-raw-wire-v1.json", "identity-log-v1.json"},
         '_VECTORS = _ROOT / "docs" / "vectors"',
     ),
     PurePosixPath("awid/tests/test_identity_log_verify.py"): _consumer(
@@ -482,15 +511,12 @@ ROOT_CONSUMERS = {
     PurePosixPath("server/tests/test_federation_preactivation_harness.py"): _consumer(
         {
             "e2ee-v2-cross-language.json",
-            "federation-authority-state-v1.json",
-            "federation-discovery-v1.json",
-            "federation-origin-ip-v1.json",
             "id-certificates-v1.json",
             "identity-log-v1.json",
             "message-signing-v1.json",
         },
         '_ROOT / "docs/vectors/id-certificates-v1.json"',
-        '_ROOT / item["path"]',
+        '_ROOT / plaintext_meta["canonical_vector"]',
     ),
     PurePosixPath("scripts/check_federation_harness.py"): _consumer(
         {
@@ -1305,6 +1331,11 @@ def check(
             if not managed_reference:
                 failures.append(f"reference bypasses root authority for {name}: {path}")
 
+    for path, (size, digest) in PREACTIVATION_INPUT_PINS.items():
+        body = read(path)
+        if len(body) != size or hashlib.sha256(body).hexdigest() != digest:
+            failures.append(f"pre-activation input changed: {path}")
+
     return sorted(set(failures))
 
 
@@ -1476,6 +1507,40 @@ def self_test(root: Path) -> None:
             a2a_mirror: read_bytes(root, PUBLIC_ROOT / a2a_mirror.name),
         },
         expected="does not resolve the repository-root authority",
+    )
+    _expect_rewritten_input_refused(root, tracked)
+
+
+def _expect_rewritten_input_refused(
+    root: Path, tracked: tuple[PurePosixPath, ...]
+) -> None:
+    # Rewrite a pinned input and refresh its digest in the harness manifest:
+    # the harness's own manifest check then passes, and only the pin refuses.
+    import check_federation_harness as harness
+
+    pinned = next(iter(PREACTIVATION_INPUT_PINS))
+    changed = read_bytes(root, pinned) + b"\n"
+
+    def refresh(manifest: dict) -> None:
+        for item in manifest["canonical_inputs"]:
+            if item["path"] == str(pinned):
+                item["bytes"] = len(changed)
+                item["sha256"] = hashlib.sha256(changed).hexdigest()
+
+    ((manifest_path, manifest),) = harness._manifest_mutation(root, refresh).items()
+    accepted = harness.check(
+        root, {Path(str(pinned)): changed, manifest_path: manifest}
+    )
+    if accepted:
+        raise AssertionError(
+            f"refreshed manifest was not accepted by the harness: {accepted}"
+        )
+    _expect_mutation(
+        "pre-activation input rewritten with its manifest digest",
+        root,
+        tracked,
+        overrides={pinned: changed},
+        expected=f"pre-activation input changed: {pinned}",
     )
 
 
