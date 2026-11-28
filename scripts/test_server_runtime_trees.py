@@ -5,9 +5,9 @@ kept host scripts exercise resolution/lifetime; this is filesystem isolation
 coverage, not a substitute for the native seven-worker product measurement.
 """
 
-import ast
 from concurrent.futures import ThreadPoolExecutor
 import importlib.util
+import json
 import os
 from pathlib import Path
 import shutil
@@ -61,38 +61,68 @@ package = pathlib.Path.cwd()
 '''
 
 
-def consumer_paths(filename, worker):
-    """Evaluate the real module's path declarations, without product imports."""
-    tree = ast.parse((ROOT / "server/tests" / filename).read_text())
-    assignments = [
-        node
-        for node in tree.body
-        if isinstance(node, ast.Assign)
-        and any(
-            isinstance(target, ast.Name)
-            and target.id in {"SOURCE_REPO", "REPO", "HOST"}
-            for target in node.targets
-        )
-    ]
-    values = {
-        "__file__": str(ROOT / "server/tests" / filename),
-        "Path": Path,
-        "runtime_repo": runtime.runtime_repo,
-    }
-    with patch.dict(
-        os.environ,
-        {
-            "PYTEST_XDIST_WORKER": worker,
+# Imports the real consumer modules in a fresh interpreter as one xdist worker,
+# and reports the runtime paths and launch commands they would use.
+CONSUMERS = r"""
+import inspect, json, sys
+from pathlib import Path
+sys.path[:0] = [sys.argv[1], sys.argv[1] + "/tests"]
+import tests.test_agent_activity_emitter_e2e as emitter
+import tests.test_e2ee_local_sender_read_trust as trust
+import tests.test_connection_notice_restart as restart
+top = sys.argv[2]
+print(json.dumps({
+    "emitter": str(emitter.REPO),
+    "trust": str(trust.REPO),
+    "restart": str(restart.REPO),
+    "host": str(emitter.HOST),
+    # restart reuses the trust module's worker-tree fixture, not a copy.
+    "restart_uses_trust_runtime": inspect.getfile(restart.runtime_packages.__wrapped__)
+    == trust.__file__,
+    "commands": [
+        ["node", str(emitter.HOST)],
+        trust.channel_command(),
+        trust.pi_command(top),
+        restart.node_runtime_command("core", Path(top)),
+    ],
+}))
+"""
+
+# Runs each module fixture's own body as a worker, with no process creation.
+FIXTURES = r"""
+import subprocess, sys
+sys.path[:0] = [sys.argv[1], sys.argv[1] + "/tests"]
+import tests.test_agent_activity_emitter_e2e as emitter
+import tests.test_e2ee_local_sender_read_trust as trust
+def refuse(*args, **kwargs):
+    raise AssertionError(f"a worker fixture started a process: {args}")
+subprocess.run = refuse
+for module, fixture in ((emitter, emitter.channel_core_build), (trust, trust.runtime_packages)):
+    for _ in range(2):
+        fixture.__wrapped__(module.REPO)
+print("no build")
+"""
+
+
+def as_worker(program, worker, top):
+    """Run a probe as xdist worker `worker`, with `top` as its temporary root."""
+    result = subprocess.run(
+        [sys.executable, "-c", program, str(ROOT / "server"), str(top)],
+        env=dict(
+            os.environ,
+            PYTEST_XDIST_WORKER=worker,
             # xdist sets the count beside each worker's identity.
-            "PYTEST_XDIST_WORKER_COUNT": "2",
-            "PYTEST_XDIST_TESTRUNUID": "a" * 32,
-        },
-    ):
-        exec(
-            compile(ast.Module(body=assignments, type_ignores=[]), filename, "exec"),
-            values,
-        )
-    return values
+            PYTEST_XDIST_WORKER_COUNT="2",
+            PYTEST_XDIST_TESTRUNUID="a" * 32,
+            TMPDIR=str(top),
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode:
+        raise AssertionError(result.stdout + result.stderr)
+    return result.stdout
 
 
 @unittest.skipUnless(shutil.which("node"), "Node is required for the reader boundary")
@@ -131,33 +161,20 @@ class RuntimeTrees(unittest.TestCase):
                 patch.object(runtime.tempfile, "gettempdir", return_value=str(top)),
                 patch.dict(os.environ, environment),
             ):
-                emitter = consumer_paths("test_agent_activity_emitter_e2e.py", "gw0")
-                trust = consumer_paths("test_e2ee_local_sender_read_trust.py", "gw0")
-                other = consumer_paths("test_e2ee_local_sender_read_trust.py", "gw1")[
-                    "REPO"
-                ]
-                reader = emitter["REPO"]
-                self.assertEqual(reader, trust["REPO"])
+                values = json.loads(as_worker(CONSUMERS, "gw0", top))
+                other = Path(json.loads(as_worker(CONSUMERS, "gw1", top))["trust"])
+                reader = Path(values["emitter"])
+                self.assertEqual(reader, Path(values["trust"]))
+                self.assertEqual(reader, Path(values["restart"]))
+                self.assertTrue(values["restart_uses_trust_runtime"])
                 self.assertNotEqual(
                     reader, ROOT
                 )  # Red if real consumers revert to shared REPO.
                 self.assertNotEqual(reader, other)
                 self.assertEqual(
-                    emitter["HOST"], reader / "server/tests/activity_emitter_host.mjs"
+                    Path(values["host"]),
+                    reader / "server/tests/activity_emitter_host.mjs",
                 )
-                restart = ast.parse(
-                    (
-                        ROOT / "server/tests/test_connection_notice_restart.py"
-                    ).read_text()
-                )
-                imported = next(
-                    n
-                    for n in restart.body
-                    if isinstance(n, ast.ImportFrom)
-                    and n.module == "test_e2ee_local_sender_read_trust"
-                )
-                self.assertIn("REPO", {n.name for n in imported.names})
-                self.assertIn("runtime_packages", {n.name for n in imported.names})
                 with ThreadPoolExecutor(max_workers=2) as pool:
                     jobs = [
                         pool.submit(runtime.prepare_runtime_tree, source, root)
@@ -212,67 +229,19 @@ class RuntimeTrees(unittest.TestCase):
                     )
                     self.assertNotEqual(old.returncode, 0)
                     self.assertIn("ERR_MODULE_NOT_FOUND", old.stderr)
-                    # Take launch arguments from the actual kept consumers,
-                    # so a future shared-path regression fails this control.
-                    values = dict(trust, root=top, command_dir=top, name="core")
-                    commands = [["node", str(emitter["HOST"])]]
-                    trust_tree = ast.parse(
-                        (
-                            ROOT / "server/tests/test_e2ee_local_sender_read_trust.py"
-                        ).read_text()
-                    )
-                    for function in ("_present_by_channel", "_present_by_pi"):
-                        body = next(
-                            n
-                            for n in trust_tree.body
-                            if isinstance(n, ast.AsyncFunctionDef)
-                            and n.name == function
-                        )
-                        call = next(
-                            n
-                            for n in ast.walk(body)
-                            if isinstance(n, ast.Call)
-                            and isinstance(n.func, ast.Attribute)
-                            and n.func.attr == "create_subprocess_exec"
-                        )
-                        commands.append(
-                            eval(
-                                compile(
-                                    ast.fix_missing_locations(
-                                        ast.Expression(
-                                            ast.List(elts=call.args, ctx=ast.Load())
-                                        )
-                                    ),
-                                    function,
-                                    "eval",
-                                ),
-                                values,
-                            )
-                        )
-                    body = next(
-                        n
-                        for n in restart.body
-                        if isinstance(n, ast.AsyncFunctionDef) and n.name == "_runtime"
-                    )
-                    routing = next(
-                        n
-                        for n in body.body
-                        if isinstance(n, ast.If)
-                        and ast.unparse(n.test) == "name == 'wake'"
-                    )
-                    values["__file__"] = str(
-                        ROOT / "server/tests/test_connection_notice_restart.py"
-                    )
-                    # The non-wake branch selects the kept core host and argv.
-                    exec(
-                        compile(
-                            ast.Module(body=routing.orelse, type_ignores=[]),
-                            "restart",
-                            "exec",
-                        ),
-                        values,
-                    )
-                    commands.append(values["command"])
+                    # The launch arguments are the actual kept consumers', so a
+                    # future shared-path regression fails this control.
+                    commands = values["commands"]
+                    # Every package a consumer launches comes from its own tree.
+                    entries = [
+                        Path(arg)
+                        for command in commands
+                        for arg in command
+                        if arg.endswith("/dist/index.js")
+                    ]
+                    self.assertEqual(len(entries), 3, commands)
+                    for entry in entries:
+                        self.assertTrue(entry.is_relative_to(reader), entry)
                     self.assertEqual(
                         (
                             reader
@@ -302,24 +271,12 @@ class RuntimeTrees(unittest.TestCase):
                     self.assertFalse(root.exists())
 
     def test_module_fixtures_never_rebuild_an_active_worker_tree(self):
-        for filename, function in [
-            ("test_agent_activity_emitter_e2e.py", "channel_core_build"),
-            ("test_e2ee_local_sender_read_trust.py", "runtime_packages"),
-        ]:
-            node = next(
-                n
-                for n in ast.parse((ROOT / "server/tests" / filename).read_text()).body
-                if isinstance(n, ast.FunctionDef) and n.name == function
+        # A worker's tree is built once by the session; its module fixtures
+        # must only check it, never start another npm build.
+        with tempfile.TemporaryDirectory() as temporary:
+            self.assertEqual(
+                as_worker(FIXTURES, "gw0", Path(temporary)).strip(), "no build"
             )
-            node.decorator_list = []
-            values = {"REPO": Path("/owned/gw0"), "SOURCE_REPO": ROOT}
-            exec(
-                compile(ast.Module(body=[node], type_ignores=[]), filename, "exec"),
-                values,
-            )
-            # No subprocess binding: any old npm build here fails the control.
-            for _ in range(2):
-                values[function](Path("/owned/gw0"))
 
     def test_external_dependency_link_refuses_and_preserves_target(self):
         with tempfile.TemporaryDirectory() as temporary:
