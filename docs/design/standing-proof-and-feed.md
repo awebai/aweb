@@ -649,7 +649,28 @@ automated sign-ups that need a new child pause. They can continue only with
 an outside controller signature for each new child or after moving sign-up
 traffic to a live provisioner lane. Time the key removal with that lane and
 traffic switch unless the operator approves the pause or outside signing
-for the gap. Keep the controller key outside the service after removal.
+for the gap. Complete step 0 below before removing the key or transferring
+the parent. Keep the controller key outside the service after removal.
+
+Control of DNS lets the operator recover the parent with a new controller
+key. Recovery restores control of the parent. Repair of earlier effects is
+separate. The full parent controller can use the parent-authorised
+recovery PUT to replace a child's controller, even when the child has its
+own key. That opens a `replaced` epoch and cuts off the child's earlier
+tree. Recovering the parent leaves those cutoffs in place. Restore the
+child's authority and explicitly re-admit the affected bindings.
+
+Parent key-loss recovery itself withdraws the old outgoing delegation
+witnesses. An unchanged child that relies on inheritance needs a new
+registration signed by the child and the new parent. A child with valid
+exact authority can still verify independently. A shared-key child also
+used the compromised key as its own controller. Changing the parent's
+DNS leaves the child's stored key and epoch as they were. Step 0 gives
+children independent keys and recovery paths, while parent recovery can
+still require work across the inherited inventory. See
+[namespace continuity and replacement](../id-certificates.md#namespace-continuity-and-replacement).
+The provisioner key limits exposure to claims on unused allowed names
+until its grant ends.
 
 #### Registration-only key
 
@@ -715,6 +736,30 @@ policy imposes no new restriction on unrelated zones.
 
 #### Transfer a hosting parent before its children
 
+0. **Separate shared controllers.** Before either parent-controller key
+   removal or the parent transfer, verify the source inventory of registered
+   children. Give each child whose controller equals the parent's a fresh
+   per-child controller key in frozen custody, using the existing two-key
+   `POST /v1/namespaces/{domain}/rotate` under its old and new child keys.
+   Use the valid inherited witness while it still agrees with the old
+   child key. Where a child already uses exact DNS, coordinate the exact
+   record for the successor key on the source registry. Both paths open a
+   `rotated` epoch and preserve registered identity history. The recovery
+   PUT opens a `replaced` epoch and cannot serve as a continuity fallback.
+   If an old registration lacks an open epoch, establish it first through
+   the existing reaffirmation path.
+
+   Operations owns and rehearses the custody tool with a designated canary.
+   Stage the key in frozen custody and fence affected namespace writes until
+   the registry and service agree on the new controller. Confirm the rotated
+   epoch, existing registered chains and namespace-key operations including
+   ID issuance, team operations and address publication. Check any carried
+   root-signed evidence under the successor and arrange replacement where
+   required. Reconcile an interrupted rotation against the actual source
+   head before resuming writes. The key removal and parent transfer both
+   wait for the inventory to show no remaining shared controllers. Step 1
+   names the resulting per-child controllers.
+
 1. **Pin the source per child.** Inventory and freeze new provisioning for
    the moving parent. Before changing the parent's `_awid`, publish exact
    `_awid.<child>` records naming each child's current controller and source
@@ -759,6 +804,18 @@ policy imposes no new restriction on unrelated zones.
    Missing, conflicting or ambiguous evidence refuses under §6. No second
    registry is tried and no failing exact record is treated as absent.
 
+**Dormant children.** The operator decides the policy before the move.
+Inactivity is an inventory signal. A bulk move groups dormant children into
+the same window as the parent. Each child still needs its authorised source
+cut, verified destination, deny inventory and source retirement before
+activation. Keep exact source pins for unresolved children. Alternatively,
+give notice and retire the approved dormant children at the source under
+the existing retirement rules. Preserve their historical evidence and
+deleted-name reservations, with no automatic re-admission. Reserve failed
+or unregistered sign-up names from the reviewed inventory when policy
+requires it. They have no registered controller to rotate. Neither option
+waives step 0 for registered shared-controller children.
+
 Rehearse both registries before approving the move. Require a fresh child
 registration and refusals for existing, deleted, migrated and reserved names.
 Race grant withdrawal and parent rotation against registration. Verify that
@@ -768,6 +825,9 @@ child still on the source. Check wrong issuer, missing exact record,
 unchanged binding on discovery-path change, and one later child transfer
 with the old authority fenced. Run the source checks with a released client
 and the destination checks with the standing client.
+Verify that parent key-loss recovery leaves an attack-induced child
+`replaced` epoch in place. Check delegated reaffirmation alongside a child
+that still verifies through exact discovery.
 
 ## 8. Model, conformance and scale
 
