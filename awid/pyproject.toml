@@ -42,13 +42,6 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/awid", "src/awid_service"]
 
-[tool.hatch.build.targets.sdist]
-exclude = [
-    ".claude/",
-    "AGENTS.md",
-    "CLAUDE.md",
-]
-
 [dependency-groups]
 dev = [
     "mypy==1.19.1",
