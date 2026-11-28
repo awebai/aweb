@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- When `aw` waits for a browser handoff, its loopback listener now sends the
+  whole "Done" page before it hands the code over, and is closed by the time
+  `aw` goes on. The listener used to close on its own schedule, so the browser
+  could show a connection error although the handoff had succeeded.
+
 - The Go packages `wake` (with `wake/session`), `hookevent`, `a2a`, `a2agw`,
   `strictjson`, `canonicaljson`, `logschain` and `signaturewire` were never part
   of the documented Go library and are now internal to the `aw` module, under
