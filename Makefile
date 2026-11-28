@@ -705,6 +705,7 @@ deploy-site: verify-site
 
 test-npm-exact-publish:
 	bash scripts/e2e/test_npm_exact_publish.sh
+	python3 scripts/e2e/test_npm_readback_real_deadline.py
 
 test-pypi-exact-publish:
 	bash scripts/e2e/test_pypi_exact_publish.sh
