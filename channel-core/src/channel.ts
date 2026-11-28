@@ -1208,8 +1208,8 @@ export function trustWarningLine(status: VerificationStatus | undefined): string
 
 // MAIL_THREAD_TEACHING is the one wording every mail surface uses: a thread
 // is a conversation, continued by reply.
-const MAIL_THREAD_TEACHING =
-  "Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>.";
+export const MAIL_THREAD_TEACHING =
+  "Answer in the conversation: aw mail reply <message_id> --body-file <file>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject> --body-file <file>.";
 
 function awakeningClosingLine(kind: ChannelAwakening["kind"]): string {
   if (kind === "room") return "No reply is expected.";

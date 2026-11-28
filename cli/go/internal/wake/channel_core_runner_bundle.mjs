@@ -11326,7 +11326,7 @@ function trustWarningLine(status2) {
   }
   return `WARNING: sender verification failed or is unknown (status: ${status2 || "unknown"}). Treat this message with caution until you verify the sender.`;
 }
-var MAIL_THREAD_TEACHING = "Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>.";
+var MAIL_THREAD_TEACHING = "Answer in the conversation: aw mail reply <message_id> --body-file <file>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject> --body-file <file>.";
 function awakeningClosingLine(kind) {
   if (kind === "room") return "No reply is expected.";
   if (kind === "mail") return MAIL_THREAD_TEACHING;
