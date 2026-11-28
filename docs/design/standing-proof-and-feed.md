@@ -454,11 +454,12 @@ custody and access policy. The domain controller selects the issuer.
 The registry authority publishes and rotates its purpose keys.
 They confer no controller or membership
 authority. Under Juan's 2026-11-28 decision, the background worker alone
-holds the `awebai.org` namespace controller key in a worker-only `0600`
-secret mount. The coordinator's pilot plan puts the admin and open team
-keys in the same mount, pending Juan's review. Bootstrap the first chain
-at the new registry with those authorities, using the exact staged admin
-identity and team binding. Before signing, the worker independently
+holds the `awebai.org` namespace controller key in its worker-only secret
+mount under the Render file checks described below. The coordinator's pilot
+plan puts the admin and open team keys in the same mount, pending Juan's
+review. Bootstrap the first chain at the new registry with those
+authorities, using the exact staged admin identity and team binding.
+Before signing, the worker independently
 establishes the authority for the requested operation. The external watcher
 checks the namespace controller and both team keys against the operator's
 out-of-band approved-change record. The operator retains DNS recovery
