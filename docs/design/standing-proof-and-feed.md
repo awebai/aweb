@@ -519,14 +519,18 @@ The transfer must fence source writes and issuance, verify a final source
 cut, and verify the destination before switching DNS and verifier pins.
 Preserve stable DIDs, signed chain and key history, controller history,
 ancestor cutoffs and terminal revocations. Carry surviving denies and retire
-old authority at the source. A moved team starts with a fresh signing key
-and new certificates for an explicitly authorised current roster. Keep old
-team keys, certificates and revocations as historical records only. Exclude
+old authority at the source. When moving a team's service authority, the
+moved team starts with a fresh signing key and new certificates for an
+explicitly authorised current roster. Keep old team keys, certificates and
+revocations as historical records only. Exclude
 stale writers and issuers throughout the transition. The grant owner must
 account for its own delegation state or require new grants.
 
-This section requires a separate customer product decision. The first
-deployment follows the onboarding path above. For a future move, collect
+The first deployment follows the onboarding path above. The approved
+registry-only move of the `aweb.ai` hosting tree follows the
+[single-window procedure below](#transfer-the-hosting-tree-in-one-window).
+A customer move that changes service authority requires its own product
+decision. For such a move, collect
 holder migration statements and controller-signed rosters before the
 source fence. Verify the prepared source heads, roster and key versions
 against the fenced cut. Exclude unresolved bindings, fence those source
@@ -559,6 +563,10 @@ recipient expressly opted in and the replacement binding is current and
 verified. The refusal itself never forwards or delivers.
 
 #### Customer migration gates
+
+These gates cover a move of customer service authority. The registry-only
+hosting-tree procedure below uses the same verified-cut, exclusion of
+concurrent writers and reconciliation rules at its registry boundary.
 
 1. **Fence and authenticate the source cut.** Stop ordinary authority
    writes, admissions and sends for the moving scope at the source.
@@ -637,14 +645,12 @@ Rehearse a source-head change, an unresolved holder and a pre-retirement
 abort within the time budget. Check that historical mail remains readable
 with its original verification and an exact retry yields one receipt and effect.
 
-### Hosted child registration and phased parent transfer
+### Hosted child registration and registry transfer
 
-This is a proposed extension to the future customer transfer, outside E5.
-Moving the hosting parent's controller out of the service and publishing
-per-child DNS records both require operator approval before rollout. The
-transfer still needs the customer decision above. The frozen service uses
-that controller to create customer namespaces, and the frozen registry has
-no registration-only key. As soon as the controller leaves the service,
+The hosting-tree registry move is separate from E5. Moving the hosting
+parent's controller out of the service requires operator approval. The
+frozen service uses that controller to create customer namespaces. Its
+registry has no registration-only key. As soon as the controller leaves the service,
 automated sign-ups that need a new child pause. They can continue only with
 an outside controller signature for each new child or after moving sign-up
 traffic to a live provisioner lane. Time the key removal with that lane and
@@ -731,14 +737,21 @@ change, a mismatch disables the service's pre-check and is reported.
 AWID still decides, and the service maps its typed refusal.
 Hosting-zone policy prohibits child NS delegation and wildcard AWID TXT
 records. Apply it in the zone configuration and validate the published
-zone before transfer. Exact per-child TXT records are allowed. This hosting
-policy imposes no new restriction on unrelated zones.
+zone before transfer. The single-window procedure relies on every live
+child inheriting the same parent record.
 
-#### Transfer a hosting parent before its children
+#### Transfer the hosting tree in one window
 
-0. **Separate shared controllers.** Before either parent-controller key
-   removal or the parent transfer, build the live child inventory from
-   source AWID rows. Join it to the service's custody and activity data.
+On 2026-11-28 Juan approved moving the parent and all 449 live `aweb.ai`
+child namespaces together from `https://api.awid.ai` to
+`https://api.awdid.org`. The window moves registry authority. Every
+namespace keeps its name, addresses and keys from the verified post-step-0
+source cut. Include all live children regardless of activity. Any decision
+about retiring dormant namespaces belongs to a separate operation.
+
+0. **Separate shared controllers (`aweb-adyx.14`).** Before either
+   parent-controller key removal or the parent transfer, build the live child
+   inventory from source AWID rows. Join it to the service's custody data.
    Reconcile registry-only names and stale service status before acting.
    Give each child whose controller equals the parent's a fresh
    per-child controller key in frozen custody, using the existing two-key
@@ -761,7 +774,7 @@ policy imposes no new restriction on unrelated zones.
    head before resuming writes. Fence provisioning that could add a
    shared-controller child before the final inventory check. Both key
    removal and parent transfer wait for that check to show no remaining
-   shared controllers. Step 1 names the resulting per-child controllers.
+   shared controllers. Step 1 preserves the resulting per-child controllers.
 
    The source inventory for this move identifies every live child
    controller as hosted. Signing readiness requires proof of the shared
@@ -772,80 +785,71 @@ policy imposes no new restriction on unrelated zones.
    shared key, obtain the old-key proof from the original parent key in
    its existing custody. Without that proof, step 0 stays incomplete and
    neither key removal nor transfer proceeds. Operations supplies the
-   namespace-controller signatures once custody is confirmed. The
-   separate holder and roster checks still apply to transferred
-   identities and teams.
+   namespace-controller signatures once custody is confirmed.
 
-1. **Pin the source per child.** Inventory and freeze new provisioning for
-   the moving parent. Before changing the parent's `_awid`, publish exact
-   `_awid.<child>` records naming each child's current controller and source
-   registry. Use the released TXT syntax and leave child records and epochs
-   at the source intact. For an outside-held child, the holder proves its
-   current key and approves the exact domain, controller and source registry.
-   The zone operator publishes the record if it controls DNS. The holder
-   keeps its key and separately signs its own later transfer. For a hosted
-   child, operations obtains the same child-controller proof using a
-   separately reviewed tool within the frozen service's production custody
-   boundary. Rehearse the tool against a representative custody store. The
-   production run opens each child's encrypted controller key with the
-   service's key ring, signs within custody, and exports only the public
-   proof and DNS binding. Operations owns the run and its review. The pilot
-   gets no source keys. Confirm exact discovery and current source status
-   with cold and warmed released clients. Wait out the old inherited answer
-   and negative-cache lifetimes. Hold the parent flip if any child that
-   must stay live lacks a verified path to the source.
-2. **Transfer the parent only.** Apply the fenced transfer above to the
-   parent's own namespace and flip its `_awid` after verification. Existing
-   held-out children stay at the source. Exact child authority is independent
-   of the parent's current registry while the child's exact record, source
-   row and open epoch agree. A parent transfer may end the old inherited
-   witness. It must preserve any child authority that now uses verified
-   exact discovery. Keep the child records and serving dependencies at the
-   source for those children.
-3. **Transfer ready children.** For each child, verify the source cut,
-   destination, deny inventory and source retirement before changing its
-   exact record and activating the new issuer. The child controller signs
-   the transfer and destination association. A self-held child that has
-   yet to consent stays on its exact source record. Use the already
-   specified refusal at the frozen boundary. The parent moving first does
-   not open a cross-protocol relay.
-4. **Converge discovery.** Keep an exact record unless the child and parent
-   authorise a live destination delegation, and an independent check proves
-   that inherited discovery authenticates the same exact child/controller,
-   epoch, registry and issuer association. Remove it only after that check
-   and reconcile verifier pins. A change from inherited to exact, or the
-   reverse, needs authenticated reconciliation of its authority evidence.
-   If the binding is unchanged, refresh the proof of the existing pin. If
-   the issuer or registry differs, require the authorised transfer evidence.
-   Missing, conflicting or ambiguous evidence refuses under §6. No second
-   registry is tried and no failing exact record is treated as absent.
+1. **Prepare and verify the whole tree.** Before the window, finish step 0
+   and rehearse the entire sequence on a representative copy of both
+   registries. For the live cut, fence source provisioning, authority writes
+   and issuance for the parent and its children. Use the verified source cut
+   and manifest rules above for the entire scope. Enumerate all 449 children
+   from source AWID and reconcile every entry before moving the parent.
+   Confirm through DNS that every child resolves through the parent record.
+   Any overriding exact child record or unresolved authority holds the move.
+   The switch uses the existing parent TXT record, with every child resolving
+   by inheritance throughout.
 
-**Dormant children.** The operator decides the policy before the move.
-Classify activity and build the retirement list against the live AWID
-inventory. Service registration status does not establish which children
-are live. A bulk move groups dormant children into the same window as the
-parent. Each child still needs its authorised source
-cut, verified destination, deny inventory and source retirement before
-activation. Keep exact source pins for unresolved children. Alternatively,
-give notice and retire the approved dormant children at the source under
-the existing retirement rules. Preserve their historical evidence and
-deleted-name reservations, with no automatic re-admission. Reserve failed
-or unregistered sign-up names from the reviewed inventory when policy
-requires it. They have no registered controller to rotate. Neither option
-waives step 0 for registered shared-controller children.
+   Stage the parent and all children at the destination with the same names,
+   stable DIDs, addresses, controller and other current keys, delegation
+   witnesses, epochs, history and cutoffs. Verify revocations, inherited
+   authority and current records independently against the fenced source.
+   Obtain parent and child controller authorisations for the exact cut and
+   destination. Operations signs within each existing custody boundary. Bind
+   registry-scoped records to the destination where the record format
+   requires it, and retain the original source evidence for verification.
+   The signed transfer evidence allows §6 verifiers to reconcile the new
+   registry and issuer to the exact preserved facts. Keep destination
+   writes and issuance fenced pending activation.
 
-Rehearse both registries before approving the move. Require a fresh child
-registration and refusals for existing, deleted, migrated and reserved names.
-Race grant withdrawal and parent rotation against registration. Verify that
-withdrawing the grant stops new creation while a committed child still
-verifies. Exercise parent-only transfer with one hosted and one outside-held
-child still on the source. Check wrong issuer, missing exact record,
-unchanged binding on discovery-path change, and one later child transfer
-with the old authority fenced. Run the source checks with a released client
-and the destination checks with the standing client.
-Verify that parent key-loss recovery leaves an attack-induced child
-`replaced` epoch in place. Check delegated reaffirmation alongside a child
-that still verifies through exact discovery.
+2. **Flip the parent and verify.** Change only the registry endpoint in
+   `_awid.aweb.ai`, keeping the parent controller in that record. Check the
+   operator-designated customer namespace first, then verify the parent and
+   all 449 children at the destination. Check cold and warm discovery and
+   verifier pins, the inherited parent witness, the current authority at
+   each exact child, and continuity of the admitted keys, addresses and
+   deny inventory. A prior source pin needs the authenticated transfer
+   evidence before it can select the destination. An unresolved pin or
+   inconsistent read refuses under §6. Keep effects fenced at both registries
+   while checking the switch.
+
+3. **Abort or retire source authority.** Reserve time for verified retirement
+   and destination activation within the rehearsed window. Abort before the
+   first irreversible source retirement if a check fails or the full cut
+   cannot finish in the remaining budget. Restore the parent DNS record to
+   the source, reconcile pins and paused effects, and verify source
+   authority before resuming source writes. Keep the destination fenced.
+   Once the whole cut verifies and the budget permits completion, retire
+   the source's serving authority for the entire tree and verify that old
+   authority is refused, including with warmed caches. Preserve historical
+   source evidence. Only then enable destination writes and issuance for
+   the whole tree. If retirement has begun and cannot finish, keep effects
+   fenced for reconciliation.
+
+Rehearse the full-size inventory and the single DNS flip before the live
+window. Exercise a stale parent answer on a warm verifier, a child with
+unresolved source evidence, the first customer check failing, and the
+pre-retirement abort back to verified source. On a successful run, verify
+all original addresses, current keys and delegation witnesses at the
+destination and refusal of retired source authority. Use released clients
+for the source checks and the applicable destination clients for the new
+authority checks.
+
+Separately qualify the registration-only lane with a fresh child and
+refusals for existing, deleted, migrated and reserved names. Race grant
+withdrawal and parent rotation against registration. Verify that withdrawal
+stops new creation while a committed child still verifies. Verify that
+parent key-loss recovery leaves any already committed child `replaced` epoch
+in place and that a delegated reaffirmation restores an otherwise
+unchanged child's inherited proof.
 
 ## 8. Model, conformance and scale
 
