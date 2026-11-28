@@ -827,9 +827,10 @@ and keys and the admin and open team keys since its last verified
 observation against that record. It refreshes those checks even on idle
 feed barriers.
 The [public feed](standing-proof-and-feed.md#4-public-feed)
-carries opaque invalidation handles. It supplies a change signal, and the
-authenticated reads establish what changed. Alert separately if freshness
-or continuity is lost.
+carries opaque invalidation handles. The credential-free watcher uses the
+[public reads in the sentinel conformance
+cases](standing-organisation-records.md#credential-free-sentinel) to
+establish what changed. Alert separately if freshness or continuity is lost.
 
 Control of `_awid.awebai.org` DNS is the recovery backstop. On compromise
 the operator names a new controller in DNS and completes the registry's
