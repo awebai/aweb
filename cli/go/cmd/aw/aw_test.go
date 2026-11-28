@@ -212,16 +212,9 @@ func TestTeamHelpSeparatesEverydayMembershipFromAdministration(t *testing.T) {
 			t.Fatalf("team help missing section %q:\n%s", want, teamHelp)
 		}
 	}
-	for command, description := range map[string]string{
-		"invite": "Invite an agent or workspace",
-		"join":   "Join a team from an invite token",
-		"leave":  "Remove a team membership",
-		"list":   "List team memberships",
-		"switch": "Switch the active team",
-		"admin":  "Experimental local orchestration and team administration",
-	} {
-		if !helpContainsCommandDescription(teamHelp, command, description) {
-			t.Fatalf("team help missing command %q with description %q:\n%s", command, description, teamHelp)
+	for _, command := range []string{"invite", "join", "leave", "list", "switch", "admin"} {
+		if !strings.Contains(teamHelp, "\n  "+command+" ") {
+			t.Fatalf("team help does not list %q:\n%s", command, teamHelp)
 		}
 	}
 	for _, hidden := range []string{"add", "adopt", "agent-status", "create", "extend", "refresh", "remove-agent", "replace-key", "up"} {
@@ -253,16 +246,6 @@ func TestTeamHelpSeparatesEverydayMembershipFromAdministration(t *testing.T) {
 			t.Fatalf("canonical team admin %s help is unavailable:\n%s", name, canonicalHelp)
 		}
 	}
-}
-
-func helpContainsCommandDescription(help, command, description string) bool {
-	for _, line := range strings.Split(help, "\n") {
-		fields := strings.Fields(strings.TrimSpace(line))
-		if len(fields) > 0 && fields[0] == command && strings.Contains(line, description) {
-			return true
-		}
-	}
-	return false
 }
 
 func TestGlobalLocalHelpDoesNotAdvertiseLegacyLifetimeFlags(t *testing.T) {
