@@ -1,5 +1,6 @@
 """Build historical or damaged inventory states for holder recovery tests."""
 
+import json
 import sqlite3
 from contextlib import closing, contextmanager
 
@@ -32,3 +33,13 @@ def lose_passkey_inventory(store, person, credential):
             (person, credential),
         )
         assert removed.rowcount == 1
+
+
+def corrupt_inventory_assessment(store, person, credential, assessment):
+    with store._connection() as db, db:
+        # unreachable-state: a stored assessment is not an object or has a non-string AAGUID
+        updated = db.execute(
+            "UPDATE attestation_inventory SET assessment=? WHERE person=? AND credential=?",
+            (json.dumps(assessment), person, credential),
+        )
+        assert updated.rowcount == 1
