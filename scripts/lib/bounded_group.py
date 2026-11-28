@@ -28,16 +28,8 @@ import time
 TIMEOUT_EXIT = 254
 # How long a killed group may take to be reaped before the runner fails.
 REAP_SECONDS = 10
-
-
-class Interrupted(BaseException):
-    def __init__(self, signum):
-        super().__init__(signum)
-        self.signum = signum
-
-
-def interrupt(signum, frame):
-    raise Interrupted(signum)
+POLL_SECONDS = 0.02
+STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
 
 
 def group_present(pgid):
@@ -52,16 +44,11 @@ def group_present(pgid):
     return True
 
 
-def wait_for_empty_group(pgid, until):
-    while group_present(pgid):
-        if time.monotonic() >= until:
-            return False
-        time.sleep(0.02)
-    return True
-
-
 def end_group(child):
-    """Kill the child's group, reap the child, and observe the group empty."""
+    """Kill the child's group, reap the child, and observe the group empty.
+
+    Once the group is observed empty its number is never used again.
+    """
     pgid = child.pid
     try:
         os.killpg(pgid, signal.SIGKILL)
@@ -69,35 +56,56 @@ def end_group(child):
         pass
     # The leader stays in its group as a zombie until it is reaped here.
     child.wait()
-    if not wait_for_empty_group(pgid, time.monotonic() + REAP_SECONDS):
-        raise SystemExit(f"bounded_group: process group {pgid} survived SIGKILL")
+    until = time.monotonic() + REAP_SECONDS
+    while group_present(pgid):
+        if time.monotonic() >= until:
+            raise SystemExit(f"bounded_group: process group {pgid} survived SIGKILL")
+        time.sleep(POLL_SECONDS)
 
 
 def run(seconds, argv):
-    """Return the verdict: ("exit", status), ("timeout", None) or ("interrupted", signum)."""
+    """Return the verdict: ("exit", status), ("timeout", None) or ("interrupted", signum).
+
+    The stop signals only record themselves; nothing unwinds asynchronously.
+    The loop acts on a recorded stop between steps, so launch, ownership and
+    release are never interrupted halfway. A stop at any point, cleanup
+    included, makes the verdict "interrupted".
+    """
     deadline = time.monotonic() + seconds
-    for signum in (signal.SIGTERM, signal.SIGHUP):
-        signal.signal(signum, interrupt)
-    child = None
+    stops = []
+    previous = {
+        signum: signal.signal(signum, lambda signum, frame: stops.append(signum))
+        for signum in STOP_SIGNALS
+    }
     try:
         child = subprocess.Popen(argv, start_new_session=True)
-        try:
-            status = child.wait(timeout=max(0, deadline - time.monotonic()))
-        except subprocess.TimeoutExpired:
-            return ("timeout", None)
-        if not wait_for_empty_group(child.pid, deadline):
-            return ("timeout", None)
-        return ("exit", status if status >= 0 else 128 - status)
-    except KeyboardInterrupt:
-        return ("interrupted", signal.SIGINT)
-    except Interrupted as exc:
-        return ("interrupted", exc.signum)
-    finally:
-        # Interruptions arriving during cleanup wait for it.
-        for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
-            signal.signal(signum, signal.SIG_IGN)
-        if child is not None:
+        owned = True
+        status = None
+        verdict = None
+        while verdict is None:
+            if stops:
+                verdict = ("interrupted", stops[0])
+                break
+            if status is None:
+                status = child.poll()
+            if status is not None and not group_present(child.pid):
+                # Observed empty: the group is released, and its number is
+                # never signalled or probed again.
+                owned = False
+                verdict = ("exit", status if status >= 0 else 128 - status)
+                break
+            if time.monotonic() >= deadline:
+                verdict = ("timeout", None)
+                break
+            time.sleep(POLL_SECONDS)
+        if owned:
             end_group(child)
+        if stops and verdict[0] != "interrupted":
+            verdict = ("interrupted", stops[0])
+        return verdict
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
 
 
 def main():

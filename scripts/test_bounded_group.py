@@ -1,5 +1,6 @@
 """The process-group runner the TypeScript dist self-test uses (scripts/lib/bounded_group.py)."""
 
+import importlib.util
 import os
 from pathlib import Path
 import signal
@@ -8,6 +9,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 RUNNER = Path(__file__).with_name("lib") / "bounded_group.py"
 
@@ -111,6 +113,86 @@ class BoundedGroup(unittest.TestCase):
                     self.verdict.read_text(), f"interrupted {signum.name}\n"
                 )
                 self.assertTrue(gone(int(child.read_text())))
+
+
+spec = importlib.util.spec_from_file_location("bounded_group", RUNNER)
+bounded_group = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(bounded_group)
+
+
+class Transitions(unittest.TestCase):
+    """In-process controls at the runner's two handoffs, around a real launch."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.dir = Path(temporary.name)
+        for signum in bounded_group.STOP_SIGNALS:
+            self.addCleanup(signal.signal, signum, signal.getsignal(signum))
+
+    def test_a_stop_during_launch_ends_the_launched_group(self):
+        child = self.dir / "child"
+        real = subprocess.Popen
+
+        def launch_then_stop(*args, **kwargs):
+            launched = real(*args, **kwargs)
+            # Wait until the command runs, then stop the runner before it has
+            # recorded what it launched.
+            until = time.monotonic() + 10
+            while not child.is_file() or not child.read_text().strip():
+                self.assertLess(time.monotonic(), until, "the command never started")
+                time.sleep(0.02)
+            os.kill(os.getpid(), signal.SIGTERM)
+            return launched
+
+        with patch.object(
+            bounded_group.subprocess, "Popen", side_effect=launch_then_stop
+        ):
+            verdict = bounded_group.run(
+                30, ["sh", "-c", f'echo $$ >"{child}"; exec sleep 30']
+            )
+        self.assertEqual(verdict, ("interrupted", signal.SIGTERM))
+        self.assertTrue(gone(int(child.read_text())))
+
+    def record_group_calls(self, on_absent=None):
+        calls = []
+        real = os.killpg
+
+        def killpg(pgid, signum):
+            try:
+                real(pgid, signum)
+            except ProcessLookupError:
+                calls.append((signum, "ESRCH"))
+                if on_absent:
+                    on_absent()
+                raise
+            calls.append((signum, "ok"))
+
+        return calls, patch.object(bounded_group.os, "killpg", side_effect=killpg)
+
+    def assert_untouched_after_absence(self, calls):
+        absent = calls.index((0, "ESRCH"))
+        self.assertEqual(
+            calls[absent + 1 :],
+            [],
+            f"the group was used after it was observed empty: {calls}",
+        )
+
+    def test_an_observed_empty_group_is_never_signalled_again(self):
+        calls, recording = self.record_group_calls()
+        with recording:
+            verdict = bounded_group.run(10, ["sh", "-c", "exit 0"])
+        self.assertEqual(verdict, ("exit", 0))
+        self.assert_untouched_after_absence(calls)
+
+    def test_a_stop_as_the_group_empties_does_not_reuse_its_number(self):
+        calls, recording = self.record_group_calls(
+            on_absent=lambda: os.kill(os.getpid(), signal.SIGTERM)
+        )
+        with recording:
+            verdict = bounded_group.run(10, ["sh", "-c", "exit 0"])
+        self.assertEqual(verdict, ("interrupted", signal.SIGTERM))
+        self.assert_untouched_after_absence(calls)
 
 
 if __name__ == "__main__":

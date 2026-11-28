@@ -114,30 +114,26 @@ PY
 }
 
 # Rebuild a package from the mutated tree and require its named assertion to
-# fail. The TAP stream must show that one test failing on that assertion.
+# fail. scripts/lib/named_negative.py judges the run: the runner's verdict must
+# be an ordinary exit with the same status, and the TAP stream must show that
+# one test failing on that assertion.
 expect_assertion_failure() {
   local package="$1" variable="$2" test_file="$3" name="$4" assertion="$5"
-  local out status
+  local out status reason judged
   build "$TMP/$package"
   set +e
   out="$(export "$variable=$TMP/$package/dist/index.js"
     behaviour_test --test-name-pattern="$name" "$TESTS/$test_file" 2>&1)"
   status=$?
+  reason="$(python3 "$ROOT/scripts/lib/named_negative.py" --status "$status" --verdict "$TMP/verdict" \
+    --name "$name" --assertion "$assertion" <<<"$out")"
+  judged=$?
   set -e
-  if [ "$(cat "$TMP/verdict")" = timeout ]; then
-    printf 'SELF-TEST INCONCLUSIVE: %s "%s" hung instead of failing:\n%s\n' "$package" "$name" "$out" >&2
-    return 1
-  fi
-  if [ "$status" -eq 0 ]; then
-    echo "SELF-TEST FAIL: $package passed \"$name\" without its guarded behaviour" >&2
-    return 1
-  fi
-  if ! grep -Fxq "# tests 1" <<<"$out" || ! grep -Fq "not ok 1 - $name" <<<"$out" \
-    || ! grep -Fq "code: 'ERR_ASSERTION'" <<<"$out" || ! grep -Fq "$assertion" <<<"$out"; then
-    printf 'SELF-TEST INCONCLUSIVE: %s "%s" did not fail on %s:\n%s\n' \
-      "$package" "$name" "$assertion" "$out" >&2
-    return 1
-  fi
+  case "$judged" in
+    0) ;;
+    1) echo "SELF-TEST FAIL: $package $reason" >&2; return 1 ;;
+    *) printf 'SELF-TEST INCONCLUSIVE: %s %s:\n%s\n' "$package" "$reason" "$out" >&2; return 1 ;;
+  esac
 }
 
 # S4a: the genesis key must derive the did:aw.
