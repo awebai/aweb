@@ -281,6 +281,36 @@ printf 'AW_DID=%s\n' "$AW_DID"
 		t.Fatalf("flag-attached plugin missing principal DID:\n%s", attachedOut)
 	}
 
+	// A word reserved only as an app id is an ordinary argument to a plugin:
+	// it does not end the scan for a trailing --identity-home.
+	for _, word := range []string{"agent", "blueprint", "run"} {
+		runTrailing := exec.CommandContext(ctx, bin, "hello", word, "--identity-home", identityHome)
+		runTrailing.Dir = tmp
+		runTrailing.Env = append(os.Environ(), "HOME="+home, "PATH="+pathDir+string(os.PathListSeparator)+os.Getenv("PATH"), "AW_NO_UPDATE_CHECK=1", "AWEB_IDENTITY_HOME=")
+		trailingOut, err := runTrailing.CombinedOutput()
+		if err != nil {
+			t.Fatalf("plugin dispatch with %q and a trailing --identity-home failed: %v\n%s", word, err, trailingOut)
+		}
+		if !strings.Contains(string(trailingOut), "AW_DID="+did) {
+			t.Fatalf("plugin given %q lost the trailing --identity-home principal:\n%s", word, trailingOut)
+		}
+	}
+
+	// A trusted plugin cannot take a name reserved as an app id.
+	if err := os.WriteFile(filepath.Join(pluginsDir, "aw-run"), []byte("#!/bin/sh\necho reserved-plugin-ran\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runReserved := exec.CommandContext(ctx, bin, "run")
+	runReserved.Dir = tmp
+	runReserved.Env = append(os.Environ(), "HOME="+home, "PATH="+pathDir+string(os.PathListSeparator)+os.Getenv("PATH"), "AW_NO_UPDATE_CHECK=1")
+	reservedOut, err := runReserved.CombinedOutput()
+	if err == nil || strings.Contains(string(reservedOut), "reserved-plugin-ran") {
+		t.Fatalf("plugin named after a reserved app id ran: %v\n%s", err, reservedOut)
+	}
+	if !strings.Contains(string(reservedOut), `unknown command "run" for "aw"`) {
+		t.Fatalf("reserved name should fall through to Cobra unknown command:\n%s", reservedOut)
+	}
+
 	runPathOnly := exec.CommandContext(ctx, bin, "pathonly")
 	runPathOnly.Dir = tmp
 	runPathOnly.Env = append(os.Environ(), "HOME="+home, "PATH="+pathDir+string(os.PathListSeparator)+os.Getenv("PATH"), "AW_NO_UPDATE_CHECK=1")

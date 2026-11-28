@@ -298,13 +298,15 @@ func activateIdentityHomeForPluginDispatch(args []string) (func(), error) {
 // A plugin name is not a built-in, so scanning continues past it and a
 // plugin's trailing --identity-home keeps the behaviour it has always had.
 //
-// The built-in set is reservedRootCommandNames() — the same set plugin dispatch
-// refuses to let a plugin shadow, and the same set the reserved-app-ids
-// artifact publishes. Sharing it is deliberate: two textual argv scanners over
-// one flag set would otherwise be free to disagree about what counts as a
-// command, and only one of them would get updated.
+// The built-in set is builtinRootCommandNames(), the live command tree that
+// plugin dispatch's reserved set and the reserved-app-ids artifact are built
+// on. Sharing it is deliberate: two textual argv scanners over one flag set
+// would otherwise be free to disagree about what counts as a command, and only
+// one of them would get updated. The names reserved only because released aw
+// binaries carry them are not commands here, so to a plugin they are ordinary
+// arguments and do not end the scan.
 func identityHomeForPluginDispatch(args []string) string {
-	builtins := reservedRootCommandNames()
+	builtins := builtinRootCommandNames()
 	explicit := ""
 	for i := 0; i < len(args); i++ {
 		arg := strings.TrimSpace(args[i])

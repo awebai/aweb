@@ -1702,28 +1702,36 @@ func sortedReservedRootCommandNames() []string {
 	return names
 }
 
+// reservedRootCommandNames is the set no app id or plugin may take: the
+// built-in root commands plus the names released aw binaries still carry as
+// commands, since an app with one of those ids would collide with that command
+// for their users.
 func reservedRootCommandNames() map[string]bool {
+	reserved := builtinRootCommandNames()
+	for _, name := range []string{"agent", "blueprint", "run"} {
+		reserved[name] = true
+	}
+	return reserved
+}
+
+// builtinRootCommandNames is this aw's own root commands and aliases, with help.
+func builtinRootCommandNames() map[string]bool {
 	rootCmd.InitDefaultCompletionCmd()
-	reserved := map[string]bool{
+	builtins := map[string]bool{
 		"help": true,
-		// Released aw binaries still carry these commands, so an app with one
-		// of these ids would collide with that command for their users.
-		"agent":     true,
-		"blueprint": true,
-		"run":       true,
 	}
 	for _, cmd := range rootCmd.Commands() {
 		if cmd == nil {
 			continue
 		}
 		if n := strings.TrimSpace(cmd.Name()); n != "" {
-			reserved[n] = true
+			builtins[n] = true
 		}
 		for _, alias := range cmd.Aliases {
 			if alias = strings.TrimSpace(alias); alias != "" {
-				reserved[alias] = true
+				builtins[alias] = true
 			}
 		}
 	}
-	return reserved
+	return builtins
 }
